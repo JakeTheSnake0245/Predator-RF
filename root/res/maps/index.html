@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Predator SDR Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <style>
+        html, body, #map {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            background: #0b0e0a;
+            overflow: hidden;
+        }
+
+        .leaflet-container {
+            background: #0b0e0a;
+            font-family: sans-serif;
+        }
+
+        .leaflet-control-attribution {
+            background: rgba(12, 16, 11, 0.9);
+            color: #dbe6cb;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script>
+        const map = L.map("map", {
+            zoomControl: true,
+            attributionControl: true
+        }).setView([38.9072, -77.0369], 10);
+
+        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+            maxZoom: 20,
+            subdomains: "abcd",
+            attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+        }).addTo(map);
+
+        const accuracyStyle = {
+            color: "#d8c96a",
+            weight: 1,
+            fillColor: "#d8c96a",
+            fillOpacity: 0.18
+        };
+
+        const positionStyle = {
+            radius: 8,
+            color: "#d8c96a",
+            weight: 2,
+            fillColor: "#83d099",
+            fillOpacity: 0.95
+        };
+
+        const positionMarker = L.circleMarker([38.9072, -77.0369], positionStyle).addTo(map);
+        const accuracyRing = L.circle([38.9072, -77.0369], { radius: 0, ...accuracyStyle }).addTo(map);
+
+        window.SDRPredator = {
+            updatePosition(lat, lon, accuracy, follow) {
+                const point = [lat, lon];
+                positionMarker.setLatLng(point);
+                accuracyRing.setLatLng(point);
+                accuracyRing.setRadius(Math.max(accuracy || 0, 1));
+                if (follow) {
+                    map.setView(point, Math.max(map.getZoom(), 15));
+                }
+            }
+        };
+    </script>
+</body>
+</html>

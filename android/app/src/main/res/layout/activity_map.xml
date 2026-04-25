@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B0E0A">
+
+    <WebView
+        android:id="@+id/map_webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="#CC10150F"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="10dp">
+
+        <ImageButton
+            android:id="@+id/map_close_button"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="#3342352A"
+            android:contentDescription="Close map"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:tint="#E6EED7" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:text="Predator SDR Map"
+            android:textColor="#E6EED7"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/map_follow_button"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="8dp"
+            android:background="#3342352A"
+            android:contentDescription="Toggle follow mode"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_mylocation"
+            android:tint="#E6EED7" />
+
+        <ImageButton
+            android:id="@+id/map_recenter_button"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="#3342352A"
+            android:contentDescription="Recenter map"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_compass"
+            android:tint="#E6EED7" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/map_gps_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="12dp"
+        android:background="#CC10150F"
+        android:paddingLeft="10dp"
+        android:paddingTop="8dp"
+        android:paddingRight="10dp"
+        android:paddingBottom="8dp"
+        android:text="Waiting for phone GPS"
+        android:textColor="#E6EED7"
+        android:textSize="12sp" />
+
+</FrameLayout>
