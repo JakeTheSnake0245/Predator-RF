@@ -20,4 +20,6 @@ android/app/assets
 android/.gradle-user/
 android/.gradle/
 android/app/.cxx/
+android/app/.cmake/
 android/app/build/
+.tmp/

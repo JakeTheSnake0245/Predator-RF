@@ -294,6 +294,25 @@ void MainWindow::draw() {
     if (gui::waterfall.selectedVFO != "") {
         vfo = gui::waterfall.vfos[gui::waterfall.selectedVFO];
     }
+    if (gui::waterfall.selectedVFO.rfind("Predator M", 0) == 0) {
+        std::string receiverName = "";
+        if (gui::waterfall.vfos.find("Radio") != gui::waterfall.vfos.end()) {
+            receiverName = "Radio";
+        }
+        else {
+            for (auto const& [name, _vfo] : gui::waterfall.vfos) {
+                if (name.rfind("Predator M", 0) != 0) {
+                    receiverName = name;
+                    break;
+                }
+            }
+        }
+        if (!receiverName.empty()) {
+            gui::waterfall.selectedVFO = receiverName;
+            gui::waterfall.selectedVFOChanged = true;
+            vfo = gui::waterfall.vfos[receiverName];
+        }
+    }
 
     // Handle VFO movement
     if (vfo != NULL) {
@@ -822,16 +841,37 @@ void MainWindow::draw() {
         return candidates;
     };
 
-    auto tunePredatorFrequency = [&](double frequency) {
-        tuner::tune(tuningMode, gui::waterfall.selectedVFO, frequency);
+    auto receiverVfoName = [&]() {
+        if (sigpath::vfoManager.vfoExists("Radio")) {
+            return std::string("Radio");
+        }
+        for (auto const& [name, _vfo] : gui::waterfall.vfos) {
+            if (name.rfind("Predator M", 0) != 0) {
+                return name;
+            }
+        }
+        return std::string("");
+    };
+
+    auto tuneReceiverFrequency = [&](double frequency) {
+        std::string rxVfo = receiverVfoName();
+        tuner::centerTuning(rxVfo, frequency);
+        if (!rxVfo.empty() && sigpath::vfoManager.vfoExists(rxVfo)) {
+            gui::waterfall.selectedVFO = rxVfo;
+            gui::waterfall.selectedVFOChanged = true;
+        }
         gui::freqSelect.setFrequency(frequency);
         gui::freqSelect.frequencyChanged = false;
         core::configManager.acquire();
         core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
-        if (vfo != NULL) {
-            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+        if (!rxVfo.empty() && gui::waterfall.vfos.find(rxVfo) != gui::waterfall.vfos.end()) {
+            core::configManager.conf["vfoOffsets"][rxVfo] = gui::waterfall.vfos[rxVfo]->generalOffset;
         }
         core::configManager.release(true);
+    };
+
+    auto tunePredatorFrequency = [&](double frequency) {
+        tuneReceiverFrequency(frequency);
     };
 
     auto stopPredatorScan = [&]() {
@@ -1020,12 +1060,17 @@ void MainWindow::draw() {
         double wholeBandwidth = std::max<double>(gui::waterfall.getBandwidth(), bandwidth);
         double centerFrequency = gui::waterfall.getCenterFrequency();
 
-        bool inScanMode = (predatorMissionMode == PREDATOR_MODE_SCAN || predatorMissionMode == PREDATOR_MODE_QUICKSCAN);
+        bool inScanMode = predatorScanRunning && (predatorMissionMode == PREDATOR_MODE_SCAN || predatorMissionMode == PREDATOR_MODE_QUICKSCAN);
+        if (inScanMode) {
+            hit["routeState"] = "tracked";
+            hit["routeVfo"] = "";
+            hit["routeFrequency"] = frequency;
+            hit["routeBandwidth"] = bandwidth;
+            hit["markerSlot"] = markerSlot;
+            return true;
+        }
 
-        // In scan mode the scan step manager owns the SDR frequency and the selected VFO.
-        // Retuning here would cause tuneScanCandidate to steer the Predator VFO instead
-        // of the main receiver on the very next call, breaking the scan stream entirely.
-        if (!inScanMode && std::abs(frequency - centerFrequency) > (wholeBandwidth * 0.48)) {
+        if (std::abs(frequency - centerFrequency) > (wholeBandwidth * 0.48)) {
             tunePredatorFrequency(frequency);
             centerFrequency = gui::waterfall.getCenterFrequency();
             wholeBandwidth = std::max<double>(gui::waterfall.getBandwidth(), bandwidth);
@@ -1034,23 +1079,15 @@ void MainWindow::draw() {
         double offset = frequency - centerFrequency;
         double sampleRate = std::max<double>(wholeBandwidth, bandwidth);
         if (!sigpath::vfoManager.vfoExists(vfoName)) {
-            sigpath::vfoManager.createVFO(vfoName, 0, offset, bandwidth, sampleRate, 200.0, std::max<double>(sampleRate, bandwidth), false);
+            sigpath::vfoManager.createVFO(vfoName, ImGui::WaterfallVFO::REF_CENTER, offset, bandwidth, sampleRate, 200.0, std::max<double>(sampleRate, bandwidth), false);
         }
         else {
+            sigpath::vfoManager.setReference(vfoName, ImGui::WaterfallVFO::REF_CENTER);
             sigpath::vfoManager.setSampleRate(vfoName, sampleRate, bandwidth);
             sigpath::vfoManager.setCenterOffset(vfoName, offset);
             sigpath::vfoManager.setBandwidth(vfoName, bandwidth);
         }
         sigpath::vfoManager.setColor(vfoName, IM_COL32(120, 220, 95, 255));
-
-        // Only steal selectedVFO outside scan mode — in scan mode selectedVFO must
-        // remain the main receiver so tuneScanCandidate drives the right VFO.
-        if (!inScanMode) {
-            gui::waterfall.selectedVFO = vfoName;
-            gui::waterfall.selectedVFOChanged = true;
-            gui::freqSelect.setFrequency(frequency);
-            gui::freqSelect.frequencyChanged = false;
-        }
 
         hit["routeState"] = "routed";
         hit["routeVfo"] = vfoName;
@@ -1188,38 +1225,65 @@ void MainWindow::draw() {
             double frequency;
             float strengthDb;
             float snrDb;
+            int bin;
         };
+        std::vector<PeakCandidate> rawPeaks;
         std::vector<PeakCandidate> peaks;
         int guardBins = std::max<int>(2, (int)std::ceil(predatorPeakMinSpacingHz / std::max<double>(pixelToFreq, 1.0)));
-        for (int i = 1; i < width - 1; i++) {
+        int edgeGuardBins = std::max<int>(2, width / 40);
+        int dcGuardBins = std::max<int>(2, (int)std::ceil(1500.0 / std::max<double>(pixelToFreq, 1.0)));
+        int centerBin = width / 2;
+        for (int i = 1 + edgeGuardBins; i < width - 1 - edgeGuardBins; i++) {
             if (fft[i] <= -900.0f || !std::isfinite(fft[i])) { continue; }
+            if (std::abs(i - centerBin) <= dcGuardBins) { continue; }
             if (fft[i] <= fft[i - 1] || fft[i] < fft[i + 1]) { continue; }
             float snrDb = fft[i] - noiseDb;
-            if (fft[i] < missionThreshold && snrDb < predatorPeakSnrDb) { continue; }
+            if (fft[i] < missionThreshold || snrDb < predatorPeakSnrDb) { continue; }
             double freq = lowFreq + ((double)i + 0.5) * pixelToFreq;
             if ((predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(freq)) || isExcludedFrequency(freq)) { continue; }
 
-            bool nearExistingPeak = false;
-            for (auto const& peak : peaks) {
-                if (std::abs(peak.frequency - freq) <= predatorPeakMinSpacingHz) {
-                    nearExistingPeak = true;
-                    break;
-                }
+            double weightedFreq = 0.0;
+            double weightedPower = 0.0;
+            int left = std::max<int>(edgeGuardBins, i - guardBins);
+            int right = std::min<int>(width - 1 - edgeGuardBins, i + guardBins);
+            float includeFloor = noiseDb + std::max<float>(3.0f, snrDb * 0.35f);
+            for (int b = left; b <= right; b++) {
+                if (fft[b] <= includeFloor || !std::isfinite(fft[b])) { continue; }
+                double bf = lowFreq + ((double)b + 0.5) * pixelToFreq;
+                if ((predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(bf)) || isExcludedFrequency(bf)) { continue; }
+                double weight = std::max<double>(0.0, fft[b] - includeFloor);
+                weightedFreq += bf * weight;
+                weightedPower += weight;
             }
-            if (nearExistingPeak) { continue; }
+            if (weightedPower > 0.0) {
+                freq = weightedFreq / weightedPower;
+            }
 
             PeakCandidate peak;
             peak.frequency = freq;
             peak.strengthDb = fft[i];
             peak.snrDb = snrDb;
-            peaks.push_back(peak);
-            i += guardBins;
+            peak.bin = i;
+            rawPeaks.push_back(peak);
         }
         gui::waterfall.releaseLatestFFT();
 
-        std::sort(peaks.begin(), peaks.end(), [](const PeakCandidate& a, const PeakCandidate& b) {
+        std::sort(rawPeaks.begin(), rawPeaks.end(), [](const PeakCandidate& a, const PeakCandidate& b) {
             return a.strengthDb > b.strengthDb;
         });
+
+        for (auto const& peak : rawPeaks) {
+            bool nearExistingPeak = false;
+            for (auto const& selectedPeak : peaks) {
+                if (std::abs(selectedPeak.frequency - peak.frequency) <= predatorPeakMinSpacingHz ||
+                    std::abs(selectedPeak.bin - peak.bin) <= guardBins) {
+                    nearExistingPeak = true;
+                    break;
+                }
+            }
+            if (nearExistingPeak) { continue; }
+            peaks.push_back(peak);
+        }
 
         int recorded = 0;
         int newUnknownHits = 0;
@@ -1328,6 +1392,7 @@ void MainWindow::draw() {
             if (vfoName.empty() || !sigpath::vfoManager.vfoExists(vfoName)) continue;
             double hitFreq = readJsonDouble(hits[i], "frequency", 0.0);
             if (hitFreq <= 0.0) continue;
+            sigpath::vfoManager.setReference(vfoName, ImGui::WaterfallVFO::REF_CENTER);
             sigpath::vfoManager.setCenterOffset(vfoName, hitFreq - currentCenter);
         }
     }
@@ -2958,4 +3023,3 @@ bool MainWindow::isPlaying() {
 void MainWindow::setFirstMenuRender() {
     firstMenuRender = true;
 }
-
