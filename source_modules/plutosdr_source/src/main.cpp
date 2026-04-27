@@ -13,7 +13,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "plutosdr_source",
-    /* Description:     */ "PlutoSDR source module for Predator SDR",
+    /* Description:     */ "PlutoSDR source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

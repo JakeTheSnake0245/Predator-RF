@@ -20,7 +20,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "m17_decoder",
-    /* Description:     */ "M17 Digital Voice Decoder for Predator SDR",
+    /* Description:     */ "M17 Digital Voice Decoder for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ -1

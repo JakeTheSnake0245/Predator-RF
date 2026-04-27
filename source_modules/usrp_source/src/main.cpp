@@ -16,7 +16,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "usrp_source",
-    /* Description:     */ "USRP source module for Predator SDR",
+    /* Description:     */ "USRP source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

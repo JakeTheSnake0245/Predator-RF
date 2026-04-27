@@ -6,7 +6,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "scheduler",
-    /* Description:     */ "Predator SDR Scheduler",
+    /* Description:     */ "Predator RF Scheduler",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ -1

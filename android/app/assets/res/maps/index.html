@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>SDR Predator Map</title>
+    <title>Predator RF Map</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
     <style>
         html, body, #map {
@@ -58,7 +58,7 @@
         const positionMarker = L.circleMarker([38.9072, -77.0369], positionStyle).addTo(map);
         const accuracyRing = L.circle([38.9072, -77.0369], { radius: 0, ...accuracyStyle }).addTo(map);
 
-        window.SDRPredator = {
+        window.PredatorRFMap = {
             updatePosition(lat, lon, accuracy, follow) {
                 const point = [lat, lon];
                 positionMarker.setLatLng(point);

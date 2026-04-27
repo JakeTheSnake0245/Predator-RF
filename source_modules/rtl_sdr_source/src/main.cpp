@@ -16,7 +16,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "rtl_sdr_source",
-    /* Description:     */ "RTL-SDR source module for Predator SDR",
+    /* Description:     */ "RTL-SDR source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

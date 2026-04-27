@@ -13,7 +13,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "rtl_tcp_source",
-    /* Description:     */ "RTL-TCP source module for Predator SDR",
+    /* Description:     */ "RTL-TCP source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 1, 1, 0,
     /* Max instances    */ 1

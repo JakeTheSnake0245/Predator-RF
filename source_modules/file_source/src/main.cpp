@@ -17,7 +17,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "file_source",
-    /* Description:     */ "Wav file source module for Predator SDR",
+    /* Description:     */ "Wav file source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 1,
     /* Max instances    */ 1

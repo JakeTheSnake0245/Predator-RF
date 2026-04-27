@@ -59,7 +59,7 @@ namespace core {
 
 // main
 int sdrpp_main(int argc, char* argv[]) {
-    flog::info("SDR Predator v" VERSION_STR);
+    flog::info("Predator RF v" VERSION_STR);
 
 #ifdef IS_MACOS_BUNDLE
     // If this is a MacOS .app, CD to the correct directory
@@ -147,11 +147,11 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["menuElements"][3]["name"] = "Sinks";
     defConfig["menuElements"][3]["open"] = true;
 
-    defConfig["menuElements"][3]["name"] = "Frequency Manager";
-    defConfig["menuElements"][3]["open"] = true;
-
-    defConfig["menuElements"][4]["name"] = "VFO Color";
+    defConfig["menuElements"][4]["name"] = "Frequency Manager";
     defConfig["menuElements"][4]["open"] = true;
+
+    defConfig["menuElements"][5]["name"] = "VFO Color";
+    defConfig["menuElements"][5]["open"] = true;
 
     defConfig["menuElements"][6]["name"] = "Band Plan";
     defConfig["menuElements"][6]["open"] = true;
@@ -167,34 +167,44 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["moduleInstances"]["Airspy Source"]["enabled"] = true;
     defConfig["moduleInstances"]["AirspyHF+ Source"]["module"] = "airspyhf_source";
     defConfig["moduleInstances"]["AirspyHF+ Source"]["enabled"] = true;
+#ifndef __ANDROID__
     defConfig["moduleInstances"]["Audio Source"]["module"] = "audio_source";
     defConfig["moduleInstances"]["Audio Source"]["enabled"] = true;
     defConfig["moduleInstances"]["BladeRF Source"]["module"] = "bladerf_source";
     defConfig["moduleInstances"]["BladeRF Source"]["enabled"] = true;
+#endif
     defConfig["moduleInstances"]["File Source"]["module"] = "file_source";
     defConfig["moduleInstances"]["File Source"]["enabled"] = true;
     defConfig["moduleInstances"]["HackRF Source"]["module"] = "hackrf_source";
     defConfig["moduleInstances"]["HackRF Source"]["enabled"] = true;
     defConfig["moduleInstances"]["Hermes Source"]["module"] = "hermes_source";
     defConfig["moduleInstances"]["Hermes Source"]["enabled"] = true;
+#ifndef __ANDROID__
     defConfig["moduleInstances"]["LimeSDR Source"]["module"] = "limesdr_source";
     defConfig["moduleInstances"]["LimeSDR Source"]["enabled"] = true;
+#endif
     defConfig["moduleInstances"]["PlutoSDR Source"]["module"] = "plutosdr_source";
     defConfig["moduleInstances"]["PlutoSDR Source"]["enabled"] = true;
+#ifndef __ANDROID__
     defConfig["moduleInstances"]["PerseusSDR Source"]["module"] = "perseus_source";
     defConfig["moduleInstances"]["PerseusSDR Source"]["enabled"] = true;
+#endif
     defConfig["moduleInstances"]["RFspace Source"]["module"] = "rfspace_source";
     defConfig["moduleInstances"]["RFspace Source"]["enabled"] = true;
     defConfig["moduleInstances"]["RTL-SDR Source"]["module"] = "rtl_sdr_source";
     defConfig["moduleInstances"]["RTL-SDR Source"]["enabled"] = true;
     defConfig["moduleInstances"]["RTL-TCP Source"]["module"] = "rtl_tcp_source";
     defConfig["moduleInstances"]["RTL-TCP Source"]["enabled"] = true;
+#ifndef __ANDROID__
     defConfig["moduleInstances"]["SDRplay Source"]["module"] = "sdrplay_source";
     defConfig["moduleInstances"]["SDRplay Source"]["enabled"] = true;
-    defConfig["moduleInstances"]["Predator SDR Server Source"]["module"] = "sdrpp_server_source";
-    defConfig["moduleInstances"]["Predator SDR Server Source"]["enabled"] = true;
+#endif
+    defConfig["moduleInstances"]["Predator RF Server Source"]["module"] = "sdrpp_server_source";
+    defConfig["moduleInstances"]["Predator RF Server Source"]["enabled"] = true;
+#ifndef __ANDROID__
     defConfig["moduleInstances"]["SoapySDR Source"]["module"] = "soapy_source";
     defConfig["moduleInstances"]["SoapySDR Source"]["enabled"] = true;
+#endif
     defConfig["moduleInstances"]["SpyServer Source"]["module"] = "spyserver_source";
     defConfig["moduleInstances"]["SpyServer Source"]["enabled"] = true;
 
@@ -215,7 +225,7 @@ int sdrpp_main(int argc, char* argv[]) {
 
 
     // Themes
-    defConfig["theme"] = "SDR Predator";
+    defConfig["theme"] = "Predator RF";
 #ifdef __ANDROID__
     defConfig["uiScale"] = 3.0f;
 #else
@@ -229,11 +239,33 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["predatorMissionMode"] = 1;
     defConfig["predatorTab"] = 0;
     defConfig["predatorQuickFilter"] = 0;
-    defConfig["predatorThreshold"] = -55.0f;
+    defConfig["predatorHitSortMode"] = 0;
+    defConfig["predatorEventFilter"] = 0;
+    defConfig["predatorSessionNote"] = "";
+    defConfig["predatorLanguage"] = "en-US";
+    defConfig["predatorThreshold"] = -75.0f;
     defConfig["predatorDwellMs"] = 1000;
     defConfig["predatorQuickScanDelayMs"] = 250;
     defConfig["predatorQuickScanDurationMs"] = 5000;
     defConfig["predatorRecordAudio"] = true;
+    defConfig["predatorPeakDetectionEnabled"] = true;
+    defConfig["predatorPeakSnrDb"] = 5.0f;
+    defConfig["predatorPeakMinSpacingHz"] = 12500.0;
+    defConfig["predatorPeakMaxPerDwell"] = 3;
+    defConfig["predatorHitClusterHz"] = 3000.0;
+    defConfig["predatorMarkerSlots"] = 4;
+    defConfig["predatorHoldOnNewHit"] = false;
+    defConfig["predatorSuppressDuplicateHits"] = true;
+    defConfig["predatorDuplicateHitWindowSec"] = 20;
+    defConfig["predatorExtendDwellOnStrongHit"] = true;
+    defConfig["predatorStrongHitSnrDb"] = 18.0f;
+    defConfig["predatorClassifyAutoMarker"] = true;
+    defConfig["predatorDsdFmeEnabled"] = false;
+    defConfig["predatorDsdFmeHost"] = "127.0.0.1";
+    defConfig["predatorDsdFmePort"] = 7355;
+    defConfig["predatorDsdFmeMode"] = "TCP Direct Link Audio";
+    defConfig["predatorVoiceOutputPath"] = "%ROOT%/voice";
+    defConfig["predatorDataOutputPath"] = "%ROOT%/data";
     defConfig["predatorSearchBands"] = json::array();
     defConfig["predatorSearchBands"][0]["name"] = "VHF";
     defConfig["predatorSearchBands"][0]["start"] = 130000000.0;
@@ -249,9 +281,16 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["predatorSearchBands"][2]["enabled"] = true;
     defConfig["predatorTargets"] = json::array();
     defConfig["predatorExcludes"] = json::array();
+    defConfig["predatorHits"] = json::array();
+    defConfig["predatorEvents"] = json::array();
+    defConfig["predatorNetworkAliases"] = json::object();
     defConfig["showMenu"] = true;
     defConfig["showWaterfall"] = true;
+#ifdef __ANDROID__
+    defConfig["source"] = "HackRF";
+#else
     defConfig["source"] = "";
+#endif
     defConfig["decimationPower"] = 0;
     defConfig["iqCorrection"] = false;
     defConfig["invertIQ"] = false;
@@ -301,6 +340,7 @@ int sdrpp_main(int argc, char* argv[]) {
 
     core::configManager.conf["modules"][modCount++] = "airspy_source.so";
     core::configManager.conf["modules"][modCount++] = "airspyhf_source.so";
+    core::configManager.conf["modules"][modCount++] = "file_source.so";
     core::configManager.conf["modules"][modCount++] = "hackrf_source.so";
     core::configManager.conf["modules"][modCount++] = "hermes_source.so";
     core::configManager.conf["modules"][modCount++] = "plutosdr_source.so";
@@ -321,6 +361,23 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "recorder.so";
     core::configManager.conf["modules"][modCount++] = "rigctl_server.so";
     core::configManager.conf["modules"][modCount++] = "scanner.so";
+
+    const char* unsupportedAndroidInstances[] = {
+        "Audio Source",
+        "BladeRF Source",
+        "LimeSDR Source",
+        "PerseusSDR Source",
+        "SDRplay Source",
+        "SoapySDR Source"
+    };
+    for (auto name : unsupportedAndroidInstances) {
+        if (core::configManager.conf["moduleInstances"].contains(name)) {
+            core::configManager.conf["moduleInstances"].erase(name);
+        }
+    }
+    if (!core::configManager.conf["moduleInstances"].contains("File Source")) {
+        core::configManager.conf["moduleInstances"]["File Source"] = defConfig["moduleInstances"]["File Source"];
+    }
 #endif
 
     // Fix missing elements in config

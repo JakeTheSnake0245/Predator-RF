@@ -15,7 +15,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "sdrpp_server_source",
-    /* Description:     */ "Predator SDR Server source module for Predator SDR",
+    /* Description:     */ "Predator RF Server source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1
@@ -53,12 +53,12 @@ public:
         port = config.conf["port"];
         config.release();
 
-        sigpath::sourceManager.registerSource("Predator SDR Server", &handler);
+        sigpath::sourceManager.registerSource("Predator RF Server", &handler);
     }
 
     ~SDRPPServerSourceModule() {
         stop(this);
-        sigpath::sourceManager.unregisterSource("Predator SDR Server");
+        sigpath::sourceManager.unregisterSource("Predator RF Server");
     }
 
     void postInit() {}

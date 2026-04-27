@@ -16,7 +16,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "frequency_manager",
-    /* Description:     */ "Frequency manager module for Predator SDR",
+    /* Description:     */ "Frequency manager module for Predator RF",
     /* Author:          */ "Ryzerth;Zimm",
     /* Version:         */ 0, 3, 0,
     /* Max instances    */ 1

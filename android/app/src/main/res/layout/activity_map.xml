@@ -33,7 +33,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="10dp"
             android:layout_weight="1"
-            android:text="Predator SDR Map"
+            android:text="Predator RF Map"
             android:textColor="#E6EED7"
             android:textSize="16sp"
             android:textStyle="bold" />

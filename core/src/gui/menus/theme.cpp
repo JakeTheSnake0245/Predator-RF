@@ -15,9 +15,13 @@ namespace thememenu {
         std::string selectedThemeName = core::configManager.conf["theme"];
         core::configManager.release();
 
-        // Select theme by name, if not available, apply SDR Predator then Dark
+        // Select theme by name, if not available, apply Predator RF then Dark
         themeNames = gui::themeManager.getThemeNames();
         auto it = std::find(themeNames.begin(), themeNames.end(), selectedThemeName);
+        if (it == themeNames.end()) {
+            it = std::find(themeNames.begin(), themeNames.end(), "Predator RF");
+            selectedThemeName = "Predator RF";
+        }
         if (it == themeNames.end()) {
             it = std::find(themeNames.begin(), themeNames.end(), "SDR Predator");
             selectedThemeName = "SDR Predator";

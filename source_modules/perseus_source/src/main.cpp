@@ -14,7 +14,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "perseus_source",
-    /* Description:     */ "Perseus SDR source module for Predator SDR",
+    /* Description:     */ "Perseus SDR source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

@@ -14,7 +14,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "spectran_http_source",
-    /* Description:     */ "Spectran V6 HTTP source module for Predator SDR",
+    /* Description:     */ "Spectran V6 HTTP source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

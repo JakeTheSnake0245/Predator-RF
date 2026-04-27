@@ -15,7 +15,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "hermes_source",
-    /* Description:     */ "Hermes Lite 2 source module for Predator SDR",
+    /* Description:     */ "Hermes Lite 2 source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

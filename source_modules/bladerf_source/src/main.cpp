@@ -18,7 +18,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "bladerf_source",
-    /* Description:     */ "BladeRF source module for Predator SDR",
+    /* Description:     */ "BladeRF source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

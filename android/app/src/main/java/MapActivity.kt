@@ -156,7 +156,7 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun pushLocationToMap(location: Location, follow: Boolean) {
-        val js = "window.SDRPredator && window.SDRPredator.updatePosition(${location.latitude}, ${location.longitude}, ${location.accuracy}, ${if (follow) "true" else "false"});"
+        val js = "window.PredatorRFMap && window.PredatorRFMap.updatePosition(${location.latitude}, ${location.longitude}, ${location.accuracy}, ${if (follow) "true" else "false"});"
         mapView.evaluateJavascript(js, null)
     }
 }

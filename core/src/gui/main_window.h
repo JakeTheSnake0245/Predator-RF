@@ -8,6 +8,7 @@
 #include <utils/event.h>
 #include <mutex>
 #include <gui/tuner.h>
+#include <vector>
 
 #define WINDOW_FLAGS ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground
 
@@ -80,6 +81,32 @@ private:
     int predatorMissionMode = PREDATOR_MODE_CLASSIFY;
     int predatorTab = PREDATOR_TAB_SPECTRUM;
     int predatorQuickFilter = 0;
+    int predatorHitSortMode = 0;
+    int predatorEventFilter = 0;
+    std::string predatorLanguage = "en-US";
+    bool predatorScanRunning = false;
+    bool predatorScanPaused = false;
+    bool predatorPeakDetectionEnabled = true;
+    int predatorScanIndex = 0;
+    double predatorScanLastStepAt = 0.0;
+    double predatorLastPeakSweepAt = 0.0;
+    double predatorQuickScanStartedAt = 0.0;
+    double predatorScanLastFrequency = 0.0;
+    double predatorLastAutoEventAt = 0.0;
+    double predatorLastAutoEventFrequency = 0.0;
+    double predatorSelectedHitFrequency = 0.0;
+    bool predatorHoldOnNewHit = true;
+    bool predatorSuppressDuplicateHits = true;
+    bool predatorExtendDwellOnStrongHit = true;
+    bool predatorClassifyAutoMarker = true;
+    float predatorPeakSnrDb = 8.0f;
+    float predatorStrongHitSnrDb = 18.0f;
+    double predatorPeakMinSpacingHz = 12500.0;
+    double predatorLastClassifySweepAt = 0.0;
+    int predatorPeakMaxPerDwell = 3;
+    int predatorDuplicateHitWindowSec = 20;
+    int predatorMarkerSlots = 4;
+    std::string predatorScanStatus = "Idle";
 
     bool initComplete = false;
     bool autostart = false;

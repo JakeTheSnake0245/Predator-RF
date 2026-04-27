@@ -119,6 +119,17 @@ void VFOManager::deleteVFO(VFOManager::VFO* vfo) {
     onVfoDeleted.emit(name);
 }
 
+void VFOManager::deleteVFO(std::string name) {
+    if (vfos.find(name) == vfos.end()) {
+        return;
+    }
+    VFOManager::VFO* vfo = vfos[name];
+    onVfoDelete.emit(vfo);
+    vfos.erase(name);
+    delete vfo;
+    onVfoDeleted.emit(name);
+}
+
 void VFOManager::setOffset(std::string name, double offset) {
     if (vfos.find(name) == vfos.end()) {
         return;

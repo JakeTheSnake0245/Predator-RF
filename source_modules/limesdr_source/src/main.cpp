@@ -13,7 +13,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "limesdr_source",
-    /* Description:     */ "LimeSDR source module for Predator SDR",
+    /* Description:     */ "LimeSDR source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

@@ -17,7 +17,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "airspy_source",
-    /* Description:     */ "Airspy source module for Predator SDR",
+    /* Description:     */ "Airspy source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

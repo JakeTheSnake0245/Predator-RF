@@ -14,6 +14,7 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.Manifest;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.KeyEvent;
@@ -56,7 +57,7 @@ private val usbReceiver = object : BroadcastReceiver() {
 }
 
 class MainActivity : NativeActivity() {
-    private val TAG : String = "Predator SDR";
+    private val TAG : String = "Predator RF";
     public var usbManager : UsbManager? = null;
     public var SDR_device : UsbDevice? = null;
     public var SDR_conn : UsbDeviceConnection? = null;
@@ -90,6 +91,16 @@ class MainActivity : NativeActivity() {
         }
     }
 
+    fun requestMissingPermissions(vararg permissions: String) {
+        val missing = permissions.filter {
+            PermissionChecker.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }.toTypedArray()
+
+        if (missing.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missing, 1)
+        }
+    }
+
     public fun hideSystemBars() {
         val decorView = getWindow().getDecorView();
         val uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
@@ -101,28 +112,32 @@ class MainActivity : NativeActivity() {
         hideSystemBars();
 
         // Ask for required permissions, without these the app cannot run.
-        checkAndAsk(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-        checkAndAsk(Manifest.permission.READ_EXTERNAL_STORAGE);
-        checkAndAsk(Manifest.permission.ACCESS_FINE_LOCATION);
-        checkAndAsk(Manifest.permission.ACCESS_COARSE_LOCATION);
+        requestMissingPermissions(
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        );
 
         // TODO: Have the main code wait until these two permissions are available
 
         // Register events
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager;
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager;
-        val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(ACTION_USB_PERMISSION), 0)
+        val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(ACTION_USB_PERMISSION).setPackage(packageName), PendingIntent.FLAG_MUTABLE)
         val filter = IntentFilter(ACTION_USB_PERMISSION)
-        registerReceiver(usbReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        }
+        else {
+            registerReceiver(usbReceiver, filter)
+        }
 
         // Get permission for all USB devices
         val devList = usbManager!!.getDeviceList();
         for ((_, dev) in devList) {
             usbManager!!.requestPermission(dev, permissionIntent);
         }
-
-        // Ask for internet permission
-        checkAndAsk(Manifest.permission.INTERNET);
 
         super.onCreate(savedInstanceState)
         startLocationUpdates();

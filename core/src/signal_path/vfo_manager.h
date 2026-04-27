@@ -41,6 +41,7 @@ public:
 
     VFOManager::VFO* createVFO(std::string name, int reference, double offset, double bandwidth, double sampleRate, double minBandwidth, double maxBandwidth, bool bandwidthLocked);
     void deleteVFO(VFOManager::VFO* vfo);
+    void deleteVFO(std::string name);
 
     void setOffset(std::string name, double offset);
     double getOffset(std::string name);

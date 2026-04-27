@@ -6,6 +6,7 @@
 #include <complex>
 #include <gui/widgets/waterfall.h>
 #include <gui/widgets/frequency_select.h>
+#include <gui/widgets/folder_select.h>
 #include <signal_path/iq_frontend.h>
 #include <gui/icons.h>
 #include <gui/widgets/bandplan.h>
@@ -22,6 +23,11 @@
 #include <gui/menus/theme.h>
 #include <gui/dialogs/credits.h>
 #include <filesystem>
+#include <fstream>
+#include <cmath>
+#include <cstring>
+#include <ctime>
+#include <algorithm>
 #include <signal_path/source.h>
 #include <gui/dialogs/loading_screen.h>
 #include <gui/colormaps.h>
@@ -207,6 +213,20 @@ void MainWindow::init() {
     predatorMissionMode = std::clamp<int>((int)core::configManager.conf["predatorMissionMode"], PREDATOR_MODE_MANUAL, PREDATOR_MODE_QUICKSCAN);
     predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_SYSTEM);
     predatorQuickFilter = std::clamp<int>((int)core::configManager.conf["predatorQuickFilter"], 0, 3);
+    predatorHitSortMode = std::clamp<int>((int)core::configManager.conf["predatorHitSortMode"], 0, 5);
+    predatorEventFilter = std::clamp<int>((int)core::configManager.conf["predatorEventFilter"], 0, 5);
+    predatorLanguage = (std::string)core::configManager.conf["predatorLanguage"];
+    predatorPeakDetectionEnabled = core::configManager.conf["predatorPeakDetectionEnabled"];
+    predatorPeakSnrDb = core::configManager.conf["predatorPeakSnrDb"];
+    predatorPeakMinSpacingHz = core::configManager.conf["predatorPeakMinSpacingHz"];
+    predatorPeakMaxPerDwell = core::configManager.conf["predatorPeakMaxPerDwell"];
+    predatorMarkerSlots = core::configManager.conf["predatorMarkerSlots"];
+    predatorHoldOnNewHit = core::configManager.conf["predatorHoldOnNewHit"];
+    predatorSuppressDuplicateHits = core::configManager.conf["predatorSuppressDuplicateHits"];
+    predatorDuplicateHitWindowSec = core::configManager.conf["predatorDuplicateHitWindowSec"];
+    predatorExtendDwellOnStrongHit = core::configManager.conf["predatorExtendDwellOnStrongHit"];
+    predatorStrongHitSnrDb = core::configManager.conf["predatorStrongHitSnrDb"];
+    predatorClassifyAutoMarker = core::configManager.conf["predatorClassifyAutoMarker"];
 
     tuningMode = core::configManager.conf["centerTuning"] ? tuner::TUNER_MODE_CENTER : tuner::TUNER_MODE_NORMAL;
     gui::waterfall.VFOMoveSingleClick = (tuningMode == tuner::TUNER_MODE_CENTER);
@@ -338,18 +358,135 @@ void MainWindow::draw() {
         core::configManager.release(true);
     }
 
+    bool chineseUi = (predatorLanguage == "zh-Hant");
+    auto T = [&](const char* text) -> const char* {
+        if (!chineseUi) { return text; }
+        if (strcmp(text, "Manual") == 0) { return "\u624b\u52d5"; }
+        if (strcmp(text, "Classify") == 0) { return "\u5206\u985e"; }
+        if (strcmp(text, "Scan") == 0) { return "\u6383\u63cf"; }
+        if (strcmp(text, "QuickScan") == 0) { return "\u5feb\u901f\u6383\u63cf"; }
+        if (strcmp(text, "Spectrum") == 0) { return "\u983b\u8b5c"; }
+        if (strcmp(text, "Hits & Events") == 0) { return "\u547d\u4e2d\u8207\u4e8b\u4ef6"; }
+        if (strcmp(text, "Network") == 0) { return "\u7db2\u8def"; }
+        if (strcmp(text, "Map") == 0) { return "\u5730\u5716"; }
+        if (strcmp(text, "Mission Config") == 0) { return "\u4efb\u52d9\u8a2d\u5b9a"; }
+        if (strcmp(text, "System") == 0) { return "\u7cfb\u7d71"; }
+        if (strcmp(text, "All") == 0) { return "\u5168\u90e8"; }
+        if (strcmp(text, "Target") == 0 || strcmp(text, "Targets") == 0) { return "\u76ee\u6a19"; }
+        if (strcmp(text, "Exclude") == 0 || strcmp(text, "Excludes") == 0) { return "\u6392\u9664"; }
+        if (strcmp(text, "Unknown") == 0) { return "\u672a\u77e5"; }
+        if (strcmp(text, "LIVE") == 0) { return "\u5373\u6642"; }
+        if (strcmp(text, "READY") == 0 || strcmp(text, "Ready") == 0) { return "\u5c31\u7dd2"; }
+        if (strcmp(text, "NOT READY") == 0) { return "\u672a\u5c31\u7dd2"; }
+        if (strcmp(text, "Select SDR") == 0) { return "\u9078\u64c7 SDR"; }
+        if (strcmp(text, "GPS READY") == 0) { return "GPS \u5c31\u7dd2"; }
+        if (strcmp(text, "GPS WAIT") == 0) { return "\u7b49\u5f85 GPS"; }
+        if (strcmp(text, "Running") == 0 || strcmp(text, "Streaming") == 0) { return "\u57f7\u884c\u4e2d"; }
+        if (strcmp(text, "Paused") == 0) { return "\u5df2\u66ab\u505c"; }
+        if (strcmp(text, "Idle") == 0) { return "\u9592\u7f6e"; }
+        if (strcmp(text, "Start Listening") == 0) { return "\u958b\u59cb\u76e3\u807d"; }
+        if (strcmp(text, "Stop Listening") == 0) { return "\u505c\u6b62\u76e3\u807d"; }
+        if (strcmp(text, "Start Scan") == 0) { return "\u958b\u59cb\u6383\u63cf"; }
+        if (strcmp(text, "Start QuickScan") == 0) { return "\u958b\u59cb\u5feb\u901f\u6383\u63cf"; }
+        if (strcmp(text, "Pause") == 0) { return "\u66ab\u505c"; }
+        if (strcmp(text, "Resume") == 0) { return "\u7e7c\u7e8c"; }
+        if (strcmp(text, "Stop") == 0) { return "\u505c\u6b62"; }
+        if (strcmp(text, "Previous") == 0) { return "\u4e0a\u4e00\u500b"; }
+        if (strcmp(text, "Next") == 0) { return "\u4e0b\u4e00\u500b"; }
+        if (strcmp(text, "Target Current") == 0) { return "\u76ee\u524d\u8a2d\u70ba\u76ee\u6a19"; }
+        if (strcmp(text, "Exclude Current") == 0) { return "\u76ee\u524d\u8a2d\u70ba\u6392\u9664"; }
+        if (strcmp(text, "Log Event") == 0) { return "\u8a18\u9304\u4e8b\u4ef6"; }
+        if (strcmp(text, "Peak Detection") == 0) { return "\u5cf0\u503c\u5075\u6e2c"; }
+        if (strcmp(text, "Detect Peaks") == 0) { return "\u5075\u6e2c\u5cf0\u503c"; }
+        if (strcmp(text, "Peak SNR") == 0) { return "\u5cf0\u503c SNR"; }
+        if (strcmp(text, "Peak Spacing Hz") == 0) { return "\u5cf0\u503c\u9593\u8ddd Hz"; }
+        if (strcmp(text, "Max Peaks / Dwell") == 0) { return "\u6bcf\u6b21\u505c\u7559\u6700\u591a\u5cf0\u503c"; }
+        if (strcmp(text, "Detected Hits") == 0) { return "\u5075\u6e2c\u547d\u4e2d"; }
+        if (strcmp(text, "Selected Hit") == 0) { return "\u9078\u53d6\u547d\u4e2d"; }
+        if (strcmp(text, "Marker Pool") == 0) { return "\u6a19\u8a18\u6c60"; }
+        if (strcmp(text, "Select") == 0) { return "\u9078\u53d6"; }
+        if (strcmp(text, "Tune") == 0) { return "\u8abf\u8ae7"; }
+        if (strcmp(text, "Mark Viewed") == 0) { return "\u6a19\u8a18\u5df2\u8b80"; }
+        if (strcmp(text, "Rename / Notes") == 0) { return "\u91cd\u547d\u540d / \u5099\u8a3b"; }
+        if (strcmp(text, "Hit Sort") == 0) { return "\u547d\u4e2d\u6392\u5e8f"; }
+        if (strcmp(text, "Event Filter") == 0) { return "\u4e8b\u4ef6\u7be9\u9078"; }
+        if (strcmp(text, "Session Export") == 0) { return "\u5de5\u4f5c\u968e\u6bb5\u532f\u51fa"; }
+        if (strcmp(text, "Export Session JSON") == 0) { return "\u532f\u51fa\u5de5\u4f5c\u968e\u6bb5 JSON"; }
+        if (strcmp(text, "Assign Marker") == 0) { return "\u6307\u6d3e\u6a19\u8a18"; }
+        if (strcmp(text, "Release Marker") == 0) { return "\u91cb\u653e\u6a19\u8a18"; }
+        if (strcmp(text, "Decoder") == 0) { return "\u89e3\u78bc\u5668"; }
+        if (strcmp(text, "Promote Target") == 0) { return "\u5347\u7d1a\u70ba\u76ee\u6a19"; }
+        if (strcmp(text, "Promote Exclude") == 0) { return "\u5347\u7d1a\u70ba\u6392\u9664"; }
+        if (strcmp(text, "Decoder Outputs") == 0) { return "\u89e3\u78bc\u8f38\u51fa"; }
+        if (strcmp(text, "Voice Extractions") == 0) { return "\u8a9e\u97f3\u64f7\u53d6"; }
+        if (strcmp(text, "Data Extractions") == 0) { return "\u8cc7\u6599\u64f7\u53d6"; }
+        if (strcmp(text, "Network Topology") == 0) { return "\u7db2\u8def\u62d3\u64b2"; }
+        if (strcmp(text, "Network Node Actions") == 0) { return "\u7db2\u8def\u7bc0\u9ede\u64cd\u4f5c"; }
+        if (strcmp(text, "Target Node") == 0) { return "\u7bc0\u9ede\u8a2d\u70ba\u76ee\u6a19"; }
+        if (strcmp(text, "Exclude Node") == 0) { return "\u7bc0\u9ede\u8a2d\u70ba\u6392\u9664"; }
+        if (strcmp(text, "Mark Hits") == 0) { return "\u6a19\u8a18\u547d\u4e2d"; }
+        if (strcmp(text, "Route VFO") == 0) { return "\u8def\u7531 VFO"; }
+        if (strcmp(text, "Release Route") == 0) { return "\u91cb\u653e\u8def\u7531"; }
+        if (strcmp(text, "Alias") == 0) { return "\u5225\u540d"; }
+        if (strcmp(text, "Decoder Events") == 0) { return "\u89e3\u78bc\u4e8b\u4ef6"; }
+        if (strcmp(text, "Marker Slots") == 0) { return "\u6a19\u8a18\u6578\u91cf"; }
+        if (strcmp(text, "Hold on New Hit") == 0) { return "\u65b0\u547d\u4e2d\u6642\u505c\u7559"; }
+        if (strcmp(text, "Suppress Duplicate Hits") == 0) { return "\u6291\u5236\u91cd\u8907\u547d\u4e2d"; }
+        if (strcmp(text, "Duplicate Window (s)") == 0) { return "\u91cd\u8907\u8996\u7a97\uff08\u79d2\uff09"; }
+        if (strcmp(text, "Extend Dwell on Strong Hit") == 0) { return "\u5f37\u8a0a\u865f\u5ef6\u9577\u505c\u7559"; }
+        if (strcmp(text, "Strong Hit SNR") == 0) { return "\u5f37\u547d\u4e2d SNR"; }
+        if (strcmp(text, "Classify Auto-Marker") == 0) { return "\u5206\u985e\u81ea\u52d5\u6a19\u8a18"; }
+        if (strcmp(text, "Scan Progress") == 0) { return "\u6383\u63cf\u9032\u5ea6"; }
+        if (strcmp(text, "Display Controls") == 0) { return "\u986f\u793a\u63a7\u5236"; }
+        if (strcmp(text, "Band Plan") == 0) { return "\u983b\u6bb5\u8868"; }
+        if (strcmp(text, "Current Mission Mode") == 0) { return "\u76ee\u524d\u4efb\u52d9\u6a21\u5f0f"; }
+        if (strcmp(text, "Mission Run") == 0) { return "\u4efb\u52d9\u57f7\u884c"; }
+        if (strcmp(text, "Quick Actions") == 0) { return "\u5feb\u901f\u64cd\u4f5c"; }
+        if (strcmp(text, "Open SDR / Settings") == 0) { return "\u958b\u555f SDR / \u8a2d\u5b9a"; }
+        if (strcmp(text, "Open Mission Config") == 0) { return "\u958b\u555f\u4efb\u52d9\u8a2d\u5b9a"; }
+        if (strcmp(text, "Quick Filter") == 0) { return "\u5feb\u901f\u7be9\u9078"; }
+        if (strcmp(text, "Event Log") == 0) { return "\u4e8b\u4ef6\u8a18\u9304"; }
+        if (strcmp(text, "No entries.") == 0) { return "\u6c92\u6709\u9805\u76ee\u3002"; }
+        if (strcmp(text, "Clear Events") == 0) { return "\u6e05\u9664\u4e8b\u4ef6"; }
+        if (strcmp(text, "Search Bands") == 0) { return "\u641c\u5c0b\u983b\u6bb5"; }
+        if (strcmp(text, "Network Workflow") == 0) { return "\u7db2\u8def\u6d41\u7a0b"; }
+        if (strcmp(text, "Current Workflow Assets") == 0) { return "\u76ee\u524d\u6d41\u7a0b\u8cc7\u7522"; }
+        if (strcmp(text, "Phone Map") == 0) { return "\u624b\u6a5f\u5730\u5716"; }
+        if (strcmp(text, "Open Tactical Map") == 0) { return "\u958b\u555f\u6230\u8853\u5730\u5716"; }
+        if (strcmp(text, "DF Status") == 0) { return "\u6e2c\u5411\u72c0\u614b"; }
+        if (strcmp(text, "Mission Modes") == 0) { return "\u4efb\u52d9\u6a21\u5f0f"; }
+        if (strcmp(text, "Scan / QuickScan Settings") == 0) { return "\u6383\u63cf / \u5feb\u901f\u6383\u63cf\u8a2d\u5b9a"; }
+        if (strcmp(text, "Operator Note") == 0) { return "\u64cd\u4f5c\u5099\u8a3b"; }
+        if (strcmp(text, "DSD-FME Digital Voice") == 0) { return "DSD-FME \u6578\u4f4d\u8a9e\u97f3"; }
+        if (strcmp(text, "Enable DSD-FME Bridge") == 0) { return "\u555f\u7528 DSD-FME \u6a4b\u63a5"; }
+        if (strcmp(text, "Bridge Host") == 0) { return "\u6a4b\u63a5\u4e3b\u6a5f"; }
+        if (strcmp(text, "Bridge Port") == 0) { return "\u6a4b\u63a5\u57e0"; }
+        if (strcmp(text, "Bridge Mode") == 0) { return "\u6a4b\u63a5\u6a21\u5f0f"; }
+        if (strcmp(text, "Language") == 0) { return "\u8a9e\u8a00"; }
+        if (strcmp(text, "Source & Device") == 0) { return "\u4f86\u6e90\u8207\u88dd\u7f6e"; }
+        if (strcmp(text, "Audio / Sinks") == 0) { return "\u97f3\u8a0a / \u8f38\u51fa"; }
+        if (strcmp(text, "Display & Band Plan") == 0) { return "\u986f\u793a\u8207\u983b\u6bb5\u8868"; }
+        if (strcmp(text, "Appearance") == 0) { return "\u5916\u89c0"; }
+        if (strcmp(text, "Module Manager") == 0) { return "\u6a21\u7d44\u7ba1\u7406"; }
+        if (strcmp(text, "Status") == 0) { return "\u72c0\u614b"; }
+        if (strcmp(text, "Legacy Advanced Menus") == 0) { return "\u820a\u7248\u9032\u968e\u9078\u55ae"; }
+        if (strcmp(text, "Debug") == 0) { return "\u9664\u932f"; }
+        if (strcmp(text, "None") == 0) { return "\u7121"; }
+        if (strcmp(text, "Waiting") == 0) { return "\u7b49\u5f85\u4e2d"; }
+        return text;
+    };
     const char* missionModes[] = {
-        "Manual",
-        "Classify",
-        "Scan",
-        "QuickScan"
+        T("Manual"),
+        T("Classify"),
+        T("Scan"),
+        T("QuickScan")
     };
 
     const char* missionModeDescriptions[] = {
-        "Direct operator tuning and marker ownership.",
-        "Keep manual control while idle resources watch the band.",
-        "Automated search and target workflow across configured bands.",
-        "Rapid single-marker sweep for quick checks."
+        T("Direct operator tuning and marker ownership."),
+        T("Keep manual control while idle resources watch the band."),
+        T("Automated search and target workflow across configured bands."),
+        T("Rapid single-marker sweep for quick checks.")
     };
 
     const char* tabLabels[] = {
@@ -362,28 +499,28 @@ void MainWindow::draw() {
     };
 
     const char* tabTitles[] = {
-        "Spectrum",
-        "Hits & Events",
-        "Network",
-        "Map",
-        "Mission Config",
-        "System"
+        T("Spectrum"),
+        T("Hits & Events"),
+        T("Network"),
+        T("Map"),
+        T("Mission Config"),
+        T("System")
     };
 
     const char* tabDescriptions[] = {
-        "Tune, shape, and monitor the live spectrum picture.",
-        "Review operational queues, filters, and retained frequencies of interest.",
-        "Hold the Predator SDR navigation slot for decoder-backed structure and labels.",
-        "Launch the touch-first phone map tied to handset GPS.",
-        "Drive search bands, targets, excludes, dwell, and quick-scan workflow.",
-        "Health, theme, legacy modules, and operator-level status."
+        T("Tune, shape, and monitor the live spectrum picture."),
+        T("Review operational queues, filters, and retained frequencies of interest."),
+        T("Hold the Predator RF navigation slot for decoder-backed structure and labels."),
+        T("Launch the touch-first phone map tied to handset GPS."),
+        T("Drive search bands, targets, excludes, dwell, and quick-scan workflow."),
+        T("Health, theme, legacy modules, and operator-level status.")
     };
 
     const char* quickFilterLabels[] = {
-        "All",
-        "Target",
-        "Exclude",
-        "Unknown"
+        T("All"),
+        T("Target"),
+        T("Exclude"),
+        T("Unknown")
     };
 
     auto savePredatorState = [&]() {
@@ -392,6 +529,9 @@ void MainWindow::draw() {
         core::configManager.conf["predatorMissionMode"] = predatorMissionMode;
         core::configManager.conf["predatorTab"] = predatorTab;
         core::configManager.conf["predatorQuickFilter"] = predatorQuickFilter;
+        core::configManager.conf["predatorHitSortMode"] = predatorHitSortMode;
+        core::configManager.conf["predatorEventFilter"] = predatorEventFilter;
+        core::configManager.conf["predatorLanguage"] = predatorLanguage;
         core::configManager.release(true);
     };
 
@@ -423,9 +563,10 @@ void MainWindow::draw() {
     auto applyTouchScroll = [&]() {
 #ifdef __ANDROID__
         ImGuiIO& io = ImGui::GetIO();
-        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-            ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f) &&
-            !ImGui::IsAnyItemActive()) {
+        // Threshold of 8px distinguishes a swipe from a tap; ChildWindows flag lets
+        // hover detection work even when a nested item captured the active state.
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows) &&
+            ImGui::IsMouseDragging(ImGuiMouseButton_Left, 8.0f * style::uiScale)) {
             float nextScrollY = std::clamp(ImGui::GetScrollY() - io.MouseDelta.y, 0.0f, ImGui::GetScrollMaxY());
             ImGui::SetScrollY(nextScrollY);
             if (ImGui::GetScrollMaxX() > 0.0f) {
@@ -438,6 +579,12 @@ void MainWindow::draw() {
 
     auto setMissionMode = [&](int mode) {
         predatorMissionMode = mode;
+        if (mode == PREDATOR_MODE_MANUAL || mode == PREDATOR_MODE_CLASSIFY) {
+            predatorScanRunning = false;
+            predatorScanPaused = false;
+            predatorQuickScanStartedAt = 0.0;
+            predatorScanStatus = "Idle";
+        }
         savePredatorState();
     };
 
@@ -451,21 +598,62 @@ void MainWindow::draw() {
     json searchBands;
     json targets;
     json excludes;
+    json hits;
+    json events;
+    json networkAliases;
     float missionThreshold = -55.0f;
     int dwellMs = 1000;
     int quickScanDelayMs = 250;
     int quickScanDurationMs = 5000;
     bool recordAudio = true;
+    bool dsdFmeEnabled = false;
+    std::string dsdFmeHost = "127.0.0.1";
+    int dsdFmePort = 7355;
+    std::string dsdFmeMode = "TCP Direct Link Audio";
+    std::string voiceOutputPath = "%ROOT%/voice";
+    std::string dataOutputPath = "%ROOT%/data";
+    std::string sessionNote = "";
+    double hitClusterHz = 3000.0;
     core::configManager.acquire();
     searchBands = core::configManager.conf["predatorSearchBands"];
     targets = core::configManager.conf["predatorTargets"];
     excludes = core::configManager.conf["predatorExcludes"];
+    hits = core::configManager.conf["predatorHits"];
+    events = core::configManager.conf["predatorEvents"];
+    networkAliases = core::configManager.conf.contains("predatorNetworkAliases") && core::configManager.conf["predatorNetworkAliases"].is_object() ? core::configManager.conf["predatorNetworkAliases"] : json::object();
     missionThreshold = core::configManager.conf["predatorThreshold"];
     dwellMs = core::configManager.conf["predatorDwellMs"];
     quickScanDelayMs = core::configManager.conf["predatorQuickScanDelayMs"];
     quickScanDurationMs = core::configManager.conf["predatorQuickScanDurationMs"];
     recordAudio = core::configManager.conf["predatorRecordAudio"];
+    dsdFmeEnabled = core::configManager.conf["predatorDsdFmeEnabled"];
+    dsdFmeHost = (std::string)core::configManager.conf["predatorDsdFmeHost"];
+    dsdFmePort = core::configManager.conf["predatorDsdFmePort"];
+    dsdFmeMode = (std::string)core::configManager.conf["predatorDsdFmeMode"];
+    voiceOutputPath = (std::string)core::configManager.conf["predatorVoiceOutputPath"];
+    dataOutputPath = (std::string)core::configManager.conf["predatorDataOutputPath"];
+    sessionNote = (std::string)core::configManager.conf["predatorSessionNote"];
+    hitClusterHz = core::configManager.conf["predatorHitClusterHz"];
     core::configManager.release();
+
+    static FolderSelect voiceFolderSelect("%ROOT%/voice");
+    static FolderSelect dataFolderSelect("%ROOT%/data");
+    static bool decoderFolderSelectorsInitialized = false;
+    if (!decoderFolderSelectorsInitialized) {
+        voiceFolderSelect.setPath(voiceOutputPath);
+        dataFolderSelect.setPath(dataOutputPath);
+        std::error_code ec;
+        std::filesystem::create_directories(voiceFolderSelect.expandString(voiceOutputPath), ec);
+        std::filesystem::create_directories(dataFolderSelect.expandString(dataOutputPath), ec);
+        decoderFolderSelectorsInitialized = true;
+    }
+    static char sessionNoteBuf[512] = "";
+    static bool sessionNoteInitialized = false;
+    if (!sessionNoteInitialized) {
+        snprintf(sessionNoteBuf, sizeof(sessionNoteBuf), "%s", sessionNote.c_str());
+        sessionNoteInitialized = true;
+    }
+    static std::string exportStatus = "";
 
     auto saveMissionConfig = [&](const json& newSearchBands, const json& newTargets, const json& newExcludes, float newThreshold, int newDwellMs, int newQuickScanDelayMs, int newQuickScanDurationMs, bool newRecordAudio) {
         core::configManager.acquire();
@@ -477,6 +665,57 @@ void MainWindow::draw() {
         core::configManager.conf["predatorQuickScanDelayMs"] = newQuickScanDelayMs;
         core::configManager.conf["predatorQuickScanDurationMs"] = newQuickScanDurationMs;
         core::configManager.conf["predatorRecordAudio"] = newRecordAudio;
+        core::configManager.release(true);
+    };
+
+    auto savePredatorEvents = [&](const json& newEvents) {
+        core::configManager.acquire();
+        core::configManager.conf["predatorEvents"] = newEvents;
+        core::configManager.release(true);
+    };
+
+    auto savePredatorHits = [&](const json& newHits) {
+        core::configManager.acquire();
+        core::configManager.conf["predatorHits"] = newHits;
+        core::configManager.release(true);
+    };
+
+    auto saveNetworkAliases = [&](const json& newAliases) {
+        core::configManager.acquire();
+        core::configManager.conf["predatorNetworkAliases"] = newAliases;
+        core::configManager.release(true);
+    };
+
+    auto saveSessionNote = [&](const std::string& note) {
+        core::configManager.acquire();
+        core::configManager.conf["predatorSessionNote"] = note;
+        core::configManager.release(true);
+    };
+
+    auto saveDsdFmeConfig = [&](bool enabled, const std::string& host, int port, const std::string& mode) {
+        core::configManager.acquire();
+        core::configManager.conf["predatorDsdFmeEnabled"] = enabled;
+        core::configManager.conf["predatorDsdFmeHost"] = host;
+        core::configManager.conf["predatorDsdFmePort"] = port;
+        core::configManager.conf["predatorDsdFmeMode"] = mode;
+        core::configManager.conf["predatorVoiceOutputPath"] = voiceOutputPath;
+        core::configManager.conf["predatorDataOutputPath"] = dataOutputPath;
+        core::configManager.release(true);
+    };
+
+    auto savePeakDetectionConfig = [&]() {
+        core::configManager.acquire();
+        core::configManager.conf["predatorPeakDetectionEnabled"] = predatorPeakDetectionEnabled;
+        core::configManager.conf["predatorPeakSnrDb"] = predatorPeakSnrDb;
+        core::configManager.conf["predatorPeakMinSpacingHz"] = predatorPeakMinSpacingHz;
+        core::configManager.conf["predatorPeakMaxPerDwell"] = predatorPeakMaxPerDwell;
+        core::configManager.conf["predatorMarkerSlots"] = predatorMarkerSlots;
+        core::configManager.conf["predatorHoldOnNewHit"] = predatorHoldOnNewHit;
+        core::configManager.conf["predatorSuppressDuplicateHits"] = predatorSuppressDuplicateHits;
+        core::configManager.conf["predatorDuplicateHitWindowSec"] = predatorDuplicateHitWindowSec;
+        core::configManager.conf["predatorExtendDwellOnStrongHit"] = predatorExtendDwellOnStrongHit;
+        core::configManager.conf["predatorStrongHitSnrDb"] = predatorStrongHitSnrDb;
+        core::configManager.conf["predatorClassifyAutoMarker"] = predatorClassifyAutoMarker;
         core::configManager.release(true);
     };
 
@@ -499,6 +738,715 @@ void MainWindow::draw() {
             return std::string(fallback);
         }
         return (std::string)row[key];
+    };
+
+    struct PredatorScanCandidate {
+        std::string name;
+        double frequency;
+        double bandwidth;
+        bool target;
+    };
+
+    auto isExcludedFrequency = [&](double frequency) {
+        for (int i = 0; i < excludes.size(); i++) {
+            if (!readJsonBool(excludes[i], "enabled", true)) { continue; }
+            double excludeFrequency = readJsonDouble(excludes[i], "frequency", 0.0);
+            double excludeBandwidth = std::max<double>(readJsonDouble(excludes[i], "bandwidth", 12500.0), 1.0);
+            if (std::abs(frequency - excludeFrequency) <= (excludeBandwidth / 2.0)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto isInEnabledSearchBand = [&](double frequency) {
+        for (int i = 0; i < searchBands.size(); i++) {
+            if (!readJsonBool(searchBands[i], "enabled", true)) { continue; }
+            double start = readJsonDouble(searchBands[i], "start", 0.0);
+            double stop = readJsonDouble(searchBands[i], "stop", 0.0);
+            if (start > stop) { std::swap(start, stop); }
+            if (frequency >= start && frequency <= stop) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto isKnownTargetFrequency = [&](double frequency) {
+        for (int i = 0; i < targets.size(); i++) {
+            double targetFrequency = readJsonDouble(targets[i], "frequency", 0.0);
+            double targetBandwidth = std::max<double>(readJsonDouble(targets[i], "bandwidth", predatorPeakMinSpacingHz), predatorPeakMinSpacingHz);
+            if (std::abs(frequency - targetFrequency) <= (targetBandwidth / 2.0)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto buildScanCandidates = [&]() {
+        std::vector<PredatorScanCandidate> candidates;
+        for (int i = 0; i < targets.size(); i++) {
+            if (!readJsonBool(targets[i], "enabled", true)) { continue; }
+            double frequency = readJsonDouble(targets[i], "frequency", 0.0);
+            if (frequency <= 0.0 || isExcludedFrequency(frequency)) { continue; }
+            PredatorScanCandidate cand;
+            cand.name = readJsonString(targets[i], "name", "Target");
+            cand.frequency = frequency;
+            cand.bandwidth = readJsonDouble(targets[i], "bandwidth", 12500.0);
+            cand.target = true;
+            candidates.push_back(cand);
+        }
+
+        double stepHz = std::max<double>(gui::waterfall.getViewBandwidth() * 0.75, 1000000.0);
+        for (int i = 0; i < searchBands.size(); i++) {
+            if (!readJsonBool(searchBands[i], "enabled", true)) { continue; }
+            double start = readJsonDouble(searchBands[i], "start", 0.0);
+            double stop = readJsonDouble(searchBands[i], "stop", 0.0);
+            if (start <= 0.0 || stop <= 0.0 || start == stop) { continue; }
+            if (start > stop) { std::swap(start, stop); }
+            std::string name = readJsonString(searchBands[i], "name", "Band");
+            double span = stop - start;
+            int steps = std::max<int>(1, (int)std::ceil(span / stepHz));
+            for (int step = 0; step <= steps; step++) {
+                double frac = (steps == 0) ? 0.0 : ((double)step / (double)steps);
+                double frequency = start + (span * frac);
+                if (frequency <= 0.0 || isExcludedFrequency(frequency)) { continue; }
+                PredatorScanCandidate cand;
+                cand.name = name;
+                cand.frequency = frequency;
+                cand.bandwidth = stepHz;
+                cand.target = false;
+                candidates.push_back(cand);
+            }
+        }
+        return candidates;
+    };
+
+    auto tunePredatorFrequency = [&](double frequency) {
+        tuner::tune(tuningMode, gui::waterfall.selectedVFO, frequency);
+        gui::freqSelect.setFrequency(frequency);
+        gui::freqSelect.frequencyChanged = false;
+        core::configManager.acquire();
+        core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
+        if (vfo != NULL) {
+            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+        }
+        core::configManager.release(true);
+    };
+
+    auto stopPredatorScan = [&]() {
+        predatorScanRunning = false;
+        predatorScanPaused = false;
+        predatorQuickScanStartedAt = 0.0;
+        predatorScanStatus = "Idle";
+    };
+
+    auto formatFrequency = [](double frequency) {
+        char buf[64];
+        if (frequency >= 1000000000.0) {
+            snprintf(buf, sizeof(buf), "%.6f GHz", frequency / 1000000000.0);
+        }
+        else if (frequency >= 1000000.0) {
+            snprintf(buf, sizeof(buf), "%.6f MHz", frequency / 1000000.0);
+        }
+        else if (frequency >= 1000.0) {
+            snprintf(buf, sizeof(buf), "%.3f kHz", frequency / 1000.0);
+        }
+        else {
+            snprintf(buf, sizeof(buf), "%.0f Hz", frequency);
+        }
+        return std::string(buf);
+    };
+
+    auto currentTimestamp = []() {
+        char buf[32];
+        std::time_t now = std::time(nullptr);
+        std::tm* tm = std::localtime(&now);
+        if (tm == NULL) {
+            snprintf(buf, sizeof(buf), "unknown");
+        }
+        else {
+            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
+        }
+        return std::string(buf);
+    };
+
+    auto filenameTimestamp = []() {
+        char buf[32];
+        std::time_t now = std::time(nullptr);
+        std::tm* tm = std::localtime(&now);
+        if (tm == NULL) {
+            snprintf(buf, sizeof(buf), "unknown");
+        }
+        else {
+            std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", tm);
+        }
+        return std::string(buf);
+    };
+
+    auto extractionPath = [&](bool voice, const std::string& baseName, const char* extension) {
+        FolderSelect& selector = voice ? voiceFolderSelect : dataFolderSelect;
+        std::string configuredPath = voice ? voiceOutputPath : dataOutputPath;
+        std::filesystem::path dir = selector.expandString(configuredPath);
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        return (dir / (baseName + extension)).string();
+    };
+
+    auto appendPredatorEvent = [&](const char* type, double frequency, const std::string& label, float strengthDb, bool persist, const std::string& decoder = "None", const std::string& hitState = "unknown") {
+        json row;
+        char eventIdBuf[128];
+        snprintf(eventIdBuf, sizeof(eventIdBuf), "%s_%s_%lld_%d", filenameTimestamp().c_str(), type, (long long)std::llround(frequency), (int)events.size());
+        std::string eventId = eventIdBuf;
+        row["time"] = currentTimestamp();
+        row["eventId"] = eventId;
+        row["type"] = type;
+        row["frequency"] = frequency;
+        row["label"] = label;
+        row["strengthDb"] = strengthDb;
+        row["decoder"] = decoder;
+        row["hitState"] = hitState;
+        row["protocol"] = (decoder == "DSD-FME") ? "Digital Voice" : ((decoder == "RTL433") ? "RTL433" : "Unknown");
+        row["networkId"] = "Unknown";
+        row["talkgroup"] = "Unknown";
+        row["radioId"] = "Unknown";
+        row["voicePath"] = voiceOutputPath;
+        row["dataPath"] = dataOutputPath;
+        row["clipBaseName"] = eventId;
+        row["voiceClipPath"] = extractionPath(true, eventId, ".wav");
+        row["dataClipPath"] = extractionPath(false, eventId, ".json");
+        row["hasAudio"] = false;
+        row["hasData"] = false;
+        row["source"] = sourceName.empty() ? "None" : sourceName;
+        row["mode"] = predatorMissionMode;
+        row["gpsFix"] = phoneHasFix;
+        if (phoneHasFix) {
+            row["lat"] = phoneLat;
+            row["lon"] = phoneLon;
+            row["accuracyM"] = phoneAccuracy;
+        }
+        events.insert(events.begin(), row);
+        while (events.size() > 200) {
+            events.erase(events.end() - 1);
+        }
+        if (persist) {
+            savePredatorEvents(events);
+        }
+    };
+
+    auto exportPredatorSession = [&]() {
+        std::string root = (std::string)core::args["root"];
+        std::filesystem::path exportDir = std::filesystem::path(root) / "exports";
+        std::error_code ec;
+        std::filesystem::create_directories(exportDir, ec);
+        if (ec) {
+            exportStatus = "Export failed: " + ec.message();
+            return;
+        }
+
+        json session;
+        session["app"] = "Predator RF";
+        session["exportedAt"] = currentTimestamp();
+        session["note"] = std::string(sessionNoteBuf);
+        session["mode"] = predatorMissionMode;
+        session["source"] = sourceName.empty() ? "None" : sourceName;
+        session["centerFrequency"] = gui::waterfall.getCenterFrequency();
+        session["threshold"] = missionThreshold;
+        session["dwellMs"] = dwellMs;
+        session["quickScanDelayMs"] = quickScanDelayMs;
+        session["quickScanDurationMs"] = quickScanDurationMs;
+        session["recordAudio"] = recordAudio;
+        session["voiceOutputPath"] = voiceOutputPath;
+        session["dataOutputPath"] = dataOutputPath;
+        session["gpsFix"] = phoneHasFix;
+        if (phoneHasFix) {
+            session["lat"] = phoneLat;
+            session["lon"] = phoneLon;
+            session["accuracyM"] = phoneAccuracy;
+        }
+        session["searchBands"] = searchBands;
+        session["targets"] = targets;
+        session["excludes"] = excludes;
+        session["hits"] = hits;
+        session["events"] = events;
+        session["networkAliases"] = networkAliases;
+
+        std::filesystem::path exportPath = exportDir / ("predator_session_" + filenameTimestamp() + ".json");
+        std::ofstream out(exportPath);
+        if (!out.is_open()) {
+            exportStatus = "Export failed: unable to open file";
+            return;
+        }
+        out << session.dump(2);
+        out.close();
+        exportStatus = "Exported " + exportPath.string();
+    };
+
+    auto hitStateForFrequency = [&](double frequency, const json& row) {
+        if (isExcludedFrequency(frequency)) { return std::string("exclude"); }
+        if (isKnownTargetFrequency(frequency)) { return std::string("target"); }
+        return readJsonString(row, "state", "unknown");
+    };
+
+    auto assignedMarkerCount = [&]() {
+        int count = 0;
+        for (int i = 0; i < hits.size(); i++) {
+            if (readJsonBool(hits[i], "markerAssigned", false)) {
+                count++;
+            }
+        }
+        return count;
+    };
+
+    auto markerSlotForHitIndex = [&](int hitIndex) {
+        int slot = 1;
+        for (int i = 0; i < hits.size(); i++) {
+            if (!readJsonBool(hits[i], "markerAssigned", false)) { continue; }
+            if (i == hitIndex) { return slot; }
+            slot++;
+        }
+        return std::max<int>(1, std::min<int>(predatorMarkerSlots, hitIndex + 1));
+    };
+
+    auto routeHitToVfo = [&](int hitIndex) {
+        if (hitIndex < 0 || hitIndex >= hits.size()) { return false; }
+        json& hit = hits[hitIndex];
+        double frequency = readJsonDouble(hit, "frequency", 0.0);
+        if (frequency <= 0.0) { return false; }
+
+        double bandwidth = std::max<double>(readJsonDouble(hit, "bandwidth", predatorPeakMinSpacingHz), 200.0);
+        int markerSlot = markerSlotForHitIndex(hitIndex);
+        std::string vfoName = "Predator M" + std::to_string(markerSlot);
+        double wholeBandwidth = std::max<double>(gui::waterfall.getBandwidth(), bandwidth);
+        double centerFrequency = gui::waterfall.getCenterFrequency();
+
+        bool inScanMode = (predatorMissionMode == PREDATOR_MODE_SCAN || predatorMissionMode == PREDATOR_MODE_QUICKSCAN);
+
+        // In scan mode the scan step manager owns the SDR frequency and the selected VFO.
+        // Retuning here would cause tuneScanCandidate to steer the Predator VFO instead
+        // of the main receiver on the very next call, breaking the scan stream entirely.
+        if (!inScanMode && std::abs(frequency - centerFrequency) > (wholeBandwidth * 0.48)) {
+            tunePredatorFrequency(frequency);
+            centerFrequency = gui::waterfall.getCenterFrequency();
+            wholeBandwidth = std::max<double>(gui::waterfall.getBandwidth(), bandwidth);
+        }
+
+        double offset = frequency - centerFrequency;
+        double sampleRate = std::max<double>(wholeBandwidth, bandwidth);
+        if (!sigpath::vfoManager.vfoExists(vfoName)) {
+            sigpath::vfoManager.createVFO(vfoName, 0, offset, bandwidth, sampleRate, 200.0, std::max<double>(sampleRate, bandwidth), false);
+        }
+        else {
+            sigpath::vfoManager.setSampleRate(vfoName, sampleRate, bandwidth);
+            sigpath::vfoManager.setCenterOffset(vfoName, offset);
+            sigpath::vfoManager.setBandwidth(vfoName, bandwidth);
+        }
+        sigpath::vfoManager.setColor(vfoName, IM_COL32(120, 220, 95, 255));
+
+        // Only steal selectedVFO outside scan mode — in scan mode selectedVFO must
+        // remain the main receiver so tuneScanCandidate drives the right VFO.
+        if (!inScanMode) {
+            gui::waterfall.selectedVFO = vfoName;
+            gui::waterfall.selectedVFOChanged = true;
+            gui::freqSelect.setFrequency(frequency);
+            gui::freqSelect.frequencyChanged = false;
+        }
+
+        hit["routeState"] = "routed";
+        hit["routeVfo"] = vfoName;
+        hit["routeFrequency"] = frequency;
+        hit["routeBandwidth"] = bandwidth;
+        hit["markerSlot"] = markerSlot;
+        return true;
+    };
+
+    auto releaseHitRoute = [&](int hitIndex) {
+        if (hitIndex < 0 || hitIndex >= hits.size()) { return false; }
+        json& hit = hits[hitIndex];
+        std::string vfoName = readJsonString(hit, "routeVfo", "");
+        if (vfoName.rfind("Predator M", 0) == 0 && sigpath::vfoManager.vfoExists(vfoName)) {
+            sigpath::vfoManager.deleteVFO(vfoName);
+        }
+        hit["routeState"] = "released";
+        hit["routeVfo"] = "";
+        hit["markerSlot"] = 0;
+        return true;
+    };
+
+    auto recordPeakHit = [&](double frequency, float strengthDb, float noiseDb, float snrDb) {
+        if (frequency <= 0.0 || isExcludedFrequency(frequency) ||
+            (predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(frequency))) {
+            return 0;
+        }
+
+        int hitIndex = -1;
+        bool newHit = false;
+        double clusterWidth = std::max<double>(hitClusterHz, 100.0);
+        for (int i = 0; i < hits.size(); i++) {
+            double hitFrequency = readJsonDouble(hits[i], "frequency", 0.0);
+            if (std::abs(hitFrequency - frequency) <= clusterWidth) {
+                hitIndex = i;
+                break;
+            }
+        }
+
+        if (hitIndex < 0) {
+            json row;
+            row["name"] = "Hit " + formatFrequency(frequency);
+            row["frequency"] = frequency;
+            row["clusterHz"] = clusterWidth;
+            row["bandwidth"] = std::max<double>(predatorPeakMinSpacingHz, 1.0);
+            row["state"] = isKnownTargetFrequency(frequency) ? "target" : "unknown";
+            row["hitCount"] = 0;
+            row["eventCount"] = 0;
+            row["unreadCount"] = 0;
+            row["markerAssigned"] = false;
+            row["decoder"] = "None";
+            row["source"] = "fft_peak";
+            bool autoAssignMarker = (predatorMissionMode == PREDATOR_MODE_SCAN || predatorMissionMode == PREDATOR_MODE_QUICKSCAN) ||
+                                    (predatorMissionMode == PREDATOR_MODE_CLASSIFY && predatorClassifyAutoMarker);
+            if (autoAssignMarker && assignedMarkerCount() < predatorMarkerSlots) {
+                row["markerAssigned"] = true;
+            }
+            hits.push_back(row);
+            hitIndex = (int)hits.size() - 1;
+            if (readJsonBool(hits[hitIndex], "markerAssigned", false)) {
+                routeHitToVfo(hitIndex);
+            }
+            newHit = true;
+        }
+
+        json& hit = hits[hitIndex];
+        int hitCount = (int)readJsonDouble(hit, "hitCount", 0.0) + 1;
+        float maxRssi = (float)std::max<double>(readJsonDouble(hit, "maxRssi", strengthDb), strengthDb);
+        std::string state = hitStateForFrequency(frequency, hit);
+        std::string decoder = readJsonString(hit, "decoder", "None");
+        double now = ImGui::GetTime();
+        double lastEventClock = readJsonDouble(hit, "lastEventClock", -999999.0);
+        bool suppressEvent = predatorSuppressDuplicateHits && !newHit && ((now - lastEventClock) < (double)std::max<int>(1, predatorDuplicateHitWindowSec));
+
+        hit["hitCount"] = hitCount;
+        hit["lastSeen"] = currentTimestamp();
+        hit["lastRssi"] = strengthDb;
+        hit["maxRssi"] = maxRssi;
+        hit["noiseDb"] = noiseDb;
+        hit["snrDb"] = snrDb;
+        hit["state"] = state;
+
+        if (!suppressEvent) {
+            int eventCount = (int)readJsonDouble(hit, "eventCount", 0.0) + 1;
+            int unreadCount = (int)readJsonDouble(hit, "unreadCount", 0.0) + 1;
+            hit["eventCount"] = eventCount;
+            hit["unreadCount"] = unreadCount;
+            hit["lastEventClock"] = now;
+            appendPredatorEvent("hit", frequency, readJsonString(hit, "name", "Hit"), strengthDb, false, decoder, state);
+        }
+        savePredatorHits(hits);
+        if (!suppressEvent) {
+            savePredatorEvents(events);
+        }
+        predatorScanStatus = "Hit " + formatFrequency(frequency);
+        if (newHit && state == "unknown") { return 2; }
+        return suppressEvent ? 0 : 1;
+    };
+
+    auto detectScanPeaks = [&]() {
+        bool scanningMode = (predatorMissionMode == PREDATOR_MODE_SCAN || predatorMissionMode == PREDATOR_MODE_QUICKSCAN);
+        bool classifyMode = (predatorMissionMode == PREDATOR_MODE_CLASSIFY && predatorClassifyAutoMarker);
+        if (!predatorPeakDetectionEnabled || !playing || (!scanningMode && !classifyMode)) {
+            return 0;
+        }
+        int width = 0;
+        float* fft = gui::waterfall.acquireLatestFFT(width);
+        if (fft == NULL || width < 8) {
+            return 0;
+        }
+
+        double lowFreq = gui::waterfall.getCenterFrequency() + gui::waterfall.getViewOffset() - (gui::waterfall.getViewBandwidth() / 2.0);
+        double pixelToFreq = gui::waterfall.getViewBandwidth() / (double)width;
+        double visibleStart = lowFreq;
+        double visibleStop = lowFreq + gui::waterfall.getViewBandwidth();
+
+        double noiseSum = 0.0;
+        int noiseCount = 0;
+        for (int i = 0; i < width; i++) {
+            if (fft[i] <= -900.0f || !std::isfinite(fft[i])) { continue; }
+            double freq = lowFreq + ((double)i + 0.5) * pixelToFreq;
+            if (freq < visibleStart || freq > visibleStop ||
+                (predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(freq)) ||
+                isExcludedFrequency(freq)) { continue; }
+            noiseSum += fft[i];
+            noiseCount++;
+        }
+        if (noiseCount < 8) {
+            gui::waterfall.releaseLatestFFT();
+            return 0;
+        }
+
+        float noiseDb = (float)(noiseSum / (double)noiseCount);
+        struct PeakCandidate {
+            double frequency;
+            float strengthDb;
+            float snrDb;
+        };
+        std::vector<PeakCandidate> peaks;
+        int guardBins = std::max<int>(2, (int)std::ceil(predatorPeakMinSpacingHz / std::max<double>(pixelToFreq, 1.0)));
+        for (int i = 1; i < width - 1; i++) {
+            if (fft[i] <= -900.0f || !std::isfinite(fft[i])) { continue; }
+            if (fft[i] <= fft[i - 1] || fft[i] < fft[i + 1]) { continue; }
+            float snrDb = fft[i] - noiseDb;
+            if (fft[i] < missionThreshold && snrDb < predatorPeakSnrDb) { continue; }
+            double freq = lowFreq + ((double)i + 0.5) * pixelToFreq;
+            if ((predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(freq)) || isExcludedFrequency(freq)) { continue; }
+
+            bool nearExistingPeak = false;
+            for (auto const& peak : peaks) {
+                if (std::abs(peak.frequency - freq) <= predatorPeakMinSpacingHz) {
+                    nearExistingPeak = true;
+                    break;
+                }
+            }
+            if (nearExistingPeak) { continue; }
+
+            PeakCandidate peak;
+            peak.frequency = freq;
+            peak.strengthDb = fft[i];
+            peak.snrDb = snrDb;
+            peaks.push_back(peak);
+            i += guardBins;
+        }
+        gui::waterfall.releaseLatestFFT();
+
+        std::sort(peaks.begin(), peaks.end(), [](const PeakCandidate& a, const PeakCandidate& b) {
+            return a.strengthDb > b.strengthDb;
+        });
+
+        int recorded = 0;
+        int newUnknownHits = 0;
+        bool strongHit = false;
+        int maxPeaks = std::max<int>(1, predatorPeakMaxPerDwell);
+        for (auto const& peak : peaks) {
+            if (recorded >= maxPeaks) { break; }
+            int result = recordPeakHit(peak.frequency, peak.strengthDb, noiseDb, peak.snrDb);
+            if (result > 0) {
+                recorded++;
+                if (peak.snrDb >= predatorStrongHitSnrDb) {
+                    strongHit = true;
+                }
+                if (result == 2) {
+                    newUnknownHits++;
+                }
+            }
+        }
+        if (scanningMode && predatorHoldOnNewHit && newUnknownHits > 0) {
+            predatorScanPaused = true;
+            predatorScanStatus = "Paused on new hit";
+        }
+        else if (scanningMode && predatorExtendDwellOnStrongHit && strongHit) {
+            predatorScanLastStepAt = ImGui::GetTime();
+            predatorScanStatus = "Extended dwell on strong hit";
+        }
+        return recorded;
+    };
+
+    std::vector<PredatorScanCandidate> scanCandidates = buildScanCandidates();
+
+    auto tuneScanCandidate = [&](int direction) {
+        if (scanCandidates.empty()) {
+            predatorScanStatus = "No enabled targets or search bands";
+            return false;
+        }
+
+        int count = (int)scanCandidates.size();
+        predatorScanIndex = ((predatorScanIndex + direction) % count + count) % count;
+        PredatorScanCandidate cand = scanCandidates[predatorScanIndex];
+        tunePredatorFrequency(cand.frequency);
+        predatorScanLastFrequency = cand.frequency;
+        predatorScanLastStepAt = ImGui::GetTime();
+        predatorScanStatus = cand.name + (cand.target ? " target " : " band ") + formatFrequency(cand.frequency);
+        double now = ImGui::GetTime();
+        if (cand.target && (std::abs(predatorLastAutoEventFrequency - cand.frequency) > 1.0 || (now - predatorLastAutoEventAt) > 30.0)) {
+            appendPredatorEvent("target", cand.frequency, cand.name, gui::waterfall.selectedVFOSNR, true);
+            predatorLastAutoEventFrequency = cand.frequency;
+            predatorLastAutoEventAt = now;
+        }
+        return true;
+    };
+
+    if (predatorScanRunning && (predatorMissionMode == PREDATOR_MODE_SCAN || predatorMissionMode == PREDATOR_MODE_QUICKSCAN)) {
+        if (scanCandidates.empty()) {
+            predatorScanStatus = "No enabled targets or search bands";
+        }
+        else if (!predatorScanPaused) {
+            double now = ImGui::GetTime();
+            double stepSeconds = (double)std::max<int>(100, dwellMs) / 1000.0;
+            if (predatorMissionMode == PREDATOR_MODE_QUICKSCAN) {
+                stepSeconds += (double)std::max<int>(50, quickScanDelayMs) / 1000.0;
+                if (predatorQuickScanStartedAt <= 0.0) {
+                    predatorQuickScanStartedAt = now;
+                }
+                double maxSeconds = (double)std::max<int>(100, quickScanDurationMs) / 1000.0;
+                if ((now - predatorQuickScanStartedAt) >= maxSeconds) {
+                    predatorScanRunning = false;
+                    predatorScanPaused = false;
+                    predatorQuickScanStartedAt = 0.0;
+                    predatorScanStatus = "QuickScan complete";
+                }
+            }
+            if (predatorScanRunning && (predatorScanLastStepAt <= 0.0 || (now - predatorScanLastStepAt) >= stepSeconds)) {
+                bool skipTuneAfterPeakSweep = false;
+                if (predatorScanLastStepAt > 0.0 && predatorLastPeakSweepAt != predatorScanLastStepAt) {
+                    std::string beforePeakStatus = predatorScanStatus;
+                    detectScanPeaks();
+                    predatorLastPeakSweepAt = predatorScanLastStepAt;
+                    scanCandidates = buildScanCandidates();
+                    if (predatorScanStatus == "Extended dwell on strong hit" && beforePeakStatus != predatorScanStatus) {
+                        skipTuneAfterPeakSweep = true;
+                    }
+                }
+                if (!predatorScanPaused && !skipTuneAfterPeakSweep) {
+                    tuneScanCandidate((predatorScanLastStepAt <= 0.0) ? 0 : 1);
+                }
+            }
+        }
+        else {
+            predatorScanStatus = "Paused at " + formatFrequency(predatorScanLastFrequency > 0.0 ? predatorScanLastFrequency : gui::freqSelect.frequency);
+        }
+    }
+    else if (predatorScanRunning) {
+        stopPredatorScan();
+    }
+
+    // Every frame: re-anchor all Predator marker VFOs to their stored absolute frequency.
+    // VFO offsets are relative to the current SDR center, so any retune (scan step, manual
+    // pan, etc.) would shift the colored band away from the actual signal without this.
+    {
+        double currentCenter = gui::waterfall.getCenterFrequency();
+        for (int i = 0; i < (int)hits.size(); i++) {
+            if (!readJsonBool(hits[i], "markerAssigned", false)) continue;
+            std::string vfoName = readJsonString(hits[i], "routeVfo", "");
+            if (vfoName.empty() || !sigpath::vfoManager.vfoExists(vfoName)) continue;
+            double hitFreq = readJsonDouble(hits[i], "frequency", 0.0);
+            if (hitFreq <= 0.0) continue;
+            sigpath::vfoManager.setCenterOffset(vfoName, hitFreq - currentCenter);
+        }
+    }
+
+    if (!predatorScanRunning && predatorMissionMode == PREDATOR_MODE_CLASSIFY && predatorClassifyAutoMarker && playing) {
+        double now = ImGui::GetTime();
+        double classifySweepSeconds = (double)std::max<int>(250, dwellMs) / 1000.0;
+        if ((now - predatorLastClassifySweepAt) >= classifySweepSeconds) {
+            detectScanPeaks();
+            predatorLastClassifySweepAt = now;
+        }
+    }
+
+    auto addCurrentFrequencyRow = [&](json& rows, const char* name, bool target) {
+        json row;
+        row["name"] = name;
+        row["frequency"] = gui::freqSelect.frequency;
+        row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+        row["enabled"] = true;
+        rows.push_back(row);
+        saveMissionConfig(searchBands, target ? rows : targets, target ? excludes : rows, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+    };
+
+    auto startPredatorScan = [&](int mode) {
+        predatorMissionMode = mode;
+        savePredatorState();
+        if (sourceName.empty()) {
+            predatorScanStatus = "Select SDR first";
+            predatorScanRunning = false;
+            return;
+        }
+        if (scanCandidates.empty()) {
+            predatorScanStatus = "No enabled targets or search bands";
+            predatorScanRunning = false;
+            return;
+        }
+        if (!playing) {
+            setPlayState(true);
+        }
+        predatorScanRunning = true;
+        predatorScanPaused = false;
+        predatorScanIndex = std::clamp<int>(predatorScanIndex, 0, (int)scanCandidates.size() - 1);
+        predatorScanLastStepAt = 0.0;
+        predatorQuickScanStartedAt = (mode == PREDATOR_MODE_QUICKSCAN) ? ImGui::GetTime() : 0.0;
+        tuneScanCandidate(0);
+    };
+
+    auto drawMissionRunControls = [&]() {
+        ImGui::Text(T("State: %s"), predatorScanRunning ? T(predatorScanPaused ? "Paused" : "Running") : T("Idle"));
+        ImGui::TextWrapped(T("Queue: %d candidate%s"), (int)scanCandidates.size(), scanCandidates.size() == 1 ? "" : "s");
+        ImGui::TextWrapped(T("Current: %s"), predatorScanStatus.c_str());
+        if (ImGui::CollapsingHeader(T("Scan Progress"))) {
+            int candidateCount = (int)scanCandidates.size();
+            int currentStep = (candidateCount > 0) ? (predatorScanIndex + 1) : 0;
+            double now = ImGui::GetTime();
+            double dwellSeconds = (double)std::max<int>(100, dwellMs) / 1000.0;
+            double elapsed = (predatorScanLastStepAt > 0.0) ? std::max<double>(0.0, now - predatorScanLastStepAt) : 0.0;
+            double remaining = predatorScanPaused ? dwellSeconds : std::max<double>(0.0, dwellSeconds - elapsed);
+            ImGui::Text("Step: %d / %d", currentStep, candidateCount);
+            ImGui::Text("Dwell remaining: %.1fs", remaining);
+            ImGui::Text("Markers: %d / %d", assignedMarkerCount(), predatorMarkerSlots);
+            ImGui::Text("Hits: %d  Events: %d", (int)hits.size(), (int)events.size());
+        }
+
+        if (ImGui::Button(playing ? T("Stop Listening") : T("Start Listening"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            if (sourceName.empty() && !playing) {
+                predatorTab = PREDATOR_TAB_SYSTEM;
+                showMenu = true;
+                savePredatorState();
+            }
+            else {
+                setPlayState(!playing);
+            }
+        }
+
+        if (ImGui::Button(T("Start Scan"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            startPredatorScan(PREDATOR_MODE_SCAN);
+        }
+        if (ImGui::Button(T("Start QuickScan"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            startPredatorScan(PREDATOR_MODE_QUICKSCAN);
+        }
+
+        float halfWidth = (ImGui::GetContentRegionAvail().x - (6.0f * style::uiScale)) * 0.5f;
+        if (ImGui::Button(predatorScanPaused ? T("Resume") : T("Pause"), ImVec2(halfWidth, 0))) {
+            if (predatorScanRunning) {
+                predatorScanPaused = !predatorScanPaused;
+                predatorScanLastStepAt = ImGui::GetTime();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(T("Stop"), ImVec2(halfWidth, 0))) {
+            stopPredatorScan();
+        }
+
+        if (ImGui::Button(T("Previous"), ImVec2(halfWidth, 0))) {
+            predatorScanRunning = true;
+            predatorScanPaused = true;
+            tuneScanCandidate(-1);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(T("Next"), ImVec2(halfWidth, 0))) {
+            predatorScanRunning = true;
+            predatorScanPaused = true;
+            tuneScanCandidate(1);
+        }
+
+        if (ImGui::Button(T("Target Current"), ImVec2(halfWidth, 0))) {
+            addCurrentFrequencyRow(targets, "Current Target", true);
+            scanCandidates = buildScanCandidates();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(T("Exclude Current"), ImVec2(halfWidth, 0))) {
+            addCurrentFrequencyRow(excludes, "Current Exclude", false);
+            scanCandidates = buildScanCandidates();
+        }
+
+        if (ImGui::Button(T("Log Event"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            appendPredatorEvent("manual", gui::freqSelect.frequency, "Manual Event", gui::waterfall.selectedVFOSNR, true);
+        }
     };
 
     // Handle auto-start
@@ -547,15 +1495,24 @@ void MainWindow::draw() {
 
     ImGui::SameLine();
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (2.0f * style::uiScale));
-    ImGui::TextUnformatted("SDR Predator");
+    ImGui::TextUnformatted("Predator RF");
 
     ImGui::SameLine();
-    if (drawBadge(playing ? "LIVE" : (sourceName.empty() ? "NO SDR" : "READY"), playing ? ImVec4(0.42f, 0.78f, 0.48f, 1.0f) : (sourceName.empty() ? ImVec4(0.83f, 0.63f, 0.24f, 1.0f) : ImVec4(0.64f, 0.71f, 0.41f, 1.0f))) && !(playButtonLocked && !playing)) {
-        setPlayState(!playing);
+    const char* liveStateLabel = playing ? T("LIVE") : (sourceName.empty() ? T("NOT READY") : T("READY"));
+    ImVec4 liveStateColor = playing ? ImVec4(0.42f, 0.78f, 0.48f, 1.0f) : (sourceName.empty() ? ImVec4(0.83f, 0.42f, 0.32f, 1.0f) : ImVec4(0.64f, 0.71f, 0.41f, 1.0f));
+    if (drawBadge(liveStateLabel, liveStateColor) && !(playButtonLocked && !playing)) {
+        if (sourceName.empty() && !playing) {
+            predatorTab = PREDATOR_TAB_SYSTEM;
+            showMenu = true;
+            savePredatorState();
+        }
+        else {
+            setPlayState(!playing);
+        }
     }
 
     ImGui::SameLine();
-    if (drawBadge(sourceName.empty() ? "Select SDR" : sourceName.c_str(), ImVec4(0.73f, 0.70f, 0.45f, 1.0f))) {
+    if (drawBadge(sourceName.empty() ? T("Select SDR") : sourceName.c_str(), ImVec4(0.73f, 0.70f, 0.45f, 1.0f))) {
         predatorTab = PREDATOR_TAB_SYSTEM;
         showMenu = true;
         savePredatorState();
@@ -568,7 +1525,7 @@ void MainWindow::draw() {
     }
 
     ImGui::SameLine();
-    if (drawBadge(phoneHasFix ? "GPS READY" : "GPS WAIT", phoneHasFix ? ImVec4(0.55f, 0.74f, 0.46f, 1.0f) : ImVec4(0.45f, 0.49f, 0.41f, 1.0f))) {
+    if (drawBadge(phoneHasFix ? T("GPS READY") : T("GPS WAIT"), phoneHasFix ? ImVec4(0.55f, 0.74f, 0.46f, 1.0f) : ImVec4(0.45f, 0.49f, 0.41f, 1.0f))) {
         predatorTab = PREDATOR_TAB_MAP;
         showMenu = true;
         savePredatorState();
@@ -629,6 +1586,59 @@ void MainWindow::draw() {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.04f, 0.98f));
     ImGui::BeginChild("Waterfall", ImVec2(waterfallWidth, contentHeight), true);
     gui::waterfall.draw();
+
+    // Draw Predator hit markers on live spectrum (labeled vertical lines for all tracked hits)
+    if (hits.is_array() && !hits.empty()) {
+        double viewBW  = gui::waterfall.getViewBandwidth();
+        double viewOff = gui::waterfall.getViewOffset();
+        double cFreq   = gui::waterfall.getCenterFrequency();
+        double lowF    = cFreq + viewOff - viewBW * 0.5;
+        double highF   = cFreq + viewOff + viewBW * 0.5;
+        ImVec2 fMin    = gui::waterfall.fftAreaMin;
+        ImVec2 fMax    = gui::waterfall.fftAreaMax;
+        ImVec2 wMin    = gui::waterfall.wfMin;
+        ImVec2 wMax    = gui::waterfall.wfMax;
+        float  fftW    = fMax.x - fMin.x;
+        if (fftW > 1.0f && highF > lowF) {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            float labelY   = fMin.y + 4.0f * style::uiScale;
+            float labelH   = ImGui::GetTextLineHeight();
+            for (int hi = 0; hi < (int)hits.size(); hi++) {
+                double hf = readJsonDouble(hits[hi], "frequency", 0.0);
+                if (hf <= 0.0 || hf < lowF || hf > highF) continue;
+                float x = fMin.x + (float)((hf - lowF) / (highF - lowF)) * fftW;
+                std::string state = readJsonString(hits[hi], "state", "unknown");
+                bool isTarget = (state == "target");
+                ImU32 lineCol = isTarget ? IM_COL32(80, 255, 120, 220) : IM_COL32(255, 200, 40, 220);
+                ImU32 wfCol   = isTarget ? IM_COL32(80, 255, 120, 80)  : IM_COL32(255, 200, 40, 80);
+                // Vertical marker on FFT area
+                dl->AddLine(ImVec2(x, fMin.y), ImVec2(x, fMax.y), lineCol, 1.5f * style::uiScale);
+                // Faint marker continuing down the waterfall
+                if (wMax.y > wMin.y) {
+                    dl->AddLine(ImVec2(x, wMin.y), ImVec2(x, wMax.y), wfCol, 1.0f * style::uiScale);
+                }
+                // Label: "M#" for assigned markers, frequency for unassigned peaks
+                char label[32];
+                bool assigned = readJsonBool(hits[hi], "markerAssigned", false);
+                if (assigned) {
+                    int slot = (int)readJsonDouble(hits[hi], "markerSlot", 0.0);
+                    snprintf(label, sizeof(label), "M%d", slot > 0 ? slot : (hi + 1));
+                } else {
+                    double mhz = hf / 1e6;
+                    if (mhz >= 1000.0) snprintf(label, sizeof(label), "%.2f GHz", mhz / 1000.0);
+                    else if (mhz >= 1.0)  snprintf(label, sizeof(label), "%.3f MHz", mhz);
+                    else                  snprintf(label, sizeof(label), "%.1f kHz", mhz * 1000.0);
+                }
+                ImVec2 tsz = ImGui::CalcTextSize(label);
+                float tx = x - tsz.x * 0.5f;
+                if (tx < fMin.x) tx = fMin.x;
+                if (tx + tsz.x > fMax.x) tx = fMax.x - tsz.x;
+                dl->AddRectFilled(ImVec2(tx - 2, labelY - 1), ImVec2(tx + tsz.x + 2, labelY + labelH + 1), IM_COL32(0, 0, 0, 160));
+                dl->AddText(ImVec2(tx, labelY), lineCol, label);
+            }
+        }
+    }
+
     ImGui::EndChild();
     ImGui::PopStyleColor();
 
@@ -648,29 +1658,32 @@ void MainWindow::draw() {
         ImGui::BeginChild("PredatorOverlayBody", ImVec2(0, 0), false);
 
         if (predatorTab == PREDATOR_TAB_SPECTRUM) {
-            if (ImGui::CollapsingHeader("Display Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Display Controls"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 displaymenu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader("Band Plan", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Band Plan"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 bandplanmenu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader("Current Mission Mode", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Current Mission Mode"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextUnformatted(missionModes[predatorMissionMode]);
                 ImGui::TextWrapped("%s", missionModeDescriptions[predatorMissionMode]);
             }
-            if (ImGui::CollapsingHeader("Quick Actions", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::Button("Open SDR / Settings", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            if (ImGui::CollapsingHeader(T("Mission Run"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                drawMissionRunControls();
+            }
+            if (ImGui::CollapsingHeader(T("Quick Actions"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Button(T("Open SDR / Settings"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     predatorTab = PREDATOR_TAB_SYSTEM;
                     savePredatorState();
                 }
-                if (ImGui::Button("Open Mission Config", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                if (ImGui::Button(T("Open Mission Config"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     predatorTab = PREDATOR_TAB_MISSION;
                     savePredatorState();
                 }
             }
         }
         else if (predatorTab == PREDATOR_TAB_HITS) {
-            if (ImGui::CollapsingHeader("Quick Filter", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Quick Filter"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (int i = 0; i < 4; i++) {
                     if (i > 0) { ImGui::SameLine(); }
                     bool active = (predatorQuickFilter == i);
@@ -687,14 +1700,358 @@ void MainWindow::draw() {
                         ImGui::PopStyleColor(3);
                     }
                 }
-                ImGui::TextWrapped("Live hit/event clustering is not fully wired yet, but the operational lists and filter shell now match the Predator SDR flow we are building toward.");
+                ImGui::TextWrapped("%s", chineseUi ? "\u4e8b\u4ef6\u8a18\u9304\u5df2\u9023\u63a5\u4efb\u52d9\u6383\u63cf\u8207\u624b\u52d5\u6a19\u8a18\u3002" : "Event logging is wired to mission scan targets and manual operator marks.");
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                if (ImGui::Combo(T("Hit Sort"), &predatorHitSortMode, "Newest\0Strongest\0Most Hits\0Most Events\0Unread First\0Marked First\0")) {
+                    predatorHitSortMode = std::clamp<int>(predatorHitSortMode, 0, 5);
+                    savePredatorState();
+                }
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                if (ImGui::Combo(T("Event Filter"), &predatorEventFilter, "All Events\0Hits\0Manual\0Targets\0Decoder\0Current Hit\0")) {
+                    predatorEventFilter = std::clamp<int>(predatorEventFilter, 0, 5);
+                    savePredatorState();
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Marker Pool"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                int assigned = assignedMarkerCount();
+                ImGui::Text("Assigned: %d / %d", assigned, predatorMarkerSlots);
+                if (assigned == 0) {
+                    ImGui::TextDisabled("%s", T("No entries."));
+                }
+                for (int i = 0; i < hits.size(); i++) {
+                    if (!readJsonBool(hits[i], "markerAssigned", false)) { continue; }
+                    double hitFrequency = readJsonDouble(hits[i], "frequency", 0.0);
+                    ImGui::TextWrapped("M%d  %s  %s  %s",
+                        i + 1,
+                        formatFrequency(hitFrequency).c_str(),
+                        readJsonString(hits[i], "decoder", "None").c_str(),
+                        readJsonString(hits[i], "name", "Hit").c_str());
+                    std::string routeVfo = readJsonString(hits[i], "routeVfo", "");
+                    if (!routeVfo.empty()) {
+                        ImGui::TextDisabled("Route: %s", routeVfo.c_str());
+                    }
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Detected Hits"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (!hits.empty()) {
+                    float bw = (ImGui::GetContentRegionAvail().x - 4.0f * style::uiScale) * 0.5f;
+                    if (ImGui::Button(T("Clear Unknown Hits"), ImVec2(bw, 0))) {
+                        for (int i = (int)hits.size() - 1; i >= 0; i--) {
+                            if (readJsonString(hits[i], "state", "unknown") != "target") {
+                                releaseHitRoute(i);
+                                hits.erase(hits.begin() + i);
+                            }
+                        }
+                        savePredatorHits(hits);
+                    }
+                    ImGui::SameLine(0, 4.0f * style::uiScale);
+                    if (ImGui::Button(T("Clear All Hits"), ImVec2(bw, 0))) {
+                        for (int i = (int)hits.size() - 1; i >= 0; i--) {
+                            releaseHitRoute(i);
+                        }
+                        hits = json::array();
+                        savePredatorHits(hits);
+                    }
+                    ImGui::Separator();
+                }
+                if (hits.empty()) {
+                    ImGui::TextDisabled("%s", T("No entries."));
+                }
+                else {
+                    bool detectedHitsChanged = false;
+                    bool missionRowsChanged = false;
+                    const char* decoderLabels[] = { "None", "Analog Voice", "DSD-FME", "M17", "RTL433", "Raw IQ/Data" };
+                    const char* decoderCombo = "None\0Analog Voice\0DSD-FME\0M17\0RTL433\0Raw IQ/Data\0";
+                    std::vector<int> hitOrder;
+                    for (int i = 0; i < hits.size(); i++) {
+                        hitOrder.push_back(i);
+                    }
+                    std::sort(hitOrder.begin(), hitOrder.end(), [&](int a, int b) {
+                        switch (predatorHitSortMode) {
+                        case 1:
+                            return readJsonDouble(hits[a], "maxRssi", -999.0) > readJsonDouble(hits[b], "maxRssi", -999.0);
+                        case 2:
+                            return readJsonDouble(hits[a], "hitCount", 0.0) > readJsonDouble(hits[b], "hitCount", 0.0);
+                        case 3:
+                            return readJsonDouble(hits[a], "eventCount", 0.0) > readJsonDouble(hits[b], "eventCount", 0.0);
+                        case 4:
+                            return readJsonDouble(hits[a], "unreadCount", 0.0) > readJsonDouble(hits[b], "unreadCount", 0.0);
+                        case 5:
+                            return readJsonBool(hits[a], "markerAssigned", false) > readJsonBool(hits[b], "markerAssigned", false);
+                        default:
+                            return readJsonDouble(hits[a], "lastEventClock", 0.0) > readJsonDouble(hits[b], "lastEventClock", 0.0);
+                        }
+                    });
+                    for (int orderIndex = 0; orderIndex < hitOrder.size(); orderIndex++) {
+                        int i = hitOrder[orderIndex];
+                        double hitFrequency = readJsonDouble(hits[i], "frequency", 0.0);
+                        std::string state = hitStateForFrequency(hitFrequency, hits[i]);
+                        if ((predatorQuickFilter == 1 && state != "target") ||
+                            (predatorQuickFilter == 2 && state != "exclude") ||
+                            (predatorQuickFilter == 3 && state != "unknown")) {
+                            continue;
+                        }
+
+                        ImGui::PushID(7000 + i);
+                        std::string name = readJsonString(hits[i], "name", "Hit");
+                        int hitCount = (int)readJsonDouble(hits[i], "hitCount", 0.0);
+                        int eventCount = (int)readJsonDouble(hits[i], "eventCount", 0.0);
+                        int unreadCount = (int)readJsonDouble(hits[i], "unreadCount", 0.0);
+                        double lastRssi = readJsonDouble(hits[i], "lastRssi", 0.0);
+                        double snrDb = readJsonDouble(hits[i], "snrDb", 0.0);
+                        bool markerAssigned = readJsonBool(hits[i], "markerAssigned", false);
+                        std::string decoder = readJsonString(hits[i], "decoder", "None");
+                        int decoderIndex = 0;
+                        for (int d = 0; d < 6; d++) {
+                            if (decoder == decoderLabels[d]) {
+                                decoderIndex = d;
+                                break;
+                            }
+                        }
+
+                        ImGui::TextWrapped("%s  %s  %s  hits:%d events:%d unread:%d  RSSI %.1f dB  SNR %.1f dB",
+                            formatFrequency(hitFrequency).c_str(), state.c_str(), name.c_str(), hitCount, eventCount, unreadCount, lastRssi, snrDb);
+                        ImGui::TextDisabled("Last seen: %s", readJsonString(hits[i], "lastSeen", "unknown").c_str());
+
+                        if (ImGui::Button(T("Select"))) {
+                            predatorSelectedHitFrequency = hitFrequency;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(markerAssigned ? T("Release Marker") : T("Assign Marker"))) {
+                            if (markerAssigned || assignedMarkerCount() < predatorMarkerSlots) {
+                                bool nextAssigned = !markerAssigned;
+                                hits[i]["markerAssigned"] = nextAssigned;
+                                if (nextAssigned) {
+                                    routeHitToVfo(i);
+                                }
+                                else {
+                                    releaseHitRoute(i);
+                                }
+                            }
+                            detectedHitsChanged = true;
+                        }
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(std::max<float>(140.0f * style::uiScale, ImGui::GetContentRegionAvail().x * 0.45f));
+                        if (ImGui::Combo(T("Decoder"), &decoderIndex, decoderCombo)) {
+                            hits[i]["decoder"] = decoderLabels[decoderIndex];
+                            if (decoderIndex > 0) {
+                                if (readJsonBool(hits[i], "markerAssigned", false) || assignedMarkerCount() < predatorMarkerSlots) {
+                                    hits[i]["markerAssigned"] = true;
+                                    routeHitToVfo(i);
+                                }
+                            }
+                            detectedHitsChanged = true;
+                        }
+
+                        float halfWidth = (ImGui::GetContentRegionAvail().x - (6.0f * style::uiScale)) * 0.5f;
+                        if (ImGui::Button(T("Promote Target"), ImVec2(halfWidth, 0))) {
+                            if (!isKnownTargetFrequency(hitFrequency)) {
+                                json row;
+                                row["name"] = name;
+                                row["frequency"] = hitFrequency;
+                                row["bandwidth"] = readJsonDouble(hits[i], "bandwidth", 12500.0);
+                                row["enabled"] = true;
+                                row["source"] = "hit_promotion";
+                                targets.push_back(row);
+                            }
+                            hits[i]["state"] = "target";
+                            missionRowsChanged = true;
+                            detectedHitsChanged = true;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(T("Promote Exclude"), ImVec2(halfWidth, 0))) {
+                            if (!isExcludedFrequency(hitFrequency)) {
+                                json row;
+                                row["name"] = name;
+                                row["frequency"] = hitFrequency;
+                                row["bandwidth"] = readJsonDouble(hits[i], "bandwidth", 12500.0);
+                                row["enabled"] = true;
+                                row["source"] = "hit_promotion";
+                                excludes.push_back(row);
+                            }
+                            hits[i]["state"] = "exclude";
+                            missionRowsChanged = true;
+                            detectedHitsChanged = true;
+                        }
+                        ImGui::Separator();
+                        ImGui::PopID();
+                    }
+                    if (detectedHitsChanged) {
+                        savePredatorHits(hits);
+                    }
+                    if (missionRowsChanged) {
+                        saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    }
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Selected Hit"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                int selectedIndex = -1;
+                for (int i = 0; i < hits.size(); i++) {
+                    double hitFrequency = readJsonDouble(hits[i], "frequency", 0.0);
+                    double clusterWidth = std::max<double>(readJsonDouble(hits[i], "clusterHz", hitClusterHz), 100.0);
+                    if (predatorSelectedHitFrequency > 0.0 && std::abs(hitFrequency - predatorSelectedHitFrequency) <= clusterWidth) {
+                        selectedIndex = i;
+                        break;
+                    }
+                }
+
+                if (selectedIndex < 0) {
+                    ImGui::TextDisabled("%s", T("No entries."));
+                }
+                else {
+                    bool selectedChanged = false;
+                    bool selectedMissionChanged = false;
+                    json& hit = hits[selectedIndex];
+                    double hitFrequency = readJsonDouble(hit, "frequency", 0.0);
+                    std::string name = readJsonString(hit, "name", "Hit");
+                    bool markerAssigned = readJsonBool(hit, "markerAssigned", false);
+                    static double editHitFrequency = 0.0;
+                    static char hitNameBuf[128] = "";
+                    static char hitNoteBuf[512] = "";
+                    if (std::abs(editHitFrequency - hitFrequency) > 1.0) {
+                        snprintf(hitNameBuf, sizeof(hitNameBuf), "%s", name.c_str());
+                        snprintf(hitNoteBuf, sizeof(hitNoteBuf), "%s", readJsonString(hit, "note", "").c_str());
+                        editHitFrequency = hitFrequency;
+                    }
+
+                    ImGui::TextWrapped("%s  %s", name.c_str(), formatFrequency(hitFrequency).c_str());
+                    ImGui::Text("State: %s", hitStateForFrequency(hitFrequency, hit).c_str());
+                    ImGui::Text("Hits: %d  Events: %d  Unread: %d",
+                        (int)readJsonDouble(hit, "hitCount", 0.0),
+                        (int)readJsonDouble(hit, "eventCount", 0.0),
+                        (int)readJsonDouble(hit, "unreadCount", 0.0));
+                    ImGui::Text("Last RSSI: %.1f dB  Max RSSI: %.1f dB  SNR: %.1f dB",
+                        readJsonDouble(hit, "lastRssi", 0.0),
+                        readJsonDouble(hit, "maxRssi", 0.0),
+                        readJsonDouble(hit, "snrDb", 0.0));
+                    ImGui::Text("Decoder: %s", readJsonString(hit, "decoder", "None").c_str());
+                    ImGui::Text("Route: %s", readJsonString(hit, "routeVfo", "None").c_str());
+
+                    if (ImGui::CollapsingHeader(T("Rename / Notes"))) {
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                        if (ImGui::InputText("Name##selected_hit_name", hitNameBuf, sizeof(hitNameBuf))) {
+                            hit["name"] = std::string(hitNameBuf);
+                            selectedChanged = true;
+                        }
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                        if (ImGui::InputTextMultiline("Note##selected_hit_note", hitNoteBuf, sizeof(hitNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 88.0f * style::uiScale))) {
+                            hit["note"] = std::string(hitNoteBuf);
+                            selectedChanged = true;
+                        }
+                    }
+
+                    float halfWidth = (ImGui::GetContentRegionAvail().x - (6.0f * style::uiScale)) * 0.5f;
+                    if (ImGui::Button(T("Tune"), ImVec2(halfWidth, 0))) {
+                        tunePredatorFrequency(hitFrequency);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(markerAssigned ? T("Release Marker") : T("Assign Marker"), ImVec2(halfWidth, 0))) {
+                        if (markerAssigned || assignedMarkerCount() < predatorMarkerSlots) {
+                            bool nextAssigned = !markerAssigned;
+                            hit["markerAssigned"] = nextAssigned;
+                            if (nextAssigned) {
+                                routeHitToVfo(selectedIndex);
+                            }
+                            else {
+                                releaseHitRoute(selectedIndex);
+                            }
+                            selectedChanged = true;
+                        }
+                    }
+
+                    if (ImGui::Button(T("Route VFO"), ImVec2(halfWidth, 0))) {
+                        if (markerAssigned || assignedMarkerCount() < predatorMarkerSlots) {
+                            hit["markerAssigned"] = true;
+                            routeHitToVfo(selectedIndex);
+                            selectedChanged = true;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Release Route"), ImVec2(halfWidth, 0))) {
+                        releaseHitRoute(selectedIndex);
+                        hit["markerAssigned"] = false;
+                        selectedChanged = true;
+                    }
+
+                    if (ImGui::Button(T("Promote Target"), ImVec2(halfWidth, 0))) {
+                        if (!isKnownTargetFrequency(hitFrequency)) {
+                            json row;
+                            row["name"] = name;
+                            row["frequency"] = hitFrequency;
+                            row["bandwidth"] = readJsonDouble(hit, "bandwidth", 12500.0);
+                            row["enabled"] = true;
+                            row["source"] = "hit_detail";
+                            targets.push_back(row);
+                        }
+                        hit["state"] = "target";
+                        selectedChanged = true;
+                        selectedMissionChanged = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Promote Exclude"), ImVec2(halfWidth, 0))) {
+                        if (!isExcludedFrequency(hitFrequency)) {
+                            json row;
+                            row["name"] = name;
+                            row["frequency"] = hitFrequency;
+                            row["bandwidth"] = readJsonDouble(hit, "bandwidth", 12500.0);
+                            row["enabled"] = true;
+                            row["source"] = "hit_detail";
+                            excludes.push_back(row);
+                        }
+                        hit["state"] = "exclude";
+                        selectedChanged = true;
+                        selectedMissionChanged = true;
+                    }
+
+                    if (ImGui::Button(T("Mark Viewed"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        hit["unreadCount"] = 0;
+                        hit["viewed"] = true;
+                        selectedChanged = true;
+                    }
+
+                    ImGui::Separator();
+                    ImGui::TextUnformatted(T("Event Log"));
+                    int shownEvents = 0;
+                    double clusterWidth = std::max<double>(readJsonDouble(hit, "clusterHz", hitClusterHz), 100.0);
+                    for (int e = 0; e < events.size(); e++) {
+                        double eventFrequency = readJsonDouble(events[e], "frequency", 0.0);
+                        if (std::abs(eventFrequency - hitFrequency) > clusterWidth) { continue; }
+                        std::string eventType = readJsonString(events[e], "type", "event");
+                        std::string eventDecoder = readJsonString(events[e], "decoder", "None");
+                        if ((predatorEventFilter == 1 && eventType != "hit") ||
+                            (predatorEventFilter == 2 && eventType != "manual") ||
+                            (predatorEventFilter == 3 && eventType != "target") ||
+                            (predatorEventFilter == 4 && eventDecoder == "None")) {
+                            continue;
+                        }
+                        shownEvents++;
+                        ImGui::TextWrapped("%s  %s  %.1f dB  %s",
+                            readJsonString(events[e], "time", "unknown").c_str(),
+                            eventType.c_str(),
+                            readJsonDouble(events[e], "strengthDb", 0.0),
+                            eventDecoder.c_str());
+                    }
+                    if (shownEvents == 0) {
+                        ImGui::TextDisabled("%s", T("No entries."));
+                    }
+
+                    if (selectedChanged) {
+                        savePredatorHits(hits);
+                    }
+                    if (selectedMissionChanged) {
+                        saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    }
+                }
             }
 
             auto drawFreqRows = [&](const char* header, json& rows, bool showBandwidth) {
-                if (!ImGui::CollapsingHeader(header, ImGuiTreeNodeFlags_DefaultOpen)) { return false; }
+                if (!ImGui::CollapsingHeader(T(header), ImGuiTreeNodeFlags_DefaultOpen)) { return false; }
                 bool changed = false;
                 if (rows.empty()) {
-                    ImGui::TextDisabled("No entries.");
+                    ImGui::TextDisabled("%s", T("No entries."));
                     return changed;
                 }
                 for (int i = 0; i < rows.size(); i++) {
@@ -729,6 +2086,37 @@ void MainWindow::draw() {
             };
 
             bool hitsChanged = false;
+            if (ImGui::CollapsingHeader(T("Event Log"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (events.empty()) {
+                    ImGui::TextDisabled("%s", T("No entries."));
+                }
+                else {
+                    for (int i = 0; i < events.size(); i++) {
+                        std::string time = readJsonString(events[i], "time", "unknown");
+                        std::string type = readJsonString(events[i], "type", "event");
+                        std::string label = readJsonString(events[i], "label", "Event");
+                        std::string decoder = readJsonString(events[i], "decoder", "None");
+                        double frequency = readJsonDouble(events[i], "frequency", 0.0);
+                        double strength = readJsonDouble(events[i], "strengthDb", 0.0);
+                        bool currentHitEvent = false;
+                        if (predatorSelectedHitFrequency > 0.0) {
+                            currentHitEvent = std::abs(frequency - predatorSelectedHitFrequency) <= std::max<double>(hitClusterHz, 100.0);
+                        }
+                        if ((predatorEventFilter == 1 && type != "hit") ||
+                            (predatorEventFilter == 2 && type != "manual") ||
+                            (predatorEventFilter == 3 && type != "target") ||
+                            (predatorEventFilter == 4 && decoder == "None") ||
+                            (predatorEventFilter == 5 && !currentHitEvent)) {
+                            continue;
+                        }
+                        ImGui::TextWrapped("%s  %s  %s  %s  %.1f dB", time.c_str(), type.c_str(), label.c_str(), formatFrequency(frequency).c_str(), strength);
+                    }
+                }
+                if (ImGui::Button(T("Clear Events"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                    events = json::array();
+                    savePredatorEvents(events);
+                }
+            }
             if (predatorQuickFilter == 0 || predatorQuickFilter == 1) {
                 hitsChanged |= drawFreqRows("Targets", targets, true);
             }
@@ -743,18 +2131,262 @@ void MainWindow::draw() {
             }
         }
         else if (predatorTab == PREDATOR_TAB_NETWORK) {
-            if (ImGui::CollapsingHeader("Network Workflow", ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::TextWrapped("The Predator SDR network tab is reserved for decoder-backed structure, talkgroups, and node promotion. Navigation and operator intent is preserved while decoder/event wiring catches up.");
+            if (ImGui::CollapsingHeader(T("Network Workflow"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextWrapped("Decoder output is normalized into event rows first, then grouped here by protocol, network, talkgroup, radio ID, and active frequency. DSD-FME metadata slots are present even before live DSD-FME ingestion is attached.");
             }
-            if (ImGui::CollapsingHeader("Current Workflow Assets", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Current Workflow Assets"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Text("Search Bands: %d", (int)searchBands.size());
                 ImGui::Text("Targets: %d", (int)targets.size());
                 ImGui::Text("Excludes: %d", (int)excludes.size());
-                ImGui::TextWrapped("Use the Mission tab to define the operational picture. Those lists will feed future network and event promotion paths.");
+                ImGui::Text("Hits: %d", (int)hits.size());
+                ImGui::Text("Events: %d", (int)events.size());
+            }
+            if (ImGui::CollapsingHeader(T("Network Topology"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                struct NetworkSummary {
+                    std::string key;
+                    std::string protocol;
+                    std::string networkId;
+                    std::string talkgroup;
+                    int events;
+                    double lastFrequency;
+                    double strongest;
+                };
+                auto networkKeyForParts = [](const std::string& protocol, const std::string& networkId, const std::string& talkgroup) {
+                    return protocol + "|" + networkId + "|" + talkgroup;
+                };
+                auto networkKeyForEvent = [&](const json& row) {
+                    return networkKeyForParts(
+                        readJsonString(row, "protocol", "Unknown"),
+                        readJsonString(row, "networkId", "Unknown"),
+                        readJsonString(row, "talkgroup", "Unknown"));
+                };
+                auto networkAliasForKey = [&](const std::string& key, const std::string& fallback) {
+                    if (networkAliases.is_object() && networkAliases.contains(key) && networkAliases[key].is_string()) {
+                        return (std::string)networkAliases[key];
+                    }
+                    return fallback;
+                };
+                auto findHitIndexByFrequency = [&](double frequency) {
+                    for (int h = 0; h < hits.size(); h++) {
+                        double hitFrequency = readJsonDouble(hits[h], "frequency", 0.0);
+                        double clusterWidth = std::max<double>(readJsonDouble(hits[h], "clusterHz", hitClusterHz), 100.0);
+                        if (std::abs(hitFrequency - frequency) <= clusterWidth) {
+                            return h;
+                        }
+                    }
+                    return -1;
+                };
+                auto ensureHitForFrequency = [&](double frequency, const std::string& name) {
+                    int hitIndex = findHitIndexByFrequency(frequency);
+                    if (hitIndex >= 0) { return hitIndex; }
+                    json row;
+                    row["name"] = name;
+                    row["frequency"] = frequency;
+                    row["clusterHz"] = std::max<double>(hitClusterHz, 100.0);
+                    row["bandwidth"] = 12500.0;
+                    row["state"] = isKnownTargetFrequency(frequency) ? "target" : (isExcludedFrequency(frequency) ? "exclude" : "unknown");
+                    row["hitCount"] = 0;
+                    row["eventCount"] = 0;
+                    row["unreadCount"] = 0;
+                    row["markerAssigned"] = false;
+                    row["decoder"] = "None";
+                    row["source"] = "network_action";
+                    hits.push_back(row);
+                    return (int)hits.size() - 1;
+                };
+                auto applyNetworkAction = [&](const std::string& key, const std::string& action, const std::string& alias) {
+                    int changedCount = 0;
+                    for (int e = 0; e < events.size(); e++) {
+                        if (networkKeyForEvent(events[e]) != key) { continue; }
+                        double frequency = readJsonDouble(events[e], "frequency", 0.0);
+                        if (frequency <= 0.0) { continue; }
+                        std::string rowName = alias.empty() ? readJsonString(events[e], "label", "Network Node") : alias;
+                        int hitIndex = ensureHitForFrequency(frequency, rowName);
+                        if (action == "target") {
+                            if (!isKnownTargetFrequency(frequency)) {
+                                json row;
+                                row["name"] = rowName;
+                                row["frequency"] = frequency;
+                                row["bandwidth"] = readJsonDouble(hits[hitIndex], "bandwidth", 12500.0);
+                                row["enabled"] = true;
+                                row["source"] = "network_node";
+                                targets.push_back(row);
+                            }
+                            hits[hitIndex]["state"] = "target";
+                            changedCount++;
+                        }
+                        else if (action == "exclude") {
+                            if (!isExcludedFrequency(frequency)) {
+                                json row;
+                                row["name"] = rowName;
+                                row["frequency"] = frequency;
+                                row["bandwidth"] = readJsonDouble(hits[hitIndex], "bandwidth", 12500.0);
+                                row["enabled"] = true;
+                                row["source"] = "network_node";
+                                excludes.push_back(row);
+                            }
+                            hits[hitIndex]["state"] = "exclude";
+                            changedCount++;
+                        }
+                        else if (action == "marker") {
+                            if (readJsonBool(hits[hitIndex], "markerAssigned", false) || assignedMarkerCount() < predatorMarkerSlots) {
+                                hits[hitIndex]["markerAssigned"] = true;
+                                routeHitToVfo(hitIndex);
+                                changedCount++;
+                            }
+                        }
+                    }
+                    savePredatorHits(hits);
+                    if (action == "target" || action == "exclude") {
+                        saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    }
+                    return changedCount;
+                };
+
+                static std::string selectedNetworkKey = "";
+                static char selectedNetworkAlias[128] = "";
+                static std::string networkActionStatus = "";
+                std::vector<NetworkSummary> summaries;
+                for (int i = 0; i < events.size(); i++) {
+                    std::string protocol = readJsonString(events[i], "protocol", "Unknown");
+                    std::string networkId = readJsonString(events[i], "networkId", "Unknown");
+                    std::string talkgroup = readJsonString(events[i], "talkgroup", "Unknown");
+                    std::string key = networkKeyForParts(protocol, networkId, talkgroup);
+                    int match = -1;
+                    for (int s = 0; s < summaries.size(); s++) {
+                        if (summaries[s].key == key) {
+                            match = s;
+                            break;
+                        }
+                    }
+                    if (match < 0) {
+                        NetworkSummary row;
+                        row.key = key;
+                        row.protocol = protocol;
+                        row.networkId = networkId;
+                        row.talkgroup = talkgroup;
+                        row.events = 0;
+                        row.lastFrequency = 0.0;
+                        row.strongest = -999.0;
+                        summaries.push_back(row);
+                        match = (int)summaries.size() - 1;
+                    }
+                    summaries[match].events++;
+                    summaries[match].lastFrequency = readJsonDouble(events[i], "frequency", summaries[match].lastFrequency);
+                    summaries[match].strongest = std::max<double>(summaries[match].strongest, readJsonDouble(events[i], "strengthDb", -999.0));
+                }
+                if (summaries.empty()) {
+                    ImGui::TextDisabled("%s", T("No entries."));
+                }
+                for (int i = 0; i < summaries.size(); i++) {
+                    ImGui::PushID(9000 + i);
+                    std::string baseLabel = summaries[i].protocol + " / Net " + summaries[i].networkId + " / TG " + summaries[i].talkgroup;
+                    std::string label = networkAliasForKey(summaries[i].key, baseLabel);
+                    if (ImGui::TreeNode(label.c_str())) {
+                        ImGui::Text("Events: %d", summaries[i].events);
+                        ImGui::Text("Last Freq: %s", formatFrequency(summaries[i].lastFrequency).c_str());
+                        ImGui::Text("Strongest: %.1f dB", summaries[i].strongest);
+                        ImGui::TextDisabled("%s", baseLabel.c_str());
+                        if (ImGui::Button(T("Select"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                            selectedNetworkKey = summaries[i].key;
+                            snprintf(selectedNetworkAlias, sizeof(selectedNetworkAlias), "%s", networkAliasForKey(summaries[i].key, label).c_str());
+                        }
+                        ImGui::TextDisabled("Radio IDs will populate when DSD-FME decoded metadata is ingested.");
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                if (!selectedNetworkKey.empty() && ImGui::CollapsingHeader(T("Network Node Actions"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    if (ImGui::InputText(T("Alias"), selectedNetworkAlias, sizeof(selectedNetworkAlias))) {
+                        networkAliases[selectedNetworkKey] = std::string(selectedNetworkAlias);
+                        saveNetworkAliases(networkAliases);
+                    }
+                    float thirdWidth = (ImGui::GetContentRegionAvail().x - (12.0f * style::uiScale)) / 3.0f;
+                    if (ImGui::Button(T("Target Node"), ImVec2(thirdWidth, 0))) {
+                        int count = applyNetworkAction(selectedNetworkKey, "target", selectedNetworkAlias);
+                        networkActionStatus = "Targeted " + std::to_string(count) + " node frequencies";
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Exclude Node"), ImVec2(thirdWidth, 0))) {
+                        int count = applyNetworkAction(selectedNetworkKey, "exclude", selectedNetworkAlias);
+                        networkActionStatus = "Excluded " + std::to_string(count) + " node frequencies";
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Mark Hits"), ImVec2(thirdWidth, 0))) {
+                        int count = applyNetworkAction(selectedNetworkKey, "marker", selectedNetworkAlias);
+                        networkActionStatus = "Marked " + std::to_string(count) + " node hits";
+                    }
+                    if (!networkActionStatus.empty()) {
+                        ImGui::TextWrapped("%s", networkActionStatus.c_str());
+                    }
+                }
+            }
+            if (ImGui::CollapsingHeader(T("DSD-FME Digital Voice"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool dsdChanged = false;
+                dsdChanged |= ImGui::Checkbox(T("Enable DSD-FME Bridge"), &dsdFmeEnabled);
+                static char dsdHostBuf[128] = "";
+                static bool dsdHostInit = false;
+                if (!dsdHostInit || strcmp(dsdHostBuf, dsdFmeHost.c_str()) == 0) {
+                    snprintf(dsdHostBuf, sizeof(dsdHostBuf), "%s", dsdFmeHost.c_str());
+                    dsdHostInit = true;
+                }
+                if (ImGui::InputText(T("Bridge Host"), dsdHostBuf, sizeof(dsdHostBuf))) {
+                    dsdFmeHost = dsdHostBuf;
+                    dsdChanged = true;
+                }
+                if (ImGui::InputInt(T("Bridge Port"), &dsdFmePort, 1, 100)) {
+                    dsdFmePort = std::clamp<int>(dsdFmePort, 1, 65535);
+                    dsdChanged = true;
+                }
+                const char* dsdModes[] = { "TCP Direct Link Audio", "RIGCTL Metadata", "External Companion" };
+                int dsdModeIndex = (dsdFmeMode == dsdModes[1]) ? 1 : ((dsdFmeMode == dsdModes[2]) ? 2 : 0);
+                if (ImGui::Combo(T("Bridge Mode"), &dsdModeIndex, "TCP Direct Link Audio\0RIGCTL Metadata\0External Companion\0")) {
+                    dsdFmeMode = dsdModes[dsdModeIndex];
+                    dsdChanged = true;
+                }
+                if (ImGui::CollapsingHeader(T("Decoder Outputs"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::TextUnformatted(T("Voice Extractions"));
+                    if (voiceFolderSelect.render("##predator_voice_output")) {
+                        voiceOutputPath = voiceFolderSelect.path;
+                        std::error_code ec;
+                        std::filesystem::create_directories(voiceFolderSelect.expandString(voiceOutputPath), ec);
+                        dsdChanged = true;
+                    }
+                    ImGui::TextUnformatted(T("Data Extractions"));
+                    if (dataFolderSelect.render("##predator_data_output")) {
+                        dataOutputPath = dataFolderSelect.path;
+                        std::error_code ec;
+                        std::filesystem::create_directories(dataFolderSelect.expandString(dataOutputPath), ec);
+                        dsdChanged = true;
+                    }
+                    ImGui::TextDisabled("The original SDR++ recorder folder remains managed by the Recorder module.");
+                }
+                ImGui::TextWrapped("%s", chineseUi ? "DSD-FME \u6a4b\u63a5\u8a2d\u5b9a\u5df2\u5132\u5b58\uff1b\u4e0b\u4e00\u968e\u6bb5\u6703\u63a5\u4e0a\u97f3\u8a0a\u8207\u89e3\u78bc\u4e8b\u4ef6\u8f38\u5165\u3002" : "DSD-FME bridge settings are persisted here; the next decoder pass will connect audio and decoded event input.");
+                if (dsdChanged) {
+                    saveDsdFmeConfig(dsdFmeEnabled, dsdFmeHost, dsdFmePort, dsdFmeMode);
+                }
+            }
+            if (ImGui::CollapsingHeader(T("Decoder Events"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool anyDecoderEvents = false;
+                for (int i = 0; i < events.size(); i++) {
+                    std::string decoder = readJsonString(events[i], "decoder", "None");
+                    if (decoder == "None") { continue; }
+                    anyDecoderEvents = true;
+                    ImGui::TextWrapped("%s  %s  %s  %s  %s",
+                        readJsonString(events[i], "time", "unknown").c_str(),
+                        decoder.c_str(),
+                        readJsonString(events[i], "protocol", "Unknown").c_str(),
+                        readJsonString(events[i], "label", "Event").c_str(),
+                        formatFrequency(readJsonDouble(events[i], "frequency", 0.0)).c_str());
+                }
+                if (!anyDecoderEvents) {
+                    ImGui::TextDisabled("%s", T("No entries."));
+                }
             }
         }
         else if (predatorTab == PREDATOR_TAB_MAP) {
-            if (ImGui::CollapsingHeader("Phone Map", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Phone Map"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextWrapped("The tactical map launches as a dedicated Android touch screen so pan, zoom, and pinch behavior feel like a normal map app instead of an ImGui widget.");
                 if (phoneHasFix) {
                     ImGui::Text("Phone GPS: %.6f, %.6f", phoneLat, phoneLon);
@@ -763,11 +2395,11 @@ void MainWindow::draw() {
                 else {
                     ImGui::TextDisabled("Phone GPS fix not available yet.");
                 }
-                if (ImGui::Button("Open Tactical Map", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                if (ImGui::Button(T("Open Tactical Map"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     backend::openMapView();
                 }
             }
-            if (ImGui::CollapsingHeader("DF Status", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("DF Status"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextWrapped("Direction-finding is intentionally excluded for now. Only the placeholder directory exists so we can add it cleanly later.");
             }
         }
@@ -780,7 +2412,7 @@ void MainWindow::draw() {
             static double newExcludeFreq = 462500000.0;
             static double newExcludeBandwidth = 12500.0;
 
-            if (ImGui::CollapsingHeader("Mission Modes", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Mission Modes"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (int i = 0; i < 4; i++) {
                     bool activeMode = (predatorMissionMode == i);
                     if (activeMode) {
@@ -799,13 +2431,47 @@ void MainWindow::draw() {
                 }
             }
 
+            if (ImGui::CollapsingHeader(T("Mission Run"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                drawMissionRunControls();
+            }
+
             bool missionChanged = false;
 
-            if (ImGui::CollapsingHeader("Search Bands", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::InputText("Band Name", newBandName, sizeof(newBandName))) {}
-                if (ImGui::InputDouble("Start Hz", &newBandStart, 1000.0, 100000.0, "%.0f")) {}
-                if (ImGui::InputDouble("Stop Hz", &newBandStop, 1000.0, 100000.0, "%.0f")) {}
-                if (ImGui::Button("Add Search Band", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            // Scroll the panel to expose the focused input field when the keyboard opens.
+            // Called after every InputText/InputDouble so the tapped field stays visible.
+#ifdef __ANDROID__
+            auto scrollToActive = []() {
+                if (ImGui::IsItemActivated()) { ImGui::SetScrollHereY(0.0f); }
+            };
+#else
+            auto scrollToActive = []() {};
+#endif
+
+            if (ImGui::CollapsingHeader(T("Search Bands"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                float hw = (fw - 4.0f * style::uiScale) * 0.5f;
+                ImGui::SetNextItemWidth(fw);
+                if (ImGui::InputText("##BandName", newBandName, sizeof(newBandName))) {}
+                ImGui::SameLine(0, 0); ImGui::TextDisabled(" Band Name");
+                scrollToActive();
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##BandStart", &newBandStart, 0, 0, "%.0f Hz")) {}
+                scrollToActive();
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##BandStop", &newBandStop, 0, 0, "%.0f Hz")) {}
+                scrollToActive();
+                float stepBtnW = (fw - 4.0f * style::uiScale) * 0.5f;
+                if (ImGui::Button("- 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart -= 1e6; newBandStop -= 1e6; }
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                if (ImGui::Button("+ 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart += 1e6; newBandStop += 1e6; }
+                if (ImGui::Button("From Current View", ImVec2(fw, 0))) {
+                    double ctr = gui::waterfall.getCenterFrequency();
+                    double bw  = gui::waterfall.getViewBandwidth();
+                    newBandStart = ctr - bw * 0.5;
+                    newBandStop  = ctr + bw * 0.5;
+                }
+                if (ImGui::Button("Add Search Band", ImVec2(fw, 0))) {
                     json row;
                     row["name"] = std::string(newBandName);
                     row["start"] = std::min(newBandStart, newBandStop);
@@ -826,31 +2492,43 @@ void MainWindow::draw() {
                     std::string bandName = readJsonString(searchBands[i], "name", "Band");
                     double bandStart = readJsonDouble(searchBands[i], "start", 0.0);
                     double bandStop = readJsonDouble(searchBands[i], "stop", 0.0);
-                    ImGui::Text("%s  %.0f - %.0f Hz", bandName.c_str(), bandStart, bandStop);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Delete")) {
+                    ImGui::TextWrapped("%s  %.3f - %.3f MHz", bandName.c_str(), bandStart/1e6, bandStop/1e6);
+                    float delW = ImGui::GetContentRegionAvail().x;
+                    if (ImGui::Button("Delete##sb", ImVec2(delW, 0))) {
                         searchBands.erase(searchBands.begin() + i);
                         missionChanged = true;
                         ImGui::PopID();
                         break;
                     }
                     ImGui::PopID();
+                    ImGui::Spacing();
                 }
             }
 
-            if (ImGui::CollapsingHeader("Targets", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::Button("Use Current Frequency as Target", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            if (ImGui::CollapsingHeader(T("Targets"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                if (ImGui::Button("Add Current Frequency as Target", ImVec2(fw, 0))) {
                     json row;
-                    row["name"] = "Current Target";
+                    row["name"] = "Target";
                     row["frequency"] = gui::freqSelect.frequency;
                     row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
                     row["enabled"] = true;
                     targets.push_back(row);
                     missionChanged = true;
                 }
-                if (ImGui::InputDouble("Target Hz", &newTargetFreq, 1000.0, 100000.0, "%.0f")) {}
-                if (ImGui::InputDouble("Target BW", &newTargetBandwidth, 100.0, 1000.0, "%.0f")) {}
-                if (ImGui::Button("Add Target", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                ImGui::SetNextItemWidth(fw);
+                if (ImGui::InputDouble("##TargetHz", &newTargetFreq, 0, 0, "%.0f Hz")) {}
+                ImGui::SameLine(0,0); ImGui::TextDisabled(" Target Hz");
+                scrollToActive();
+                ImGui::SetNextItemWidth(fw);
+                if (ImGui::InputDouble("##TargetBW", &newTargetBandwidth, 0, 0, "%.0f Hz BW")) {}
+                ImGui::SameLine(0,0); ImGui::TextDisabled(" Bandwidth");
+                scrollToActive();
+                if (ImGui::Button("From Current View##tgt", ImVec2(fw, 0))) {
+                    newTargetFreq = gui::waterfall.getCenterFrequency();
+                    newTargetBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                }
+                if (ImGui::Button("Add Target", ImVec2(fw, 0))) {
                     json row;
                     row["name"] = "Target";
                     row["frequency"] = newTargetFreq;
@@ -870,31 +2548,42 @@ void MainWindow::draw() {
                     ImGui::SameLine();
                     double targetFrequency = readJsonDouble(targets[i], "frequency", 0.0);
                     double targetBandwidth = readJsonDouble(targets[i], "bandwidth", 12500.0);
-                    ImGui::Text("%.0f Hz  BW %.0f", targetFrequency, targetBandwidth);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Delete")) {
+                    ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", targetFrequency/1e6, targetBandwidth);
+                    if (ImGui::Button("Delete##tgt", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                         targets.erase(targets.begin() + i);
                         missionChanged = true;
                         ImGui::PopID();
                         break;
                     }
                     ImGui::PopID();
+                    ImGui::Spacing();
                 }
             }
 
-            if (ImGui::CollapsingHeader("Excludes", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::Button("Use Current Frequency as Exclude", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            if (ImGui::CollapsingHeader(T("Excludes"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                if (ImGui::Button("Add Current Frequency as Exclude", ImVec2(fw, 0))) {
                     json row;
-                    row["name"] = "Current Exclude";
+                    row["name"] = "Exclude";
                     row["frequency"] = gui::freqSelect.frequency;
                     row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
                     row["enabled"] = true;
                     excludes.push_back(row);
                     missionChanged = true;
                 }
-                if (ImGui::InputDouble("Exclude Hz", &newExcludeFreq, 1000.0, 100000.0, "%.0f")) {}
-                if (ImGui::InputDouble("Exclude BW", &newExcludeBandwidth, 100.0, 1000.0, "%.0f")) {}
-                if (ImGui::Button("Add Exclude", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                ImGui::SetNextItemWidth(fw);
+                if (ImGui::InputDouble("##ExclHz", &newExcludeFreq, 0, 0, "%.0f Hz")) {}
+                ImGui::SameLine(0,0); ImGui::TextDisabled(" Exclude Hz");
+                scrollToActive();
+                ImGui::SetNextItemWidth(fw);
+                if (ImGui::InputDouble("##ExclBW", &newExcludeBandwidth, 0, 0, "%.0f Hz BW")) {}
+                ImGui::SameLine(0,0); ImGui::TextDisabled(" Bandwidth");
+                scrollToActive();
+                if (ImGui::Button("From Current View##excl", ImVec2(fw, 0))) {
+                    newExcludeFreq = gui::waterfall.getCenterFrequency();
+                    newExcludeBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                }
+                if (ImGui::Button("Add Exclude", ImVec2(fw, 0))) {
                     json row;
                     row["name"] = "Exclude";
                     row["frequency"] = newExcludeFreq;
@@ -914,19 +2603,19 @@ void MainWindow::draw() {
                     ImGui::SameLine();
                     double excludeFrequency = readJsonDouble(excludes[i], "frequency", 0.0);
                     double excludeBandwidth = readJsonDouble(excludes[i], "bandwidth", 12500.0);
-                    ImGui::Text("%.0f Hz  BW %.0f", excludeFrequency, excludeBandwidth);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Delete")) {
+                    ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", excludeFrequency/1e6, excludeBandwidth);
+                    if (ImGui::Button("Delete##excl", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                         excludes.erase(excludes.begin() + i);
                         missionChanged = true;
                         ImGui::PopID();
                         break;
                     }
                     ImGui::PopID();
+                    ImGui::Spacing();
                 }
             }
 
-            if (ImGui::CollapsingHeader("Scan / QuickScan Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Scan / QuickScan Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::InputInt("Dwell (ms)", &dwellMs, 100, 500)) {
                     dwellMs = std::max<int>(100, dwellMs);
                     missionChanged = true;
@@ -945,10 +2634,49 @@ void MainWindow::draw() {
                 if (ImGui::Checkbox("Record Audio", &recordAudio)) {
                     missionChanged = true;
                 }
+                bool scanUxChanged = false;
+                scanUxChanged |= ImGui::Checkbox(T("Hold on New Hit"), &predatorHoldOnNewHit);
+                scanUxChanged |= ImGui::Checkbox(T("Suppress Duplicate Hits"), &predatorSuppressDuplicateHits);
+                if (ImGui::InputInt(T("Duplicate Window (s)"), &predatorDuplicateHitWindowSec, 1, 5)) {
+                    predatorDuplicateHitWindowSec = std::clamp<int>(predatorDuplicateHitWindowSec, 1, 600);
+                    scanUxChanged = true;
+                }
+                scanUxChanged |= ImGui::Checkbox(T("Extend Dwell on Strong Hit"), &predatorExtendDwellOnStrongHit);
+                if (ImGui::SliderFloat(T("Strong Hit SNR"), &predatorStrongHitSnrDb, 6.0f, 40.0f, "%.1f dB")) {
+                    scanUxChanged = true;
+                }
+                scanUxChanged |= ImGui::Checkbox(T("Classify Auto-Marker"), &predatorClassifyAutoMarker);
+                if (scanUxChanged) {
+                    savePeakDetectionConfig();
+                }
             }
 
-            if (ImGui::CollapsingHeader("Operator Note", ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::TextWrapped("This shell carries the Predator SDR mission control concepts: mode, search bands, targets, excludes, dwell, quick filters, and map launch.");
+            if (ImGui::CollapsingHeader(T("Peak Detection"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool peakChanged = false;
+                peakChanged |= ImGui::Checkbox(T("Detect Peaks"), &predatorPeakDetectionEnabled);
+                if (ImGui::SliderFloat(T("Peak SNR"), &predatorPeakSnrDb, 3.0f, 30.0f, "%.1f dB")) {
+                    peakChanged = true;
+                }
+                if (ImGui::InputDouble(T("Peak Spacing Hz"), &predatorPeakMinSpacingHz, 1000.0, 12500.0, "%.0f")) {
+                    predatorPeakMinSpacingHz = std::max<double>(1000.0, predatorPeakMinSpacingHz);
+                    peakChanged = true;
+                }
+                if (ImGui::InputInt(T("Max Peaks / Dwell"), &predatorPeakMaxPerDwell, 1, 5)) {
+                    predatorPeakMaxPerDwell = std::clamp<int>(predatorPeakMaxPerDwell, 1, 20);
+                    peakChanged = true;
+                }
+                if (ImGui::InputInt(T("Marker Slots"), &predatorMarkerSlots, 1, 1)) {
+                    predatorMarkerSlots = std::clamp<int>(predatorMarkerSlots, 1, 16);
+                    peakChanged = true;
+                }
+                ImGui::TextWrapped("%s", chineseUi ? "\u6383\u63cf\u505c\u7559\u6642\uff0cPredator RF \u6703\u5c07\u901a\u904e\u9580\u6abb\u8207 SNR \u689d\u4ef6\u7684\u5cf0\u503c\u8a18\u9304\u70ba\u96c6\u7fa4\u547d\u4e2d\uff0c\u4e26\u7531\u547d\u4e2d\u9801\u9762\u6307\u6d3e\u6a19\u8a18\u3001\u89e3\u78bc\u5668\u3001\u76ee\u6a19\u6216\u6392\u9664\u3002" : "During scan dwell, Predator RF records peaks that clear threshold and SNR checks as clustered hits. Markers, decoders, targets, and excludes are assigned from the Hits page.");
+                if (peakChanged) {
+                    savePeakDetectionConfig();
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Operator Note"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextWrapped("This shell carries the Predator RF mission control concepts: mode, search bands, targets, excludes, dwell, quick filters, and map launch.");
             }
 
             if (missionChanged) {
@@ -956,35 +2684,55 @@ void MainWindow::draw() {
             }
         }
         else {
-            if (ImGui::CollapsingHeader("Source & Device", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Language"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                int languageIndex = (predatorLanguage == "zh-Hant") ? 1 : 0;
+                if (ImGui::Combo(T("Language"), &languageIndex, "English\0Traditional Chinese\0")) {
+                    predatorLanguage = (languageIndex == 1) ? "zh-Hant" : "en-US";
+                    savePredatorState();
+                }
+                ImGui::TextWrapped("%s", chineseUi ? "\u8a9e\u8a00\u5207\u63db\u6703\u7acb\u5373\u5957\u7528\u65bc Predator RF \u4efb\u52d9\u4ecb\u9762\u3002" : "Language changes apply immediately to the Predator RF mission interface.");
+            }
+            if (ImGui::CollapsingHeader(T("Source & Device"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 sourcemenu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader("Audio / Sinks", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Audio / Sinks"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 sinkmenu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader("Display & Band Plan", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Display & Band Plan"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 displaymenu::draw(NULL);
                 bandplanmenu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader("Appearance", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Appearance"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 thememenu::draw(NULL);
                 vfo_color_menu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader("Module Manager", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Module Manager"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 module_manager_menu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Status"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Text("Mission Mode: %s", missionModes[predatorMissionMode]);
-                ImGui::Text("Selected Source: %s", sourceName.empty() ? "None" : sourceName.c_str());
-                ImGui::Text("Playback State: %s", playing ? "Streaming" : "Idle");
+                ImGui::Text("Selected Source: %s", sourceName.empty() ? T("None") : sourceName.c_str());
+                ImGui::Text("Playback State: %s", playing ? T("Streaming") : T("Idle"));
                 ImGui::Text("Center Frequency: %.0f Hz", gui::waterfall.getCenterFrequency());
-                ImGui::Text("GPS Fix: %s", phoneHasFix ? "Ready" : "Waiting");
+                ImGui::Text("GPS Fix: %s", phoneHasFix ? T("Ready") : T("Waiting"));
                 if (phoneHasFix) {
                     ImGui::Text("GPS: %.6f, %.6f  +/-%.1fm", phoneLat, phoneLon, phoneAccuracy);
                 }
                 ImGui::TextWrapped("Maps are now wired through the phone GPS path. DF remains intentionally excluded.");
             }
-            if (ImGui::CollapsingHeader("Legacy Advanced Menus", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Session Export"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                if (ImGui::InputTextMultiline("Note##session_note", sessionNoteBuf, sizeof(sessionNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 96.0f * style::uiScale))) {
+                    saveSessionNote(std::string(sessionNoteBuf));
+                }
+                if (ImGui::Button(T("Export Session JSON"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                    exportPredatorSession();
+                }
+                if (!exportStatus.empty()) {
+                    ImGui::TextWrapped("%s", exportStatus.c_str());
+                }
+            }
+            if (ImGui::CollapsingHeader(T("Legacy Advanced Menus"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (gui::menu.draw(firstMenuRender)) {
                     saveLegacyMenuState();
                 }
@@ -995,7 +2743,7 @@ void MainWindow::draw() {
                     firstMenuRender = false;
                 }
             }
-            if (ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::CollapsingHeader(T("Debug"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Text("Frame time: %.3f ms/frame", ImGui::GetIO().DeltaTime * 1000.0f);
                 ImGui::Text("Framerate: %.1f FPS", ImGui::GetIO().Framerate);
                 ImGui::Checkbox("Show demo window", &demoWindow);
@@ -1175,7 +2923,12 @@ void MainWindow::draw() {
 void MainWindow::setPlayState(bool _playing) {
     if (_playing == playing) { return; }
     if (_playing) {
-        if (sigpath::sourceManager.getSelectedSourceName().empty()) { return; }
+        if (sigpath::sourceManager.getSelectedSourceName().empty()) {
+            predatorScanStatus = "Select SDR first";
+            predatorTab = PREDATOR_TAB_SYSTEM;
+            showMenu = true;
+            return;
+        }
         sigpath::iqFrontEnd.flushInputBuffer();
         sigpath::sourceManager.start();
         sigpath::sourceManager.tune(gui::waterfall.getCenterFrequency());
@@ -1205,3 +2958,4 @@ bool MainWindow::isPlaying() {
 void MainWindow::setFirstMenuRender() {
     firstMenuRender = true;
 }
+

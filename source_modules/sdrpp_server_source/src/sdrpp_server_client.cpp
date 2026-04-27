@@ -207,7 +207,7 @@ namespace server {
             if (outCount) { _this->decompIn.swap(outCount); };
         }
         else if (_this->r_pkt_hdr->type == PACKET_TYPE_ERROR) {
-            flog::error("Predator SDR Server Error: {0}", buf[sizeof(PacketHeader)]);
+            flog::error("Predator RF Server Error: {0}", buf[sizeof(PacketHeader)]);
         }
         else {
             flog::error("Invalid packet type: {0}", _this->r_pkt_hdr->type);

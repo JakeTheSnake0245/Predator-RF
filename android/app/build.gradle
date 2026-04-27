@@ -12,21 +12,52 @@ if (localPropertiesFile.exists()) {
 def sdrKitRoot = (localProperties.getProperty('sdr.kit.dir') ?: System.getenv('SDR_KIT_ROOT') ?: '/sdr-kit').replace('\\', '/')
 
 android {
-    compileSdkVersion 28
-    buildToolsVersion "30.0.3"
-    ndkVersion "25.1.8937393"
+    namespace "org.sdrpp.sdrpp"
+    compileSdkVersion 33
+    ndkVersion "23.2.8568313"
     defaultConfig {
         applicationId "org.sdrpp.sdrpp"
         minSdkVersion 28
-        targetSdkVersion 28
+        targetSdkVersion 33
         versionCode 1
         versionName "1.1.0"
+
+        ndk {
+            abiFilters "arm64-v8a"
+        }
 
         externalNativeBuild {
             cmake {
                 arguments "-DOPT_BACKEND_GLFW=OFF", "-DOPT_BACKEND_ANDROID=ON", "-DOPT_BUILD_SOAPY_SOURCE=OFF", "-DOPT_BUILD_ANDROID_AUDIO_SINK=ON", "-DOPT_BUILD_AUDIO_SINK=OFF", "-DOPT_BUILD_DISCORD_PRESENCE=OFF", "-DOPT_BUILD_M17_DECODER=ON", "-DOPT_BUILD_PLUTOSDR_SOURCE=ON", "-DOPT_BUILD_AUDIO_SOURCE=OFF", "-DSDR_KIT_ROOT=${sdrKitRoot}"
+                targets "sdrpp_core",
+                        "airspy_source",
+                        "airspyhf_source",
+                        "file_source",
+                        "hackrf_source",
+                        "hermes_source",
+                        "plutosdr_source",
+                        "rfspace_source",
+                        "rtl_sdr_source",
+                        "rtl_tcp_source",
+                        "sdrpp_server_source",
+                        "spectran_http_source",
+                        "spyserver_source",
+                        "audio_sink",
+                        "network_sink",
+                        "m17_decoder",
+                        "meteor_demodulator",
+                        "radio",
+                        "frequency_manager",
+                        "recorder",
+                        "rigctl_client",
+                        "rigctl_server",
+                        "scanner"
             }
         }
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
     }
 
     signingConfigs {
@@ -50,8 +81,9 @@ android {
 
     externalNativeBuild {
         cmake {
-            version "3.18.1"
+            version "3.22.1"
             path "../../CMakeLists.txt"
+            buildStagingDirectory ".cmake"
         }
     }
 
@@ -84,3 +116,19 @@ dependencies {
 
 copyResources.dependsOn deleteTempAssets
 preBuild.dependsOn copyResources
+
+// Workaround for AGP 8.3.2 + ninja stale-output tracking:
+// Ninja skips relinking libsdrpp_core.so if its .ninja_log timestamp is newer than all
+// sources — even when the .so was deleted. Touching these files makes sources appear
+// newer than the log, forcing ninja to recompile them and relink libsdrpp_core.so fresh
+// every build, so AGP's output verification always finds the file present.
+// vfo_manager.cpp is touched because the nightly .cmake cache shipped a stale .o that
+// predates the deleteVFO(string) overload, causing a linker error on first build.
+tasks.configureEach { task ->
+    if (task.name.startsWith('buildCMake')) {
+        task.doFirst {
+            file("../../core/backends/android/backend.cpp").setLastModified(System.currentTimeMillis())
+            file("../../core/src/signal_path/vfo_manager.cpp").setLastModified(System.currentTimeMillis())
+        }
+    }
+}

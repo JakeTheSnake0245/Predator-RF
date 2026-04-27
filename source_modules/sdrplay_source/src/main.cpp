@@ -13,7 +13,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "sdrplay_source",
-    /* Description:     */ "SDRplay source module for Predator SDR",
+    /* Description:     */ "SDRplay source module for Predator RF",
     /* Author:          */ "Ryzerth",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1

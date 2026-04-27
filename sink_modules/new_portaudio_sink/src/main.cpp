@@ -18,7 +18,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "new_portaudio_sink",
-    /* Description:     */ "Audio sink module for Predator SDR",
+    /* Description:     */ "Audio sink module for Predator RF",
     /* Author:          */ "Ryzerth;Maxime Biette",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1
