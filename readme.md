@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="root/res/icons/sdrpp.png" alt="Predator SDR" width="160"/>
+</p>
+
 # Predator SDR
 
 A passion project aimed at lowering the barrier to entry for working in the electromagnetic environment (EME). Getting started with SDR has a steep on-ramp — understanding the tools, the spectrum, and how to navigate it all takes time. Predator SDR is an attempt to make that easier.
