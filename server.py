@@ -31,6 +31,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         print(f"[{self.address_string()}] {format % args}")
 
-with socketserver.TCPServer((HOST, PORT), Handler) as httpd:
+class ReusableTCPServer(socketserver.TCPServer):
+    # Allow rebinding the port immediately after the previous process exits,
+    # so workflow restarts don't fail with "Address already in use" while
+    # the kernel is still holding the socket in TIME_WAIT.
+    allow_reuse_address = True
+
+
+with ReusableTCPServer((HOST, PORT), Handler) as httpd:
     print(f"Serving Predator SDR project page on http://{HOST}:{PORT}")
     httpd.serve_forever()
