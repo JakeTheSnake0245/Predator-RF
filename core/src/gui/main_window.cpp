@@ -1169,6 +1169,92 @@ void MainWindow::draw() {
         }
     }
 
+    // -------- Decoder bridge ingestion (P25 trunked voice) --------
+    // JSON-line feed from a DSD-FME or OP25 companion process. Each line is
+    // one P25 control-channel or call event. networkId = WACN (or WACN/SYSID
+    // when both are reported), talkgroup = TG alias if available else "TG <id>",
+    // radioId = source unit id. Encrypted flag, ALGID and KEYID are surfaced
+    // in raw so the topology tree can highlight encrypted calls.
+    ensureDecoderBridge("p25", "127.0.0.1", 7355, "DSD-FME Direct",
+        "P25 Phase 1 (C4FM) and Phase 2 (H-DQPSK). Routes through the DSD-FME bridge below; Talkgroup, Network ID, and Radio ID populate the topology tree as decoded WACN/RFSS metadata arrives.");
+
+    static predator::P25Ingester p25Ingester;
+    {
+        json& b = decoderBridges["p25"];
+        bool wantActive   = readJsonBool(b, "enabled", false);
+        std::string wHost = readJsonString(b, "host", "127.0.0.1");
+        int         wPort = (int)readJsonDouble(b, "port", 7355.0);
+        std::string wMode = readJsonString(b, "mode", "DSD-FME Direct");
+
+        static bool        active = false;
+        static std::string activeHost;
+        static int         activePort = 0;
+        static std::string activeMode;
+
+        if (wantActive && (!active || activeHost != wHost || activePort != wPort || activeMode != wMode)) {
+            p25Ingester.start(wHost, wPort, wMode);
+            active = true;
+            activeHost = wHost;
+            activePort = wPort;
+            activeMode = wMode;
+        } else if (!wantActive && active) {
+            p25Ingester.stop();
+            active = false;
+        }
+    }
+
+    {
+        auto pending = p25Ingester.drain(64);
+        if (!pending.empty()) {
+            for (auto& e : pending) {
+                json row;
+                char idBuf[160];
+                snprintf(idBuf, sizeof(idBuf), "%s_p25_%s_%d",
+                         filenameTimestamp().c_str(),
+                         e.networkId.empty() ? "unk" : e.networkId.c_str(),
+                         (int)events.size());
+                row["time"]         = currentTimestamp();
+                row["eventId"]      = std::string(idBuf);
+                row["type"]         = "decoder";
+                row["frequency"]    = e.frequencyHz;
+                row["label"]        = e.label.empty() ? std::string("P25") : e.label;
+                row["strengthDb"]   = e.strengthDb;
+                row["decoder"]      = "P25";
+                row["hitState"]     = "decoded";
+                row["protocol"]     = e.protocol;
+                row["networkId"]    = e.networkId;
+                row["talkgroup"]    = e.talkgroup;
+                row["radioId"]      = e.radioId;
+                row["voicePath"]    = voiceOutputPath;
+                row["dataPath"]     = dataOutputPath;
+                row["clipBaseName"] = std::string(idBuf);
+                row["voiceClipPath"] = "";
+                row["dataClipPath"]  = "";
+                row["hasAudio"]     = false;
+                row["hasData"]      = true;
+                row["source"]       = "Bridge:P25";
+                row["mode"]         = predatorMissionMode;
+                row["gpsFix"]       = phoneHasFix;
+                if (phoneHasFix) {
+                    row["lat"]       = phoneLat;
+                    row["lon"]       = phoneLon;
+                    row["accuracyM"] = phoneAccuracy;
+                }
+                // Surface the encrypted flag at row top level so the event
+                // log and tactical map can colour encrypted calls without
+                // digging into raw on every frame.
+                if (e.raw.is_object() && e.raw.contains("encrypted")
+                    && e.raw["encrypted"].is_boolean()) {
+                    row["encrypted"] = e.raw["encrypted"];
+                }
+                row["raw"] = e.raw;
+                events.insert(events.begin(), row);
+            }
+            while (events.size() > 200) events.erase(events.end() - 1);
+            savePredatorEvents(events);
+        }
+    }
+
     auto exportPredatorSession = [&]() {
         std::string root = (std::string)core::args["root"];
         std::filesystem::path exportDir = std::filesystem::path(root) / "exports";
