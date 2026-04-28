@@ -17,7 +17,8 @@ This app is being built as a Predator RF operator experience on top of the worki
 - Spectrum markers: scan-created markers are passive `M#` overlays derived from refined FFT peaks, while manually routed hits can create decoder-ready Predator VFO routes without stealing the receiver VFO during scanning.
 - Pre-demod usability: hit sorting, event filtering, hit rename/notes, scan progress, session notes, session JSON export, and basic Classify auto-marker assignment are present.
 - Decoder workflow shell: DSD-FME bridge settings, per-hit decoder selection, and separate voice/data extraction folders are persisted while the original SDR++ recorder folder flow remains unchanged.
-- Network shell: decoder-backed topology grouping is present for events, with DSD-FME metadata slots ready for protocol/network/talkgroup/radio ID normalization.
+- Network shell: hierarchical Protocol → Network → Talkgroup tree (Diablo Network Tree style) with radio ID and frequency aggregation, search filter, alias persistence, bulk Target/Exclude/Marker actions on a selected node, and Topology CSV export to `root/exports/`.
+- Decoder Bridges shell: receive-only configuration scaffolding for P25 (Phase 1+2), RTL433 ISM, POCSAG/FLEX paging, ADS-B aircraft, and AIS marine. Host/port/mode/notes persisted to `predatorDecoderBridges`; live status indicators in the Network tree mark which protocols have an active bridge feeding them. Native ingestion threads for each bridge are the next scaffolded-but-not-complete step.
 - DF gate: DF is explicitly shown as unavailable instead of being implied or faked.
 - Safe receive scope: transmit, jamming, effects, and offensive countermeasure workflows are not implemented.
 
