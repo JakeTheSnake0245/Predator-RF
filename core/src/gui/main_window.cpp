@@ -1833,6 +1833,11 @@ void MainWindow::draw() {
                     for (int i = 0; i < hits.size(); i++) {
                         hitOrder.push_back(i);
                     }
+                    // Scrollable hit list — max ~5 entries visible at once
+                    float hitListH = std::min<float>((float)hitOrder.size(), 5.0f) *
+                                     (ImGui::GetTextLineHeightWithSpacing() * 4.5f + 6.0f * style::uiScale);
+                    hitListH = std::max(hitListH, 120.0f * style::uiScale);
+                    ImGui::BeginChild("##hit_list_scroll", ImVec2(0, hitListH), false, ImGuiWindowFlags_HorizontalScrollbar);
                     std::sort(hitOrder.begin(), hitOrder.end(), [&](int a, int b) {
                         switch (predatorHitSortMode) {
                         case 1:
@@ -1865,20 +1870,79 @@ void MainWindow::draw() {
                         int eventCount = (int)readJsonDouble(hits[i], "eventCount", 0.0);
                         int unreadCount = (int)readJsonDouble(hits[i], "unreadCount", 0.0);
                         double lastRssi = readJsonDouble(hits[i], "lastRssi", 0.0);
+                        double maxRssi  = readJsonDouble(hits[i], "maxRssi",  -120.0);
                         double snrDb = readJsonDouble(hits[i], "snrDb", 0.0);
                         bool markerAssigned = readJsonBool(hits[i], "markerAssigned", false);
+                        bool isSelected = (predatorSelectedHitFrequency > 0.0 &&
+                            std::abs(hitFrequency - predatorSelectedHitFrequency) <=
+                            std::max<double>(readJsonDouble(hits[i], "clusterHz", hitClusterHz), 100.0));
                         std::string decoder = readJsonString(hits[i], "decoder", "None");
                         int decoderIndex = 0;
                         for (int d = 0; d < 6; d++) {
-                            if (decoder == decoderLabels[d]) {
-                                decoderIndex = d;
-                                break;
+                            if (decoder == decoderLabels[d]) { decoderIndex = d; break; }
+                        }
+
+                        // ── Row background highlight ───────────────────────
+                        // Unread → warm amber, Selected → subtle blue tint
+                        if (isSelected) {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.22f, 0.35f, 1.0f));
+                        } else if (unreadCount > 0) {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.28f, 0.22f, 0.06f, 1.0f));
+                        }
+
+                        // ── State color dot ────────────────────────────────
+                        ImU32 stateDotCol;
+                        if      (state == "target")  { stateDotCol = IM_COL32(50, 210, 90,  255); }
+                        else if (state == "exclude") { stateDotCol = IM_COL32(220, 60, 60,  255); }
+                        else                         { stateDotCol = IM_COL32(180, 180, 60, 255); }
+
+                        ImVec2 dotPos = ImVec2(ImGui::GetCursorScreenPos().x + 4.0f * style::uiScale,
+                                               ImGui::GetCursorScreenPos().y + ImGui::GetTextLineHeight() * 0.5f);
+                        ImGui::GetWindowDrawList()->AddCircleFilled(dotPos, 5.0f * style::uiScale, stateDotCol);
+                        ImGui::Dummy(ImVec2(14.0f * style::uiScale, 0.0f));
+                        ImGui::SameLine();
+
+                        // ── Primary row: freq + SNR + marker badge ─────────
+                        {
+                            char badge[32] = "";
+                            if (markerAssigned) snprintf(badge, sizeof(badge), " [M]");
+                            if (unreadCount > 0) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s  SNR %.0f dB  hits:%d%s",
+                                    formatFrequency(hitFrequency).c_str(), snrDb, hitCount, badge);
+                            } else {
+                                ImGui::Text("%s  SNR %.0f dB  hits:%d%s",
+                                    formatFrequency(hitFrequency).c_str(), snrDb, hitCount, badge);
                             }
                         }
 
-                        ImGui::TextWrapped("%s  %s  %s  hits:%d events:%d unread:%d  RSSI %.1f dB  SNR %.1f dB",
-                            formatFrequency(hitFrequency).c_str(), state.c_str(), name.c_str(), hitCount, eventCount, unreadCount, lastRssi, snrDb);
-                        ImGui::TextDisabled("Last seen: %s", readJsonString(hits[i], "lastSeen", "unknown").c_str());
+                        // ── Secondary row: name + state + last-seen + unread badge ──
+                        ImGui::Dummy(ImVec2(14.0f * style::uiScale, 0.0f));
+                        ImGui::SameLine();
+                        {
+                            char unreadBuf[24] = "";
+                            if (unreadCount > 0) snprintf(unreadBuf, sizeof(unreadBuf), "  (%d unread)", unreadCount);
+                            ImGui::TextDisabled("%s  [%s]  RSSI %.0f  last: %s%s",
+                                name.c_str(), state.c_str(), lastRssi,
+                                readJsonString(hits[i], "lastSeen", "?").c_str(), unreadBuf);
+                        }
+
+                        // ── RSSI bar ───────────────────────────────────────
+                        {
+                            float barW = ImGui::GetContentRegionAvail().x;
+                            float barH = 3.0f * style::uiScale;
+                            ImVec2 barTL = ImGui::GetCursorScreenPos();
+                            ImVec2 barBR = ImVec2(barTL.x + barW, barTL.y + barH);
+                            ImGui::GetWindowDrawList()->AddRectFilled(barTL, barBR, IM_COL32(50, 50, 50, 200), 1.0f);
+                            double clampedRssi = std::clamp(maxRssi, -120.0, -20.0);
+                            float fill = (float)((clampedRssi + 120.0) / 100.0);
+                            ImU32 barFill = (fill > 0.65f) ? IM_COL32(220, 70, 50, 220)
+                                          : (fill > 0.35f) ? IM_COL32(220, 180, 40, 220)
+                                          :                  IM_COL32(50, 200, 90, 220);
+                            ImGui::GetWindowDrawList()->AddRectFilled(barTL, ImVec2(barTL.x + barW * fill, barBR.y), barFill, 1.0f);
+                            ImGui::Dummy(ImVec2(barW, barH + 2.0f * style::uiScale));
+                        }
+
+                        if (isSelected || unreadCount > 0) { ImGui::PopStyleColor(); }
 
                         if (ImGui::Button(T("Select"))) {
                             predatorSelectedHitFrequency = hitFrequency;
@@ -1943,6 +2007,7 @@ void MainWindow::draw() {
                         ImGui::Separator();
                         ImGui::PopID();
                     }
+                    ImGui::EndChild();
                     if (detectedHitsChanged) {
                         savePredatorHits(hits);
                     }
@@ -1982,18 +2047,51 @@ void MainWindow::draw() {
                         editHitFrequency = hitFrequency;
                     }
 
-                    ImGui::TextWrapped("%s  %s", name.c_str(), formatFrequency(hitFrequency).c_str());
-                    ImGui::Text("State: %s", hitStateForFrequency(hitFrequency, hit).c_str());
-                    ImGui::Text("Hits: %d  Events: %d  Unread: %d",
-                        (int)readJsonDouble(hit, "hitCount", 0.0),
-                        (int)readJsonDouble(hit, "eventCount", 0.0),
-                        (int)readJsonDouble(hit, "unreadCount", 0.0));
-                    ImGui::Text("Last RSSI: %.1f dB  Max RSSI: %.1f dB  SNR: %.1f dB",
-                        readJsonDouble(hit, "lastRssi", 0.0),
-                        readJsonDouble(hit, "maxRssi", 0.0),
-                        readJsonDouble(hit, "snrDb", 0.0));
-                    ImGui::Text("Decoder: %s", readJsonString(hit, "decoder", "None").c_str());
-                    ImGui::Text("Route: %s", readJsonString(hit, "routeVfo", "None").c_str());
+                    // ── Selected hit header ────────────────────────────────
+                    {
+                        std::string selState = hitStateForFrequency(hitFrequency, hit);
+                        ImVec4 selStatCol;
+                        if      (selState == "target")  { selStatCol = ImVec4(0.20f, 0.85f, 0.35f, 1.0f); }
+                        else if (selState == "exclude") { selStatCol = ImVec4(0.88f, 0.24f, 0.24f, 1.0f); }
+                        else                            { selStatCol = ImVec4(0.75f, 0.75f, 0.24f, 1.0f); }
+
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", formatFrequency(hitFrequency).c_str());
+                        ImGui::SameLine();
+                        ImGui::TextColored(selStatCol, "[%s]", selState.c_str());
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("%s", name.c_str());
+
+                        double selSnr    = readJsonDouble(hit, "snrDb",    0.0);
+                        double selLastRssi = readJsonDouble(hit, "lastRssi", 0.0);
+                        double selMaxRssi  = readJsonDouble(hit, "maxRssi",  -120.0);
+                        int    selHits   = (int)readJsonDouble(hit, "hitCount",   0.0);
+                        int    selEvents = (int)readJsonDouble(hit, "eventCount", 0.0);
+                        int    selUnread = (int)readJsonDouble(hit, "unreadCount", 0.0);
+
+                        ImGui::Text("SNR %.1f dB  RSSI %.0f / %.0f dB  hits:%d  events:%d",
+                            selSnr, selLastRssi, selMaxRssi, selHits, selEvents);
+                        if (selUnread > 0) {
+                            ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.15f, 1.0f), "%d unread", selUnread);
+                            ImGui::SameLine();
+                        }
+
+                        // RSSI bar
+                        float selBarW = ImGui::GetContentRegionAvail().x;
+                        float selBarH = 4.0f * style::uiScale;
+                        ImVec2 selBarTL = ImGui::GetCursorScreenPos();
+                        ImVec2 selBarBR = ImVec2(selBarTL.x + selBarW, selBarTL.y + selBarH);
+                        ImGui::GetWindowDrawList()->AddRectFilled(selBarTL, selBarBR, IM_COL32(50, 50, 50, 200), 1.0f);
+                        float selFill = (float)(std::clamp(selMaxRssi, -120.0, -20.0) + 120.0) / 100.0f;
+                        ImU32 selBarFill = (selFill > 0.65f) ? IM_COL32(220, 70, 50, 220)
+                                         : (selFill > 0.35f) ? IM_COL32(220, 180, 40, 220)
+                                         :                     IM_COL32(50, 200, 90, 220);
+                        ImGui::GetWindowDrawList()->AddRectFilled(selBarTL, ImVec2(selBarTL.x + selBarW * selFill, selBarBR.y), selBarFill, 1.0f);
+                        ImGui::Dummy(ImVec2(selBarW, selBarH + 3.0f * style::uiScale));
+
+                        ImGui::Text("Decoder: %s   Route: %s",
+                            readJsonString(hit, "decoder", "None").c_str(),
+                            readJsonString(hit, "routeVfo", "—").c_str());
+                    }
 
                     if (ImGui::CollapsingHeader(T("Rename / Notes"))) {
                         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
@@ -2079,29 +2177,42 @@ void MainWindow::draw() {
 
                     ImGui::Separator();
                     ImGui::TextUnformatted(T("Event Log"));
-                    int shownEvents = 0;
                     double clusterWidth = std::max<double>(readJsonDouble(hit, "clusterHz", hitClusterHz), 100.0);
-                    for (int e = 0; e < events.size(); e++) {
+                    // Collect matching events, show newest first
+                    std::vector<int> hitEventIdx;
+                    for (int e = 0; e < (int)events.size(); e++) {
                         double eventFrequency = readJsonDouble(events[e], "frequency", 0.0);
                         if (std::abs(eventFrequency - hitFrequency) > clusterWidth) { continue; }
-                        std::string eventType = readJsonString(events[e], "type", "event");
+                        std::string eventType   = readJsonString(events[e], "type",    "event");
                         std::string eventDecoder = readJsonString(events[e], "decoder", "None");
-                        if ((predatorEventFilter == 1 && eventType != "hit") ||
+                        if ((predatorEventFilter == 1 && eventType != "hit")    ||
                             (predatorEventFilter == 2 && eventType != "manual") ||
                             (predatorEventFilter == 3 && eventType != "target") ||
-                            (predatorEventFilter == 4 && eventDecoder == "None")) {
-                            continue;
-                        }
-                        shownEvents++;
-                        ImGui::TextWrapped("%s  %s  %.1f dB  %s",
-                            readJsonString(events[e], "time", "unknown").c_str(),
-                            eventType.c_str(),
-                            readJsonDouble(events[e], "strengthDb", 0.0),
-                            eventDecoder.c_str());
+                            (predatorEventFilter == 4 && eventDecoder == "None")) { continue; }
+                        hitEventIdx.push_back(e);
                     }
-                    if (shownEvents == 0) {
+                    float hitEventH = std::min<float>((float)hitEventIdx.size(), 6.0f) * ImGui::GetTextLineHeightWithSpacing() + 8.0f;
+                    ImGui::BeginChild("##hit_event_log", ImVec2(0, std::max(hitEventH, 60.0f * style::uiScale)), true);
+                    if (hitEventIdx.empty()) {
                         ImGui::TextDisabled("%s", T("No entries."));
+                    } else {
+                        for (int ei = (int)hitEventIdx.size() - 1; ei >= 0; ei--) {
+                            int e = hitEventIdx[ei];
+                            std::string evType    = readJsonString(events[e], "type",      "event");
+                            std::string evDecoder = readJsonString(events[e], "decoder",   "None");
+                            std::string evLabel   = readJsonString(events[e], "label",     evType);
+                            std::string evTime    = readJsonString(events[e], "time",      "?");
+                            double      evStrength = readJsonDouble(events[e], "strengthDb", 0.0);
+                            ImVec4 evCol;
+                            if      (evType == "hit")    { evCol = ImVec4(0.20f, 0.86f, 0.40f, 1.0f); }
+                            else if (evType == "manual") { evCol = ImVec4(0.95f, 0.80f, 0.15f, 1.0f); }
+                            else if (evType == "target") { evCol = ImVec4(0.25f, 0.60f, 0.95f, 1.0f); }
+                            else if (evDecoder != "None"){ evCol = ImVec4(0.75f, 0.35f, 0.90f, 1.0f); }
+                            else                         { evCol = ImVec4(0.65f, 0.65f, 0.65f, 1.0f); }
+                            ImGui::TextColored(evCol, "[%s] %s  %.0f dB  %s", evTime.c_str(), evLabel.c_str(), evStrength, evDecoder.c_str());
+                        }
                     }
+                    ImGui::EndChild();
 
                     if (selectedChanged) {
                         savePredatorHits(hits);
@@ -2152,31 +2263,53 @@ void MainWindow::draw() {
 
             bool hitsChanged = false;
             if (ImGui::CollapsingHeader(T("Event Log"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (events.empty()) {
-                    ImGui::TextDisabled("%s", T("No entries."));
+                // Build filtered index for display
+                std::vector<int> filteredEvIdx;
+                for (int i = 0; i < (int)events.size(); i++) {
+                    std::string type    = readJsonString(events[i], "type",    "event");
+                    std::string decoder = readJsonString(events[i], "decoder", "None");
+                    double frequency    = readJsonDouble(events[i], "frequency", 0.0);
+                    bool currentHitEvent = (predatorSelectedHitFrequency > 0.0) &&
+                        (std::abs(frequency - predatorSelectedHitFrequency) <= std::max<double>(hitClusterHz, 100.0));
+                    if ((predatorEventFilter == 1 && type != "hit")    ||
+                        (predatorEventFilter == 2 && type != "manual") ||
+                        (predatorEventFilter == 3 && type != "target") ||
+                        (predatorEventFilter == 4 && decoder == "None") ||
+                        (predatorEventFilter == 5 && !currentHitEvent)) { continue; }
+                    filteredEvIdx.push_back(i);
                 }
-                else {
-                    for (int i = 0; i < events.size(); i++) {
-                        std::string time = readJsonString(events[i], "time", "unknown");
-                        std::string type = readJsonString(events[i], "type", "event");
-                        std::string label = readJsonString(events[i], "label", "Event");
-                        std::string decoder = readJsonString(events[i], "decoder", "None");
-                        double frequency = readJsonDouble(events[i], "frequency", 0.0);
-                        double strength = readJsonDouble(events[i], "strengthDb", 0.0);
-                        bool currentHitEvent = false;
-                        if (predatorSelectedHitFrequency > 0.0) {
-                            currentHitEvent = std::abs(frequency - predatorSelectedHitFrequency) <= std::max<double>(hitClusterHz, 100.0);
-                        }
-                        if ((predatorEventFilter == 1 && type != "hit") ||
-                            (predatorEventFilter == 2 && type != "manual") ||
-                            (predatorEventFilter == 3 && type != "target") ||
-                            (predatorEventFilter == 4 && decoder == "None") ||
-                            (predatorEventFilter == 5 && !currentHitEvent)) {
-                            continue;
-                        }
-                        ImGui::TextWrapped("%s  %s  %s  %s  %.1f dB", time.c_str(), type.c_str(), label.c_str(), formatFrequency(frequency).c_str(), strength);
+
+                // Scrollable region — cap at 10 visible rows
+                float logH = std::min<float>((float)std::max((int)filteredEvIdx.size(), 3), 10) * ImGui::GetTextLineHeightWithSpacing() + 8.0f;
+                ImGui::BeginChild("##global_event_log", ImVec2(0, logH), true);
+                if (filteredEvIdx.empty()) {
+                    ImGui::TextDisabled("%s", T("No entries."));
+                } else {
+                    // Newest first
+                    for (int ei = (int)filteredEvIdx.size() - 1; ei >= 0; ei--) {
+                        int i = filteredEvIdx[ei];
+                        std::string evTime    = readJsonString(events[i], "time",      "?");
+                        std::string evType    = readJsonString(events[i], "type",      "event");
+                        std::string evLabel   = readJsonString(events[i], "label",     evType);
+                        std::string evDecoder = readJsonString(events[i], "decoder",   "None");
+                        double      evFreq    = readJsonDouble(events[i], "frequency",  0.0);
+                        double      evStr     = readJsonDouble(events[i], "strengthDb", 0.0);
+
+                        ImVec4 evCol;
+                        if      (evType == "hit")    { evCol = ImVec4(0.20f, 0.86f, 0.40f, 1.0f); }
+                        else if (evType == "manual") { evCol = ImVec4(0.95f, 0.80f, 0.15f, 1.0f); }
+                        else if (evType == "target") { evCol = ImVec4(0.25f, 0.60f, 0.95f, 1.0f); }
+                        else if (evDecoder != "None"){ evCol = ImVec4(0.75f, 0.35f, 0.90f, 1.0f); }
+                        else                         { evCol = ImVec4(0.65f, 0.65f, 0.65f, 1.0f); }
+
+                        ImGui::TextColored(evCol, "[%s] %-8s %s  %.0f dB  %s",
+                            evTime.c_str(), evType.c_str(),
+                            formatFrequency(evFreq).c_str(), evStr,
+                            (evDecoder != "None") ? evDecoder.c_str() : evLabel.c_str());
                     }
                 }
+                ImGui::EndChild();
+
                 if (ImGui::Button(T("Clear Events"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     events = json::array();
                     savePredatorEvents(events);
