@@ -13,6 +13,7 @@
 #include <utils/freq_formatting.h>
 #include <gui/dialogs/dialog_box.h>
 #include <fstream>
+#include <algorithm>
 
 SDRPP_MOD_INFO{
     /* Name:            */ "frequency_manager",
@@ -33,6 +34,15 @@ struct WaterfallBookmark {
     std::string listName;
     std::string bookmarkName;
     FrequencyBookmark bookmark;
+};
+
+// Auto-detected signal peak, tracked across frames for stability
+struct AutoMarkerEntry {
+    double frequency  = 0.0;
+    float  peakPower  = -120.0f;
+    float  snr        = 0.0f;
+    int    hitCount   = 0;   // consecutive frames seen
+    int    missCount  = 0;   // consecutive frames missed
 };
 
 ConfigManager config;
@@ -563,6 +573,47 @@ private:
 
         if (_this->selectedListName == "") { style::endDisabled(); }
 
+        // ── Auto Markers ──────────────────────────────────────────────────────
+        ImGui::Separator();
+        ImGui::TextUnformatted("Auto Markers");
+        ImGui::Separator();
+
+        ImGui::Checkbox(("Enable##_freq_mgr_am_en_" + _this->name).c_str(), &_this->autoMarkersEnabled);
+        // Clear tracked list when toggling off so stale markers don't reappear
+        if (!_this->autoMarkersEnabled && !_this->trackedAutoMarkers.empty()) {
+            _this->trackedAutoMarkers.clear();
+        }
+
+        if (!_this->autoMarkersEnabled) { style::beginDisabled(); }
+
+        // SNR Threshold slider
+        ImGui::LeftLabel("Min SNR (dB)");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::SliderFloat(("##_freq_mgr_am_snr_" + _this->name).c_str(),
+                           &_this->autoSNRThreshold, 5.0f, 40.0f, "%.0f dB");
+
+        // Minimum separation slider
+        ImGui::LeftLabel("Min Sep (kHz)");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::SliderInt(("##_freq_mgr_am_sep_" + _this->name).c_str(),
+                         &_this->autoMinSepKHz, 1, 500, "%d kHz");
+
+        // Persistence slider
+        ImGui::LeftLabel("Persist frames");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::SliderInt(("##_freq_mgr_am_pf_" + _this->name).c_str(),
+                         &_this->autoPersistFrames, 1, 20, "%d");
+
+        // Live count of confirmed markers
+        int confirmed = 0;
+        for (auto& tm : _this->trackedAutoMarkers) {
+            if (tm.hitCount >= _this->autoPersistFrames) confirmed++;
+        }
+        ImGui::Text("Detected signals: %d", confirmed);
+
+        if (!_this->autoMarkersEnabled) { style::endDisabled(); }
+        // ── End Auto Markers ──────────────────────────────────────────────────
+
         if (_this->createOpen) {
             _this->createOpen = _this->bookmarkEditDialog();
         }
@@ -602,9 +653,108 @@ private:
         }
     }
 
+    // ── Auto-marker helpers ──────────────────────────────────────────────────
+
+    // Robust noise floor: 20th-percentile of the FFT bins (O(N) via nth_element).
+    // Strong signals pull the mean upward; the lower percentile is unaffected.
+    static float estimateNoiseFloor(const float* fft, int n) {
+        std::vector<float> tmp(fft, fft + n);
+        int k = std::max(0, (int)(0.20f * n) - 1);
+        std::nth_element(tmp.begin(), tmp.begin() + k, tmp.end());
+        return tmp[k];
+    }
+
+    // Find local maxima whose SNR exceeds threshold, with minimum bin separation.
+    // Returns at most maxPeaks candidates, sorted strongest-first implicitly by
+    // the scan order (left to right in frequency).
+    static void findPeakCandidates(const float* fft, int n,
+                                   float noiseFloor, float snrThresh,
+                                   int minSepBins, double lowFreq, double hzPerBin,
+                                   std::vector<AutoMarkerEntry>& out, int maxPeaks = 32)
+    {
+        // Half-window for local-max check: at least ±4 bins, up to ±half-minSep.
+        int hw = std::max(4, minSepBins / 2);
+
+        for (int i = 1; i < n - 1 && (int)out.size() < maxPeaks; i++) {
+            float v   = fft[i];
+            float snr = v - noiseFloor;
+            if (snr < snrThresh) continue;
+
+            // Must be the highest bin within ±hw
+            bool isPeak = true;
+            for (int j = std::max(0, i - hw); j <= std::min(n - 1, i + hw) && isPeak; j++) {
+                if (j != i && fft[j] >= v) isPeak = false;
+            }
+            if (!isPeak) continue;
+
+            AutoMarkerEntry am;
+            am.frequency = lowFreq + ((double)i + 0.5) * hzPerBin;
+            am.peakPower = v;
+            am.snr       = snr;
+            out.push_back(am);
+
+            // Skip ahead so we don't find sub-peaks of the same signal
+            i += std::max(1, hw - 1);
+        }
+    }
+
+    // Update the frame-persistence tracker:
+    //   - candidates that match an existing tracked entry increment its hitCount
+    //   - unmatched tracked entries that are currently visible accumulate missCount
+    //     and are pruned after autoDecayFrames misses
+    //   - new (unmatched) candidates are added with hitCount = 1
+    static void updateTracked(const std::vector<AutoMarkerEntry>& candidates,
+                              std::vector<AutoMarkerEntry>&        tracked,
+                              double matchTolHz, int persistFrames, int decayFrames,
+                              double lowFreq, double highFreq)
+    {
+        std::vector<bool> cMatched(candidates.size(), false);
+        std::vector<bool> tMatched(tracked.size(),    false);
+
+        for (int t = 0; t < (int)tracked.size(); t++) {
+            for (int c = 0; c < (int)candidates.size(); c++) {
+                if (cMatched[c]) continue;
+                if (std::abs(tracked[t].frequency - candidates[c].frequency) < matchTolHz) {
+                    // Exponentially smooth frequency to avoid per-frame jitter
+                    tracked[t].frequency = tracked[t].frequency * 0.7 + candidates[c].frequency * 0.3;
+                    tracked[t].peakPower = candidates[c].peakPower;
+                    tracked[t].snr       = candidates[c].snr;
+                    tracked[t].hitCount  = std::min(tracked[t].hitCount + 1, persistFrames * 4);
+                    tracked[t].missCount = 0;
+                    cMatched[c] = true;
+                    tMatched[t] = true;
+                    break;
+                }
+            }
+        }
+
+        // Decay or remove unmatched tracked entries that are currently in view
+        for (int t = (int)tracked.size() - 1; t >= 0; t--) {
+            if (tMatched[t]) continue;
+            // Only decay entries currently visible; off-screen ones are left alone
+            if (tracked[t].frequency < lowFreq || tracked[t].frequency > highFreq) continue;
+            tracked[t].hitCount  = std::max(0, tracked[t].hitCount - 1);
+            tracked[t].missCount++;
+            if (tracked[t].missCount >= decayFrames) {
+                tracked.erase(tracked.begin() + t);
+            }
+        }
+
+        // Add genuinely new candidates
+        for (int c = 0; c < (int)candidates.size(); c++) {
+            if (cMatched[c]) continue;
+            AutoMarkerEntry ne = candidates[c];
+            ne.hitCount  = 1;
+            ne.missCount = 0;
+            tracked.push_back(ne);
+        }
+    }
+
+    // ── End auto-marker helpers ──────────────────────────────────────────────
+
     static void fftRedraw(ImGui::WaterFall::FFTRedrawArgs args, void* ctx) {
         FrequencyManagerModule* _this = (FrequencyManagerModule*)ctx;
-        if (_this->bookmarkDisplayMode == BOOKMARK_DISP_MODE_OFF) { return; }
+        if (_this->bookmarkDisplayMode == BOOKMARK_DISP_MODE_OFF && !_this->autoMarkersEnabled) { return; }
 
         if (_this->bookmarkDisplayMode == BOOKMARK_DISP_MODE_TOP) {
             for (auto const bm : _this->waterfallBookmarks) {
@@ -650,6 +800,91 @@ private:
                 }
             }
         }
+
+        // ── Auto-marker detection & rendering ──────────────────────────────
+        if (_this->autoMarkersEnabled) {
+            int fftWidth = 0;
+            const float* fft = gui::waterfall.acquireLatestFFT(fftWidth);
+
+            if (fft && fftWidth > 8) {
+                // --- Detection phase (uses FFT buffer) ---
+                float noiseFloor = estimateNoiseFloor(fft, fftWidth);
+
+                double hzPerBin   = args.pixelToFreqRatio;   // Hz per display bin
+                double minSepHz   = (double)_this->autoMinSepKHz * 1000.0;
+                int    minSepBins = std::max(2, (int)(minSepHz / hzPerBin));
+                // Frequency matching tolerance: 3 bins  
+                double matchTol   = hzPerBin * 3.0;
+
+                std::vector<AutoMarkerEntry> candidates;
+                findPeakCandidates(fft, fftWidth, noiseFloor,
+                                   _this->autoSNRThreshold, minSepBins,
+                                   args.lowFreq, hzPerBin, candidates);
+
+                gui::waterfall.releaseLatestFFT();
+
+                // Update persistence tracker
+                updateTracked(candidates, _this->trackedAutoMarkers,
+                              matchTol, _this->autoPersistFrames, _this->autoDecayFrames,
+                              args.lowFreq, args.highFreq);
+            }
+            else {
+                if (fft) { gui::waterfall.releaseLatestFFT(); }
+            }
+
+            // --- Rendering phase (uses trackedAutoMarkers, no FFT buffer needed) ---
+            // Cyan / teal palette — visually distinct from the yellow manual bookmarks
+            const ImU32 lineCol  = IM_COL32(40,  210, 225, 190);
+            const ImU32 bgCol    = IM_COL32(20,  150, 170, 230);
+            const ImU32 txtCol   = IM_COL32(0,   15,  20,  255);
+            const ImU32 snrCol   = IM_COL32(0,   10,  15,  200);
+
+            for (auto& tm : _this->trackedAutoMarkers) {
+                if (tm.hitCount < _this->autoPersistFrames) continue;
+                if (tm.frequency < args.lowFreq || tm.frequency > args.highFreq) continue;
+
+                float xPos = (float)(args.min.x + std::round((tm.frequency - args.lowFreq) * args.freqToPixelRatio));
+
+                // Vertical line spanning the full FFT height
+                args.window->DrawList->AddLine(
+                    ImVec2(xPos, args.min.y),
+                    ImVec2(xPos, args.max.y),
+                    lineCol, 1.5f);
+
+                // Frequency label
+                char freqBuf[32], snrBuf[16];
+                double f = tm.frequency;
+                if      (f >= 1.0e9) snprintf(freqBuf, sizeof(freqBuf), "%.4gG", f / 1.0e9);
+                else if (f >= 1.0e6) snprintf(freqBuf, sizeof(freqBuf), "%.4gM", f / 1.0e6);
+                else if (f >= 1.0e3) snprintf(freqBuf, sizeof(freqBuf), "%.4gK", f / 1.0e3);
+                else                 snprintf(freqBuf, sizeof(freqBuf), "%.0fHz", f);
+                snprintf(snrBuf, sizeof(snrBuf), "+%.0fdB", tm.snr);
+
+                ImVec2 fSz    = ImGui::CalcTextSize(freqBuf);
+                ImVec2 sSz    = ImGui::CalcTextSize(snrBuf);
+                float  lblW   = std::max(fSz.x, sSz.x) + 7.0f;
+                float  lblH   = fSz.y + sSz.y + 3.0f;
+
+                // Always pin to the top of the FFT area
+                float lblY = args.min.y;
+                float lblX = std::clamp(xPos - lblW * 0.5f,
+                                        (float)args.min.x,
+                                        (float)args.max.x - lblW);
+
+                args.window->DrawList->AddRectFilled(
+                    ImVec2(lblX, lblY),
+                    ImVec2(lblX + lblW, lblY + lblH),
+                    bgCol, 2.0f);
+
+                args.window->DrawList->AddText(
+                    ImVec2(lblX + (lblW - fSz.x) * 0.5f, lblY),
+                    txtCol, freqBuf);
+                args.window->DrawList->AddText(
+                    ImVec2(lblX + (lblW - sSz.x) * 0.5f, lblY + fSz.y + 2),
+                    snrCol, snrBuf);
+            }
+        }
+        // ── End auto-marker section ─────────────────────────────────────────
     }
 
     bool mouseAlreadyDown = false;
@@ -822,6 +1057,16 @@ private:
     std::vector<WaterfallBookmark> waterfallBookmarks;
 
     int bookmarkDisplayMode = 0;
+
+    // ── Auto-marker state ─────────────────────────────────────────────────
+    bool  autoMarkersEnabled  = false;
+    float autoSNRThreshold    = 15.0f;  // dB above estimated noise floor
+    int   autoMinSepKHz       = 25;     // minimum Hz separation between markers (kHz)
+    int   autoPersistFrames   = 4;      // frames a peak must survive before confirmed
+    int   autoDecayFrames     = 8;      // frames absent before removal
+
+    std::vector<AutoMarkerEntry> trackedAutoMarkers;
+    // ─────────────────────────────────────────────────────────────────────
 };
 
 MOD_EXPORT void _INIT_() {
