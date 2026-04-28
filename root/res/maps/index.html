@@ -4,68 +4,472 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Predator RF Map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" crossorigin="">
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         html, body, #map {
             height: 100%;
             width: 100%;
-            margin: 0;
             background: #0b0e0a;
             overflow: hidden;
         }
 
-        .leaflet-container {
+        .maplibregl-canvas-container {
             background: #0b0e0a;
-            font-family: sans-serif;
         }
 
-        .leaflet-control-attribution {
-            background: rgba(12, 16, 11, 0.9);
-            color: #dbe6cb;
+        .maplibregl-ctrl-attrib {
+            background: rgba(12, 16, 11, 0.85) !important;
+            color: #7a9e7e !important;
+            font-size: 10px !important;
+        }
+
+        .maplibregl-ctrl-attrib a {
+            color: #83d099 !important;
+        }
+
+        /* ── Control panel ── */
+        #control-panel {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 10;
+            user-select: none;
+        }
+
+        .ctrl-section {
+            background: rgba(11, 14, 10, 0.92);
+            border: 1px solid rgba(131, 208, 153, 0.25);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .ctrl-section-title {
+            font-family: 'Courier New', monospace;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #d8c96a;
+            padding: 5px 10px 3px;
+            border-bottom: 1px solid rgba(131, 208, 153, 0.15);
+        }
+
+        /* 2D / 3D view toggle */
+        #view-toggle {
+            display: flex;
+            background: rgba(11, 14, 10, 0.92);
+            border: 1px solid rgba(131, 208, 153, 0.25);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .view-btn {
+            flex: 1;
+            padding: 8px 16px;
+            background: transparent;
+            border: none;
+            color: #7a9e7e;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .view-btn.active {
+            background: rgba(131, 208, 153, 0.18);
+            color: #83d099;
+        }
+
+        .view-btn:first-child {
+            border-right: 1px solid rgba(131, 208, 153, 0.2);
+        }
+
+        /* Layer toggles */
+        .layer-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 10px;
+            gap: 16px;
+            border-bottom: 1px solid rgba(131, 208, 153, 0.08);
+        }
+
+        .layer-row:last-child {
+            border-bottom: none;
+        }
+
+        .layer-label {
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            color: #b0c8b4;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+        }
+
+        /* Toggle switch */
+        .toggle-switch {
+            position: relative;
+            width: 34px;
+            height: 18px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+            position: absolute;
+        }
+
+        .toggle-track {
+            position: absolute;
+            inset: 0;
+            background: rgba(131, 208, 153, 0.12);
+            border: 1px solid rgba(131, 208, 153, 0.3);
+            border-radius: 18px;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .toggle-track::after {
+            content: '';
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4a6a4e;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .toggle-switch input:checked + .toggle-track {
+            background: rgba(131, 208, 153, 0.28);
+            border-color: #83d099;
+        }
+
+        .toggle-switch input:checked + .toggle-track::after {
+            transform: translateX(16px);
+            background: #83d099;
+        }
+
+        /* Buildings toggle has accent color */
+        .toggle-switch.buildings input:checked + .toggle-track {
+            background: rgba(216, 201, 106, 0.22);
+            border-color: #d8c96a;
+        }
+
+        .toggle-switch.buildings input:checked + .toggle-track::after {
+            background: #d8c96a;
+        }
+
+        /* Compass */
+        #compass {
+            position: absolute;
+            bottom: 36px;
+            right: 12px;
+            z-index: 10;
         }
     </style>
 </head>
 <body>
     <div id="map"></div>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <div id="control-panel">
+        <div id="view-toggle">
+            <button class="view-btn active" id="btn-2d" onclick="setView2D()">2D</button>
+            <button class="view-btn" id="btn-3d" onclick="setView3D()">3D</button>
+        </div>
+
+        <div class="ctrl-section">
+            <div class="ctrl-section-title">Layers</div>
+
+            <div class="layer-row">
+                <span class="layer-label">Road Names</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-road-names" checked onchange="toggleLayerGroup('roadNames', this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
+
+            <div class="layer-row">
+                <span class="layer-label">Businesses</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-pois" checked onchange="toggleLayerGroup('pois', this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
+
+            <div class="layer-row">
+                <span class="layer-label">Railways</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-railways" checked onchange="toggleLayerGroup('railways', this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
+
+            <div class="layer-row">
+                <span class="layer-label">Roads</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-roads" checked onchange="toggleLayerGroup('roads', this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="ctrl-section">
+            <div class="ctrl-section-title">3D</div>
+            <div class="layer-row">
+                <span class="layer-label">Buildings</span>
+                <label class="toggle-switch buildings">
+                    <input type="checkbox" id="toggle-buildings" onchange="toggle3DBuildings(this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin=""></script>
     <script>
-        const map = L.map("map", {
-            zoomControl: true,
-            attributionControl: true
-        }).setView([38.9072, -77.0369], 10);
+        const INIT_CENTER = [-77.0369, 38.9072];
+        const INIT_ZOOM   = 10;
 
-        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-            maxZoom: 20,
-            subdomains: "abcd",
-            attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
-        }).addTo(map);
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://tiles.openfreemap.org/styles/dark',
+            center: INIT_CENTER,
+            zoom: INIT_ZOOM,
+            pitch: 0,
+            bearing: 0,
+            antialias: true
+        });
 
-        const accuracyStyle = {
-            color: "#d8c96a",
-            weight: 1,
-            fillColor: "#d8c96a",
-            fillOpacity: 0.18
+        map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+        map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+
+        /* ── Layer group registry ── */
+        const layerGroups = {
+            roadNames: [],
+            pois:      [],
+            railways:  [],
+            roads:     []
         };
 
-        const positionStyle = {
-            radius: 8,
-            color: "#d8c96a",
-            weight: 2,
-            fillColor: "#83d099",
-            fillOpacity: 0.95
-        };
+        let styleReady = false;
 
-        const positionMarker = L.circleMarker([38.9072, -77.0369], positionStyle).addTo(map);
-        const accuracyRing = L.circle([38.9072, -77.0369], { radius: 0, ...accuracyStyle }).addTo(map);
+        map.on('load', () => {
+            styleReady = true;
+            discoverLayers();
+            addPositionLayer();
+            add3DBuildingLayer();
+        });
 
+        function discoverLayers() {
+            const layers = map.getStyle().layers;
+            layers.forEach(layer => {
+                const id   = layer.id.toLowerCase();
+                const type = layer.type;
+
+                const isLabel = type === 'symbol';
+                const isLine  = type === 'line';
+
+                const isRailKw  = id.includes('rail');
+                const isRoadKw  = id.includes('road') || id.includes('highway') ||
+                                  id.includes('motorway') || id.includes('trunk') ||
+                                  id.includes('primary') || id.includes('secondary') ||
+                                  id.includes('tertiary') || id.includes('street') ||
+                                  id.includes('link') || id.includes('path') ||
+                                  id.includes('track') || id.includes('service') ||
+                                  id.includes('bridge') || id.includes('tunnel') ||
+                                  id.includes('transportation');
+                const isPoiKw   = id.includes('poi') || id.includes('shop') ||
+                                  id.includes('amenity') || id.includes('place') ||
+                                  id.includes('landuse') || id.includes('business');
+                const isLabelKw = id.includes('label') || id.includes('name') || id.includes('text');
+
+                if (isRailKw && isLine) {
+                    layerGroups.railways.push(layer.id);
+                } else if (isRailKw && isLabel) {
+                    layerGroups.roadNames.push(layer.id);
+                } else if (isRoadKw && isLabel && isLabelKw) {
+                    layerGroups.roadNames.push(layer.id);
+                } else if (isRoadKw && isLine) {
+                    layerGroups.roads.push(layer.id);
+                } else if (isPoiKw && isLabel) {
+                    layerGroups.pois.push(layer.id);
+                } else if (isPoiKw && !isRailKw && !isRoadKw) {
+                    layerGroups.pois.push(layer.id);
+                }
+            });
+        }
+
+        function toggleLayerGroup(group, visible) {
+            if (!styleReady) return;
+            const ids = layerGroups[group] || [];
+            const vis = visible ? 'visible' : 'none';
+            ids.forEach(id => {
+                try { map.setLayoutProperty(id, 'visibility', vis); } catch(e) {}
+            });
+        }
+
+        /* ── 3D buildings ── */
+        function add3DBuildingLayer() {
+            const sources = map.getStyle().sources;
+            const sourceName = Object.keys(sources).find(k =>
+                sources[k].type === 'vector' &&
+                (k.includes('openmaptiles') || k.includes('openfreemap') || k === 'maptiler_planet' || k === 'v3' || k === 'tiles')
+            ) || Object.keys(sources).find(k => sources[k].type === 'vector');
+
+            if (!sourceName) return;
+
+            map.addLayer({
+                id: '_predator_3d_buildings',
+                source: sourceName,
+                'source-layer': 'building',
+                type: 'fill-extrusion',
+                minzoom: 14,
+                paint: {
+                    'fill-extrusion-color': [
+                        'interpolate', ['linear'], ['zoom'],
+                        14, '#1a2420',
+                        17, '#243028'
+                    ],
+                    'fill-extrusion-height': [
+                        'coalesce',
+                        ['get', 'render_height'],
+                        ['get', 'height'],
+                        10
+                    ],
+                    'fill-extrusion-base': [
+                        'coalesce',
+                        ['get', 'render_min_height'],
+                        ['get', 'min_height'],
+                        0
+                    ],
+                    'fill-extrusion-opacity': 0.85
+                },
+                layout: { visibility: 'none' }
+            });
+        }
+
+        function toggle3DBuildings(visible) {
+            if (!styleReady) return;
+            try {
+                map.setLayoutProperty('_predator_3d_buildings', 'visibility', visible ? 'visible' : 'none');
+            } catch(e) {}
+        }
+
+        /* ── 2D / 3D view ── */
+        function setView2D() {
+            document.getElementById('btn-2d').classList.add('active');
+            document.getElementById('btn-3d').classList.remove('active');
+            map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
+        }
+
+        function setView3D() {
+            document.getElementById('btn-3d').classList.add('active');
+            document.getElementById('btn-2d').classList.remove('active');
+            map.easeTo({ pitch: 55, bearing: -20, duration: 700 });
+        }
+
+        /* ── Position marker (GeoJSON) ── */
+        let currentPos = { lng: INIT_CENTER[0], lat: INIT_CENTER[1] };
+
+        function addPositionLayer() {
+            map.addSource('_position', {
+                type: 'geojson',
+                data: positionGeoJSON(currentPos.lat, currentPos.lng, 0)
+            });
+
+            map.addSource('_accuracy', {
+                type: 'geojson',
+                data: accuracyGeoJSON(currentPos.lat, currentPos.lng, 0)
+            });
+
+            map.addLayer({
+                id: '_accuracy_fill',
+                source: '_accuracy',
+                type: 'fill',
+                paint: {
+                    'fill-color': '#d8c96a',
+                    'fill-opacity': 0.12
+                }
+            });
+
+            map.addLayer({
+                id: '_accuracy_ring',
+                source: '_accuracy',
+                type: 'line',
+                paint: {
+                    'line-color': '#d8c96a',
+                    'line-width': 1,
+                    'line-opacity': 0.6
+                }
+            });
+
+            map.addLayer({
+                id: '_position_dot',
+                source: '_position',
+                type: 'circle',
+                paint: {
+                    'circle-radius': 8,
+                    'circle-color': '#83d099',
+                    'circle-stroke-color': '#d8c96a',
+                    'circle-stroke-width': 2,
+                    'circle-opacity': 0.95
+                }
+            });
+        }
+
+        function positionGeoJSON(lat, lng) {
+            return {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [lng, lat] }
+            };
+        }
+
+        function accuracyGeoJSON(lat, lng, radiusMeters) {
+            if (!radiusMeters || radiusMeters <= 1) {
+                return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[]] } };
+            }
+            const pts = 64;
+            const coords = [];
+            const earthR = 6371000;
+            const dLat = (radiusMeters / earthR) * (180 / Math.PI);
+            const dLng = dLat / Math.cos(lat * Math.PI / 180);
+            for (let i = 0; i <= pts; i++) {
+                const angle = (i / pts) * 2 * Math.PI;
+                coords.push([lng + dLng * Math.cos(angle), lat + dLat * Math.sin(angle)]);
+            }
+            return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } };
+        }
+
+        /* ── Android bridge ── */
         window.PredatorRFMap = {
             updatePosition(lat, lon, accuracy, follow) {
-                const point = [lat, lon];
-                positionMarker.setLatLng(point);
-                accuracyRing.setLatLng(point);
-                accuracyRing.setRadius(Math.max(accuracy || 0, 1));
+                currentPos = { lat, lng: lon };
+
+                if (!styleReady) return;
+
+                try {
+                    map.getSource('_position').setData(positionGeoJSON(lat, lon));
+                    map.getSource('_accuracy').setData(accuracyGeoJSON(lat, lon, accuracy || 0));
+                } catch(e) {}
+
                 if (follow) {
-                    map.setView(point, Math.max(map.getZoom(), 15));
+                    map.easeTo({
+                        center: [lon, lat],
+                        zoom: Math.max(map.getZoom(), 15),
+                        duration: 300
+                    });
                 }
             }
         };
