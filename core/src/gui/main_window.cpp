@@ -2490,6 +2490,26 @@ void MainWindow::draw() {
                 ImGui::Text("Excludes: %d", (int)excludes.size());
                 ImGui::Text("Hits: %d", (int)hits.size());
                 ImGui::Text("Events: %d", (int)events.size());
+                int activeBridges = 0;
+                std::string activeBridgeList;
+                if (decoderBridges.is_object()) {
+                    for (auto it = decoderBridges.begin(); it != decoderBridges.end(); ++it) {
+                        if (it.value().is_object() && it.value().contains("enabled") && it.value()["enabled"].is_boolean() && it.value()["enabled"].get<bool>()) {
+                            if (activeBridges) { activeBridgeList += ", "; }
+                            activeBridgeList += it.key();
+                            activeBridges++;
+                        }
+                    }
+                }
+                if (dsdFmeEnabled) {
+                    if (activeBridges) { activeBridgeList += ", "; }
+                    activeBridgeList += "dsd-fme";
+                    activeBridges++;
+                }
+                ImGui::Text("Active Decoder Bridges: %d", activeBridges);
+                if (activeBridges > 0) {
+                    ImGui::TextDisabled("  %s", activeBridgeList.c_str());
+                }
             }
             if (ImGui::CollapsingHeader(T("Network Topology"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 struct NetworkSummary {
@@ -2705,11 +2725,41 @@ void MainWindow::draw() {
                     ImGui::Text("Protocols: %d   Talkgroups: %d", (int)protocols.size(), filteredNodeCount);
                 }
 
+                auto bridgeKeyForProtocol = [](const std::string& proto) -> std::string {
+                    std::string lo = proto;
+                    std::transform(lo.begin(), lo.end(), lo.begin(), [](unsigned char c){ return std::tolower(c); });
+                    if (lo.find("p25") != std::string::npos || lo.find("digital voice") != std::string::npos || lo.find("dmr") != std::string::npos || lo.find("nxdn") != std::string::npos) { return "p25"; }
+                    if (lo.find("rtl433") != std::string::npos || lo.find("rtl_433") != std::string::npos || lo.find("ism") != std::string::npos) { return "rtl433"; }
+                    if (lo.find("pocsag") != std::string::npos || lo.find("flex") != std::string::npos || lo.find("paging") != std::string::npos) { return "pocsag"; }
+                    if (lo.find("ads-b") != std::string::npos || lo.find("adsb") != std::string::npos || lo.find("aircraft") != std::string::npos) { return "adsb"; }
+                    if (lo.find("ais") != std::string::npos || lo.find("marine") != std::string::npos) { return "ais"; }
+                    return "";
+                };
+                auto bridgeActive = [&](const std::string& bridgeKey) -> bool {
+                    if (bridgeKey.empty()) { return false; }
+                    if (!decoderBridges.is_object() || !decoderBridges.contains(bridgeKey)) { return false; }
+                    const json& b = decoderBridges[bridgeKey];
+                    return b.is_object() && b.contains("enabled") && b["enabled"].is_boolean() && b["enabled"].get<bool>();
+                };
+
                 int treeUid = 9000;
                 for (int p = 0; p < (int)protocols.size(); p++) {
                     ImGui::PushID(treeUid++);
-                    std::string protoLabel = protocols[p].protocol + "  (" + std::to_string((int)protocols[p].nodeIdx.size()) + " TGs, " + std::to_string(protocols[p].totalEvents) + " events)";
-                    if (ImGui::TreeNodeEx(protoLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    std::string bridgeKey = bridgeKeyForProtocol(protocols[p].protocol);
+                    bool hasActiveBridge = bridgeActive(bridgeKey);
+                    std::string indicator = hasActiveBridge ? "\xE2\x97\x8F " : (bridgeKey.empty() ? "" : "\xE2\x97\x8B ");
+                    std::string protoLabel = indicator + protocols[p].protocol + "  (" + std::to_string((int)protocols[p].nodeIdx.size()) + " TGs, " + std::to_string(protocols[p].totalEvents) + " events)";
+                    if (hasActiveBridge) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 220, 120, 255));
+                    }
+                    bool open = ImGui::TreeNodeEx(protoLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+                    if (hasActiveBridge) {
+                        ImGui::PopStyleColor();
+                    }
+                    if (open) {
+                        if (!bridgeKey.empty()) {
+                            ImGui::TextDisabled(hasActiveBridge ? "Bridge active: %s" : "Bridge configured but disabled: %s", bridgeKey.c_str());
+                        }
                         std::vector<std::string> netOrder;
                         std::map<std::string, std::vector<int>> netGroups;
                         for (size_t k = 0; k < protocols[p].nodeIdx.size(); k++) {
@@ -2874,6 +2924,91 @@ void MainWindow::draw() {
                     }
                 }
             }
+            if (ImGui::CollapsingHeader(T("Decoder Bridges"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ensureDecoderBridge("p25",     "127.0.0.1",  7355,  "DSD-FME Direct",   "P25 Phase 1 (C4FM) and Phase 2 (H-DQPSK). Routes through the DSD-FME bridge below; Talkgroup, Network ID, and Radio ID populate the topology tree as decoded WACN/RFSS metadata arrives.");
+                ensureDecoderBridge("rtl433",  "127.0.0.1",  1433,  "TCP JSON Lines",   "rtl_433 ISM device telemetry (315/433/868/915 MHz). Each JSON line becomes one Network event; protocol = device model, networkId = device id, talkgroup = channel.");
+                ensureDecoderBridge("pocsag",  "127.0.0.1",  1444,  "TCP Lines",        "POCSAG / FLEX paging via multimon-ng -t raw, relayed over TCP. networkId = capcode, talkgroup = function bits, radioId = source paging service.");
+                ensureDecoderBridge("adsb",    "127.0.0.1",  30003, "BaseStation 30003","dump1090 / readsb feed. networkId = ICAO hex, talkgroup = callsign, radioId = squawk. Aircraft positions can be forwarded to the tactical map.");
+                ensureDecoderBridge("ais",     "127.0.0.1",  10110, "UDP NMEA",         "AIS marine VHF (161.975 / 162.025 MHz) via rtl_ais or aisdec. networkId = MMSI, talkgroup = ship type, radioId = call sign.");
+
+                static char bridgeHostBuf[1024];
+                static char bridgeNotesBuf[2048];
+
+                auto renderBridge = [&](const std::string& key, const char* title, const char* protocolLabel, const char* const* modes, int modeCount) {
+                    json& b = decoderBridges[key];
+                    bool enabled = readJsonBool(b, "enabled", false);
+                    std::string host = readJsonString(b, "host", "127.0.0.1");
+                    int port = (int)readJsonDouble(b, "port", 0.0);
+                    std::string mode = readJsonString(b, "mode", modes[0]);
+                    std::string notes = readJsonString(b, "notes", "");
+
+                    ImGui::PushID(key.c_str());
+                    if (ImGui::TreeNodeEx(title, ImGuiTreeNodeFlags_DefaultOpen)) {
+                        ImGui::TextDisabled("Feeds protocol: %s", protocolLabel);
+                        if (enabled) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 220, 120, 255));
+                            ImGui::Text("\xE2\x97\x8F %s", T("Bridge enabled"));
+                            ImGui::PopStyleColor();
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(180, 180, 180, 255));
+                            ImGui::Text("\xE2\x97\x8B %s", T("Bridge disabled"));
+                            ImGui::PopStyleColor();
+                        }
+                        bool changed = false;
+                        if (ImGui::Checkbox(T("Enable"), &enabled)) { b["enabled"] = enabled; changed = true; }
+
+                        snprintf(bridgeHostBuf, sizeof(bridgeHostBuf), "%s", host.c_str());
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+                        if (ImGui::InputText(T("Host"), bridgeHostBuf, sizeof(bridgeHostBuf))) { b["host"] = std::string(bridgeHostBuf); changed = true; }
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.4f);
+                        if (ImGui::InputInt(T("Port"), &port, 1, 100)) { port = std::clamp<int>(port, 1, 65535); b["port"] = port; changed = true; }
+
+                        int modeIndex = 0;
+                        for (int m = 0; m < modeCount; m++) { if (mode == modes[m]) { modeIndex = m; break; } }
+                        std::string comboBuf;
+                        for (int m = 0; m < modeCount; m++) { comboBuf += modes[m]; comboBuf.push_back('\0'); }
+                        comboBuf.push_back('\0');
+                        if (ImGui::Combo(T("Mode"), &modeIndex, comboBuf.c_str())) {
+                            modeIndex = std::clamp<int>(modeIndex, 0, modeCount - 1);
+                            b["mode"] = std::string(modes[modeIndex]);
+                            changed = true;
+                        }
+
+                        snprintf(bridgeNotesBuf, sizeof(bridgeNotesBuf), "%s", notes.c_str());
+                        ImGui::TextWrapped("%s", T("Notes / Endpoint Format"));
+                        if (ImGui::InputTextMultiline(("##" + key + "_notes").c_str(), bridgeNotesBuf, sizeof(bridgeNotesBuf), ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight() * 3.0f))) {
+                            b["notes"] = std::string(bridgeNotesBuf);
+                            changed = true;
+                        }
+
+                        if (changed) { saveDecoderBridges(decoderBridges); }
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                };
+
+                int activeBridgeCount = 0;
+                for (auto it = decoderBridges.begin(); it != decoderBridges.end(); ++it) {
+                    if (it.value().is_object() && it.value().contains("enabled") && it.value()["enabled"].is_boolean() && it.value()["enabled"].get<bool>()) {
+                        activeBridgeCount++;
+                    }
+                }
+                ImGui::Text("Active Bridges: %d / 5", activeBridgeCount);
+                ImGui::TextWrapped("Each enabled bridge becomes a live source feeding the Network Topology tree above. Protocol, Network ID, Talkgroup, and Radio ID fields on incoming events are grouped automatically. The bridges below are scaffolded — their config is persisted and the event ingest path is the unified JSON event bus shared with the Hits/Events tab.");
+                ImGui::Separator();
+
+                static const char* p25Modes[]    = { "DSD-FME Direct", "OP25 Bridge", "External Companion" };
+                static const char* rtl433Modes[] = { "TCP JSON Lines", "UDP JSON Lines", "Stdin Companion" };
+                static const char* pocsagModes[] = { "TCP Lines", "UDP Lines", "Stdin Companion" };
+                static const char* adsbModes[]   = { "BaseStation 30003", "Beast Binary 30005", "SBS-3", "JSON aircraft.json" };
+                static const char* aisModes[]    = { "UDP NMEA", "TCP NMEA", "Stdin NMEA" };
+
+                renderBridge("p25",    "P25 Trunked Voice (Phase 1 + 2)", "Digital Voice / P25", p25Modes,    3);
+                renderBridge("rtl433", "RTL433 ISM Devices",              "RTL433",               rtl433Modes, 3);
+                renderBridge("pocsag", "POCSAG / FLEX Paging",            "Paging",               pocsagModes, 3);
+                renderBridge("adsb",   "ADS-B Aircraft (dump1090)",       "ADS-B",                adsbModes,   4);
+                renderBridge("ais",    "AIS Marine VHF",                  "AIS",                  aisModes,    3);
+            }
             if (ImGui::CollapsingHeader(T("DSD-FME Digital Voice"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 bool dsdChanged = false;
                 dsdChanged |= ImGui::Checkbox(T("Enable DSD-FME Bridge"), &dsdFmeEnabled);
@@ -2920,20 +3055,38 @@ void MainWindow::draw() {
                 }
             }
             if (ImGui::CollapsingHeader(T("Decoder Events"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                bool anyDecoderEvents = false;
+                std::map<std::string, int> decoderCounts;
+                int totalDecoderEvents = 0;
                 for (int i = 0; i < events.size(); i++) {
                     std::string decoder = readJsonString(events[i], "decoder", "None");
                     if (decoder == "None") { continue; }
-                    anyDecoderEvents = true;
-                    ImGui::TextWrapped("%s  %s  %s  %s  %s",
-                        readJsonString(events[i], "time", "unknown").c_str(),
-                        decoder.c_str(),
-                        readJsonString(events[i], "protocol", "Unknown").c_str(),
-                        readJsonString(events[i], "label", "Event").c_str(),
-                        formatFrequency(readJsonDouble(events[i], "frequency", 0.0)).c_str());
+                    decoderCounts[decoder]++;
+                    totalDecoderEvents++;
                 }
-                if (!anyDecoderEvents) {
+                if (totalDecoderEvents == 0) {
                     ImGui::TextDisabled("%s", T("No entries."));
+                } else {
+                    std::string countLine = "By decoder: ";
+                    bool first = true;
+                    for (auto& kv : decoderCounts) {
+                        if (!first) { countLine += ", "; }
+                        countLine += kv.first + " " + std::to_string(kv.second);
+                        first = false;
+                    }
+                    ImGui::TextDisabled("%s", countLine.c_str());
+                    ImGui::Separator();
+                    ImGui::BeginChild("predator_decoder_events_list", ImVec2(0, ImGui::GetTextLineHeight() * 10.0f), true);
+                    for (int i = (int)events.size() - 1; i >= 0; i--) {
+                        std::string decoder = readJsonString(events[i], "decoder", "None");
+                        if (decoder == "None") { continue; }
+                        ImGui::TextWrapped("%s  %s  %s  %s  %s",
+                            readJsonString(events[i], "time", "unknown").c_str(),
+                            decoder.c_str(),
+                            readJsonString(events[i], "protocol", "Unknown").c_str(),
+                            readJsonString(events[i], "label", "Event").c_str(),
+                            formatFrequency(readJsonDouble(events[i], "frequency", 0.0)).c_str());
+                    }
+                    ImGui::EndChild();
                 }
             }
         }

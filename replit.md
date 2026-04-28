@@ -85,7 +85,8 @@ MapLibre GL JS v4.7.1, OpenFreeMap dark style, 2D/3D toggle, layer toggles (Road
 - [x] MapLibre 2D/3D map with compass
 - [x] Hits/Events export (CSV) — `exportHitsCsv`, `exportEventsCsv` in main_window.cpp; writes to `root/exports/`
 - [ ] Audio demod capture pipeline
-- [ ] Network/topology view
+- [x] Network/topology view — Diablo-style hierarchical Protocol → Network → Talkgroup tree with radio IDs, frequency aggregation, search filter, alias persistence, bulk Target/Exclude/Marker actions, Topology CSV export
+- [x] Decoder Bridges scaffold (P25 / RTL433 / POCSAG-FLEX / ADS-B / AIS) — config persisted to `predatorDecoderBridges`; live status indicators in Network tree; protocol→bridge auto-mapping. Native ingestion threads still TODO
 - [ ] Linux build
 - [ ] Windows build
 - [ ] Remote SDR ecosystem
