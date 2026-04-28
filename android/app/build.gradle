@@ -9,7 +9,15 @@ if (localPropertiesFile.exists()) {
     }
 }
 
-def sdrKitRoot = (localProperties.getProperty('sdr.kit.dir') ?: System.getenv('SDR_KIT_ROOT') ?: '/sdr-kit').replace('\\', '/')
+// Resolution order:
+//   1) `sdr.kit.dir` in android/local.properties (lets developers point at a custom path)
+//   2) SDR_KIT_ROOT environment variable
+//   3) The kit committed in this repo at android/sdr-kit (default — works out of the box after clone)
+//   4) Legacy /sdr-kit (only relevant on hand-built Linux setups)
+def repoSdrKit = new File(rootProject.projectDir, 'sdr-kit')
+def sdrKitRoot = (localProperties.getProperty('sdr.kit.dir')
+        ?: System.getenv('SDR_KIT_ROOT')
+        ?: (repoSdrKit.exists() ? repoSdrKit.absolutePath : '/sdr-kit')).replace('\\', '/')
 
 android {
     namespace "org.sdrpp.sdrpp"

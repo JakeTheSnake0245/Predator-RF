@@ -29,7 +29,7 @@ compile under the same Android NDK/CMake configuration with no extra setup.
 | Android NDK | **23.2.8568313** exactly | Pinned via `ndkVersion` in `android/app/build.gradle` |
 | CMake | 3.21+ (bundled with NDK) | |
 | Java | JDK 17 | Bundled with Android Studio |
-| `sdr-kit` (precompiled SDR libs for Android) | latest | See section below |
+| `sdr-kit` (precompiled SDR libs for Android) | shipped in repo | At `android/sdr-kit/arm64-v8a/`, no setup needed |
 | USB-C cable + Android device with **USB Debugging enabled** | | For sideloading |
 
 The Samsung S22 is an arm64-v8a device — the only ABI this build targets.
@@ -48,72 +48,56 @@ The Samsung S22 is an arm64-v8a device — the only ABI this build targets.
 
 ---
 
-## Step 2 — Get the `sdr-kit`
+## Step 2 — `sdr-kit` (already in the repo)
 
 The Android build needs precompiled native libraries for SDR hardware
-support: RTL-SDR, HackRF, Airspy, AirspyHF, PlutoSDR, etc. These live
-outside the repo in a separate `sdr-kit` directory keyed by ABI.
+support: RTL-SDR, HackRF, Airspy, AirspyHF, PlutoSDR, libusb, libvolk,
+libfftw3f, libzstd, etc.
 
-The expected layout is:
+**These ship with this repo** at `android/sdr-kit/arm64-v8a/`. After
+`git clone` you do not need to download or build anything — the build
+picks it up automatically. See `android/sdr-kit/README.md` for the
+exact list of libraries and how the kit was assembled.
 
+If you want to override the kit (e.g. point at a system-wide install or
+a freshly hand-built one), the resolution order is:
+
+1. `sdr.kit.dir=...` in `android/local.properties`
+2. `SDR_KIT_ROOT` environment variable
+3. **In-repo `android/sdr-kit/` (default)**
+4. Legacy `/sdr-kit`
+
+To regenerate the in-repo kit from current upstream sources, run:
+
+```sh
+bash scripts/fetch-sdr-kit.sh
 ```
-sdr-kit/
-└── arm64-v8a/
-    ├── include/
-    │   ├── rtl-sdr.h
-    │   ├── libhackrf/
-    │   ├── libairspy/
-    │   └── ...
-    └── lib/
-        ├── librtlsdr.so
-        ├── libhackrf.so
-        ├── libairspy.so
-        └── ...
-```
-
-You have two options:
-
-### Option A — Download a prebuilt sdr-kit (fastest)
-
-Upstream SDR++ publishes prebuilt arm64 SDR kits in its releases. Look for
-an archive named like `android-sdr-kit-arm64-v8a-*.zip` on the
-[SDR++ releases page](https://github.com/AlexandreRouma/SDRPlusPlus/releases)
-and extract it to a known path.
-
-### Option B — Build sdr-kit yourself
-
-Each driver library has its own NDK cross-compile recipe in upstream SDR++
-under `android/sdr-kit/`. Follow each library's individual build steps
-against `arm64-v8a` and the same NDK 23.2.
-
-For most users, Option A is fine.
 
 ---
 
-## Step 3 — Point the build at your SDK + sdr-kit
+## Step 3 — Point the build at your SDK
 
 Create `android/local.properties`:
 
 ```properties
 sdk.dir=/absolute/path/to/Android/Sdk
-sdr.kit.dir=/absolute/path/to/sdr-kit
 ```
 
 On Windows use forward slashes or escape backslashes:
 
 ```properties
 sdk.dir=C:/Users/YOU/AppData/Local/Android/Sdk
-sdr.kit.dir=C:/dev/sdr-kit
 ```
 
-Alternatively, set the environment variable `SDR_KIT_ROOT` and `local.properties`
-will pick it up automatically.
+(`sdr.kit.dir` is no longer required — the in-repo kit at
+`android/sdr-kit/` is the default. Add it only if you want to override.)
 
-If you do not configure `sdr.kit.dir` (or `SDR_KIT_ROOT`) the CMake step
-will fail with:
+If something goes wrong with the kit lookup the CMake step will fail with:
 
 ```
-SDR_KIT_ABI_ROOT does not exist: /sdr-kit/arm64-v8a
+SDR_KIT_ABI_ROOT does not exist: ...
+The repo ships a prebuilt kit at android/sdr-kit. If it is missing,
+run scripts/fetch-sdr-kit.sh to rebuild it from the upstream APK + sources.
 ```
 
 ---

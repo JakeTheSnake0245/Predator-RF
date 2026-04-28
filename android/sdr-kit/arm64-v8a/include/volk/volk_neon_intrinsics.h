@@ -1,0 +1,521 @@
+/* -*- c++ -*- */
+/*
+ * Copyright 2015 Free Software Foundation, Inc.
+ * Copyright 2025, 2026 Magnus Lundmark <magnuslundmark@gmail.com>
+ *
+ * This file is part of VOLK
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ */
+
+/*
+ * Copyright (c) 2016-2019 ARM Limited.
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
+ * _vtaylor_polyq_f32
+ * _vlogq_f32
+ *
+ */
+
+/* Copyright (C) 2011  Julien Pommier
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  (this is the zlib license)
+
+  _vsincosq_f32
+
+*/
+
+/*
+ * This file is intended to hold NEON intrinsics of intrinsics.
+ * They should be used in VOLK kernels to avoid copy-pasta.
+ */
+
+#ifndef INCLUDE_VOLK_VOLK_NEON_INTRINSICS_H_
+#define INCLUDE_VOLK_VOLK_NEON_INTRINSICS_H_
+#include <arm_neon.h>
+
+
+/* Magnitude squared for float32x4x2_t */
+static inline float32x4_t _vmagnitudesquaredq_f32(float32x4x2_t cmplxValue)
+{
+    float32x4_t iValue, qValue, result;
+    iValue = vmulq_f32(cmplxValue.val[0], cmplxValue.val[0]); // Square the values
+    qValue = vmulq_f32(cmplxValue.val[1], cmplxValue.val[1]); // Square the values
+    result = vaddq_f32(iValue, qValue);                       // Add the I2 and Q2 values
+    return result;
+}
+
+/* Inverse square root for float32x4_t
+ * Handles edge cases: +0 → +Inf, +Inf → 0 */
+static inline float32x4_t _vinvsqrtq_f32(float32x4_t x)
+{
+    float32x4_t x0 = vrsqrteq_f32(x); // +Inf for +0, 0 for +Inf
+
+    // Newton-Raphson refinement using vrsqrtsq_f32
+    float32x4_t x1 = vmulq_f32(vrsqrtsq_f32(vmulq_f32(x, x0), x0), x0);
+    x1 = vmulq_f32(vrsqrtsq_f32(vmulq_f32(x, x1), x1), x1);
+
+    // For +0 and +Inf inputs, x0 is correct but NR produces NaN due to Inf*0
+    // Blend: use x0 where x == +0 or x == +Inf, else use x1
+    uint32x4_t x_bits = vreinterpretq_u32_f32(x);
+    uint32x4_t zero_mask = vceqq_u32(x_bits, vdupq_n_u32(0x00000000));
+    uint32x4_t inf_mask = vceqq_u32(x_bits, vdupq_n_u32(0x7F800000));
+    uint32x4_t special_mask = vorrq_u32(zero_mask, inf_mask);
+    return vbslq_f32(special_mask, x0, x1);
+}
+
+/* Square root for ARMv7 NEON (no vsqrtq_f32)
+ * Uses sqrt(x) = x * rsqrt(x) with refined rsqrt
+ * Handles x=0 case to avoid NaN from 0 * inf */
+static inline float32x4_t _vsqrtq_f32(float32x4_t x)
+{
+    const float32x4_t zero = vdupq_n_f32(0.0f);
+    uint32x4_t zero_mask = vceqq_f32(x, zero);
+    float32x4_t result = vmulq_f32(x, _vinvsqrtq_f32(x));
+    return vbslq_f32(zero_mask, zero, result);
+}
+
+/* Inverse */
+static inline float32x4_t _vinvq_f32(float32x4_t x)
+{
+    // Newton's method
+    float32x4_t recip = vrecpeq_f32(x);
+    recip = vmulq_f32(vrecpsq_f32(x, recip), recip);
+    recip = vmulq_f32(vrecpsq_f32(x, recip), recip);
+    return recip;
+}
+
+/*
+ * Approximate arcsin(x) via polynomial expansion
+ * P(u) such that asin(x) = x * P(x^2) on |x| <= 0.5
+ *
+ * Maximum relative error ~1.5e-6
+ * Polynomial evaluated via Horner's method
+ */
+static inline float32x4_t _varcsinq_f32(float32x4_t x)
+{
+    const float32x4_t c0 = vdupq_n_f32(0x1.ffffcep-1f);
+    const float32x4_t c1 = vdupq_n_f32(0x1.55b648p-3f);
+    const float32x4_t c2 = vdupq_n_f32(0x1.24d192p-4f);
+    const float32x4_t c3 = vdupq_n_f32(0x1.0a788p-4f);
+
+    const float32x4_t u = vmulq_f32(x, x);
+    float32x4_t p = c3;
+    p = vmlaq_f32(c2, u, p);
+    p = vmlaq_f32(c1, u, p);
+    p = vmlaq_f32(c0, u, p);
+
+    return vmulq_f32(x, p);
+}
+
+#ifdef LV_HAVE_NEONV8
+/*
+ * Approximate arcsin(x) via polynomial expansion (NEONv8 with FMA)
+ * P(u) such that asin(x) = x * P(x^2) on |x| <= 0.5
+ *
+ * Maximum relative error ~1.5e-6
+ * Polynomial evaluated via Horner's method
+ */
+static inline float32x4_t _varcsinq_f32_neonv8(float32x4_t x)
+{
+    const float32x4_t c0 = vdupq_n_f32(0x1.ffffcep-1f);
+    const float32x4_t c1 = vdupq_n_f32(0x1.55b648p-3f);
+    const float32x4_t c2 = vdupq_n_f32(0x1.24d192p-4f);
+    const float32x4_t c3 = vdupq_n_f32(0x1.0a788p-4f);
+
+    const float32x4_t u = vmulq_f32(x, x);
+    float32x4_t p = c3;
+    p = vfmaq_f32(c2, u, p);
+    p = vfmaq_f32(c1, u, p);
+    p = vfmaq_f32(c0, u, p);
+
+    return vmulq_f32(x, p);
+}
+#endif /* LV_HAVE_NEONV8 */
+
+/* Complex multiplication for float32x4x2_t */
+static inline float32x4x2_t _vmultiply_complexq_f32(float32x4x2_t a_val,
+                                                    float32x4x2_t b_val)
+{
+    float32x4x2_t tmp_real;
+    float32x4x2_t tmp_imag;
+    float32x4x2_t c_val;
+
+    // multiply the real*real and imag*imag to get real result
+    // a0r*b0r|a1r*b1r|a2r*b2r|a3r*b3r
+    tmp_real.val[0] = vmulq_f32(a_val.val[0], b_val.val[0]);
+    // a0i*b0i|a1i*b1i|a2i*b2i|a3i*b3i
+    tmp_real.val[1] = vmulq_f32(a_val.val[1], b_val.val[1]);
+    // Multiply cross terms to get the imaginary result
+    // a0r*b0i|a1r*b1i|a2r*b2i|a3r*b3i
+    tmp_imag.val[0] = vmulq_f32(a_val.val[0], b_val.val[1]);
+    // a0i*b0r|a1i*b1r|a2i*b2r|a3i*b3r
+    tmp_imag.val[1] = vmulq_f32(a_val.val[1], b_val.val[0]);
+    // combine the products
+    c_val.val[0] = vsubq_f32(tmp_real.val[0], tmp_real.val[1]);
+    c_val.val[1] = vaddq_f32(tmp_imag.val[0], tmp_imag.val[1]);
+    return c_val;
+}
+
+/* From ARM Compute Library, MIT license */
+static inline float32x4_t _vtaylor_polyq_f32(float32x4_t x, const float32x4_t coeffs[8])
+{
+    float32x4_t cA = vmlaq_f32(coeffs[0], coeffs[4], x);
+    float32x4_t cB = vmlaq_f32(coeffs[2], coeffs[6], x);
+    float32x4_t cC = vmlaq_f32(coeffs[1], coeffs[5], x);
+    float32x4_t cD = vmlaq_f32(coeffs[3], coeffs[7], x);
+    float32x4_t x2 = vmulq_f32(x, x);
+    float32x4_t x4 = vmulq_f32(x2, x2);
+    float32x4_t res = vmlaq_f32(vmlaq_f32(cA, cB, x2), vmlaq_f32(cC, cD, x2), x4);
+    return res;
+}
+
+/* Natural logarithm.
+ * From ARM Compute Library, MIT license */
+static inline float32x4_t _vlogq_f32(float32x4_t x)
+{
+    const float32x4_t log_tab[8] = {
+        vdupq_n_f32(-2.29561495781f), vdupq_n_f32(-2.47071170807f),
+        vdupq_n_f32(-5.68692588806f), vdupq_n_f32(-0.165253549814f),
+        vdupq_n_f32(5.17591238022f),  vdupq_n_f32(0.844007015228f),
+        vdupq_n_f32(4.58445882797f),  vdupq_n_f32(0.0141278216615f),
+    };
+
+    const int32x4_t CONST_127 = vdupq_n_s32(127);             // 127
+    const float32x4_t CONST_LN2 = vdupq_n_f32(0.6931471805f); // ln(2)
+
+    // Extract exponent
+    int32x4_t m = vsubq_s32(
+        vreinterpretq_s32_u32(vshrq_n_u32(vreinterpretq_u32_f32(x), 23)), CONST_127);
+    float32x4_t val =
+        vreinterpretq_f32_s32(vsubq_s32(vreinterpretq_s32_f32(x), vshlq_n_s32(m, 23)));
+
+    // Polynomial Approximation
+    float32x4_t poly = _vtaylor_polyq_f32(val, log_tab);
+
+    // Reconstruct
+    poly = vmlaq_f32(poly, vcvtq_f32_s32(m), CONST_LN2);
+
+    return poly;
+}
+
+/* Evaluation of 4 sines & cosines at once.
+ * Optimized from here (zlib license)
+ * http://gruntthepeon.free.fr/ssemath/ */
+static inline float32x4x2_t _vsincosq_f32(float32x4_t x)
+{
+    const float32x4_t c_minus_cephes_DP1 = vdupq_n_f32(-0.78515625);
+    const float32x4_t c_minus_cephes_DP2 = vdupq_n_f32(-2.4187564849853515625e-4);
+    const float32x4_t c_minus_cephes_DP3 = vdupq_n_f32(-3.77489497744594108e-8);
+    const float32x4_t c_sincof_p0 = vdupq_n_f32(-1.9515295891e-4);
+    const float32x4_t c_sincof_p1 = vdupq_n_f32(8.3321608736e-3);
+    const float32x4_t c_sincof_p2 = vdupq_n_f32(-1.6666654611e-1);
+    const float32x4_t c_coscof_p0 = vdupq_n_f32(2.443315711809948e-005);
+    const float32x4_t c_coscof_p1 = vdupq_n_f32(-1.388731625493765e-003);
+    const float32x4_t c_coscof_p2 = vdupq_n_f32(4.166664568298827e-002);
+    const float32x4_t c_cephes_FOPI = vdupq_n_f32(1.27323954473516); // 4 / M_PI
+
+    const float32x4_t CONST_1 = vdupq_n_f32(1.f);
+    const float32x4_t CONST_1_2 = vdupq_n_f32(0.5f);
+    const float32x4_t CONST_0 = vdupq_n_f32(0.f);
+    const uint32x4_t CONST_2 = vdupq_n_u32(2);
+    const uint32x4_t CONST_4 = vdupq_n_u32(4);
+
+    uint32x4_t emm2;
+
+    uint32x4_t sign_mask_sin, sign_mask_cos;
+    sign_mask_sin = vcltq_f32(x, CONST_0);
+    x = vabsq_f32(x);
+    // scale by 4/pi
+    float32x4_t y = vmulq_f32(x, c_cephes_FOPI);
+
+    // store the integer part of y in mm0
+    emm2 = vcvtq_u32_f32(y);
+    /* j=(j+1) & (~1) (see the cephes sources) */
+    emm2 = vaddq_u32(emm2, vdupq_n_u32(1));
+    emm2 = vandq_u32(emm2, vdupq_n_u32(~1));
+    y = vcvtq_f32_u32(emm2);
+
+    /* get the polynom selection mask
+     there is one polynom for 0 <= x <= Pi/4
+     and another one for Pi/4<x<=Pi/2
+     Both branches will be computed. */
+    const uint32x4_t poly_mask = vtstq_u32(emm2, CONST_2);
+
+    // The magic pass: "Extended precision modular arithmetic"
+    x = vmlaq_f32(x, y, c_minus_cephes_DP1);
+    x = vmlaq_f32(x, y, c_minus_cephes_DP2);
+    x = vmlaq_f32(x, y, c_minus_cephes_DP3);
+
+    sign_mask_sin = veorq_u32(sign_mask_sin, vtstq_u32(emm2, CONST_4));
+    sign_mask_cos = vtstq_u32(vsubq_u32(emm2, CONST_2), CONST_4);
+
+    /* Evaluate the first polynom  (0 <= x <= Pi/4) in y1,
+     and the second polynom      (Pi/4 <= x <= 0) in y2 */
+    float32x4_t y1, y2;
+    float32x4_t z = vmulq_f32(x, x);
+
+    y1 = vmlaq_f32(c_coscof_p1, z, c_coscof_p0);
+    y1 = vmlaq_f32(c_coscof_p2, z, y1);
+    y1 = vmulq_f32(y1, z);
+    y1 = vmulq_f32(y1, z);
+    y1 = vmlsq_f32(y1, z, CONST_1_2);
+    y1 = vaddq_f32(y1, CONST_1);
+
+    y2 = vmlaq_f32(c_sincof_p1, z, c_sincof_p0);
+    y2 = vmlaq_f32(c_sincof_p2, z, y2);
+    y2 = vmulq_f32(y2, z);
+    y2 = vmlaq_f32(x, x, y2);
+
+    /* select the correct result from the two polynoms */
+    const float32x4_t ys = vbslq_f32(poly_mask, y1, y2);
+    const float32x4_t yc = vbslq_f32(poly_mask, y2, y1);
+
+    float32x4x2_t sincos;
+    sincos.val[0] = vbslq_f32(sign_mask_sin, vnegq_f32(ys), ys);
+    sincos.val[1] = vbslq_f32(sign_mask_cos, yc, vnegq_f32(yc));
+
+    return sincos;
+}
+
+static inline float32x4_t _vtanq_f32(float32x4_t x)
+{
+    const float32x4x2_t sincos = _vsincosq_f32(x);
+    return vmulq_f32(sincos.val[0], _vinvq_f32(sincos.val[1]));
+}
+
+/*
+ * Approximate arctan(x) via polynomial expansion
+ * on the interval [-1, 1]
+ *
+ * Maximum relative error ~6.5e-7
+ * Polynomial evaluated via Horner's method
+ */
+static inline float32x4_t _varctan_poly_f32(float32x4_t x)
+{
+    const float32x4_t a1 = vdupq_n_f32(+0x1.ffffeap-1f);
+    const float32x4_t a3 = vdupq_n_f32(-0x1.55437p-2f);
+    const float32x4_t a5 = vdupq_n_f32(+0x1.972be6p-3f);
+    const float32x4_t a7 = vdupq_n_f32(-0x1.1436ap-3f);
+    const float32x4_t a9 = vdupq_n_f32(+0x1.5785aap-4f);
+    const float32x4_t a11 = vdupq_n_f32(-0x1.2f3004p-5f);
+    const float32x4_t a13 = vdupq_n_f32(+0x1.01a37cp-7f);
+
+    const float32x4_t x_sq = vmulq_f32(x, x);
+    float32x4_t result;
+    result = a13;
+    result = vmlaq_f32(a11, x_sq, result);
+    result = vmlaq_f32(a9, x_sq, result);
+    result = vmlaq_f32(a7, x_sq, result);
+    result = vmlaq_f32(a5, x_sq, result);
+    result = vmlaq_f32(a3, x_sq, result);
+    result = vmlaq_f32(a1, x_sq, result);
+    result = vmulq_f32(x, result);
+
+    return result;
+}
+
+static inline float32x4_t _neon_accumulate_square_sum_f32(float32x4_t sq_acc,
+                                                          float32x4_t acc,
+                                                          float32x4_t val,
+                                                          float32x4_t rec,
+                                                          float32x4_t aux)
+{
+    aux = vmulq_f32(aux, val);
+    aux = vsubq_f32(aux, acc);
+    aux = vmulq_f32(aux, aux);
+#ifdef LV_HAVE_NEONV8
+    return vfmaq_f32(sq_acc, aux, rec);
+#else
+    aux = vmulq_f32(aux, rec);
+    return vaddq_f32(sq_acc, aux);
+#endif
+}
+
+/*
+ * Minimax polynomial for sin(x) on [-pi/4, pi/4]
+ * Coefficients via Remez algorithm (Sollya)
+ * Max |error| < 7.3e-9
+ * sin(x) = x + x^3 * (s1 + x^2 * (s2 + x^2 * s3))
+ */
+static inline float32x4_t _vsin_poly_f32(float32x4_t x)
+{
+    const float32x4_t s1 = vdupq_n_f32(-0x1.555552p-3f);
+    const float32x4_t s2 = vdupq_n_f32(+0x1.110be2p-7f);
+    const float32x4_t s3 = vdupq_n_f32(-0x1.9ab22ap-13f);
+
+    const float32x4_t x2 = vmulq_f32(x, x);
+    const float32x4_t x3 = vmulq_f32(x2, x);
+
+    float32x4_t poly = vmlaq_f32(s2, x2, s3);
+    poly = vmlaq_f32(s1, x2, poly);
+    return vmlaq_f32(x, x3, poly);
+}
+
+/*
+ * Minimax polynomial for cos(x) on [-pi/4, pi/4]
+ * Coefficients via Remez algorithm (Sollya)
+ * Max |error| < 1.1e-7
+ * cos(x) = 1 + x^2 * (c1 + x^2 * (c2 + x^2 * c3))
+ */
+static inline float32x4_t _vcos_poly_f32(float32x4_t x)
+{
+    const float32x4_t c1 = vdupq_n_f32(-0x1.fffff4p-2f);
+    const float32x4_t c2 = vdupq_n_f32(+0x1.554a46p-5f);
+    const float32x4_t c3 = vdupq_n_f32(-0x1.661be2p-10f);
+    const float32x4_t one = vdupq_n_f32(1.0f);
+
+    const float32x4_t x2 = vmulq_f32(x, x);
+
+    float32x4_t poly = vmlaq_f32(c2, x2, c3);
+    poly = vmlaq_f32(c1, x2, poly);
+    return vmlaq_f32(one, x2, poly);
+}
+
+/*
+ * Polynomial coefficients for log2(x)/(x-1) on [1, 2]
+ * Generated with Sollya: remez(log2(x)/(x-1), 6, [1+1b-20, 2])
+ * Max error: ~1.55e-6
+ *
+ * Usage: log2(x) ≈ poly(x) * (x - 1) for x ∈ [1, 2]
+ * Polynomial evaluated via Horner's method
+ */
+static inline float32x4_t _vlog2_poly_f32(float32x4_t x)
+{
+    const float32x4_t c0 = vdupq_n_f32(+0x1.a8a726p+1f);
+    const float32x4_t c1 = vdupq_n_f32(-0x1.0b7f7ep+2f);
+    const float32x4_t c2 = vdupq_n_f32(+0x1.05d9ccp+2f);
+    const float32x4_t c3 = vdupq_n_f32(-0x1.4d476cp+1f);
+    const float32x4_t c4 = vdupq_n_f32(+0x1.04fc3ap+0f);
+    const float32x4_t c5 = vdupq_n_f32(-0x1.c97982p-3f);
+    const float32x4_t c6 = vdupq_n_f32(+0x1.57aa42p-6f);
+
+    // Horner's method: c0 + x*(c1 + x*(c2 + ...))
+    float32x4_t poly = c6;
+    poly = vmlaq_f32(c5, poly, x);
+    poly = vmlaq_f32(c4, poly, x);
+    poly = vmlaq_f32(c3, poly, x);
+    poly = vmlaq_f32(c2, poly, x);
+    poly = vmlaq_f32(c1, poly, x);
+    poly = vmlaq_f32(c0, poly, x);
+    return poly;
+}
+
+#ifdef LV_HAVE_NEONV8
+/* ARMv8 NEON FMA-based arctan polynomial for better accuracy and throughput */
+static inline float32x4_t _varctan_poly_neonv8(float32x4_t x)
+{
+    const float32x4_t a1 = vdupq_n_f32(+0x1.ffffeap-1f);
+    const float32x4_t a3 = vdupq_n_f32(-0x1.55437p-2f);
+    const float32x4_t a5 = vdupq_n_f32(+0x1.972be6p-3f);
+    const float32x4_t a7 = vdupq_n_f32(-0x1.1436ap-3f);
+    const float32x4_t a9 = vdupq_n_f32(+0x1.5785aap-4f);
+    const float32x4_t a11 = vdupq_n_f32(-0x1.2f3004p-5f);
+    const float32x4_t a13 = vdupq_n_f32(+0x1.01a37cp-7f);
+
+    const float32x4_t x_sq = vmulq_f32(x, x);
+    float32x4_t result = a13;
+    result = vfmaq_f32(a11, x_sq, result);
+    result = vfmaq_f32(a9, x_sq, result);
+    result = vfmaq_f32(a7, x_sq, result);
+    result = vfmaq_f32(a5, x_sq, result);
+    result = vfmaq_f32(a3, x_sq, result);
+    result = vfmaq_f32(a1, x_sq, result);
+    result = vmulq_f32(x, result);
+
+    return result;
+}
+
+/* NEONv8 FMA sin polynomial on [-pi/4, pi/4], coeffs via Remez (Sollya) */
+static inline float32x4_t _vsin_poly_neonv8(float32x4_t x)
+{
+    const float32x4_t s1 = vdupq_n_f32(-0x1.555552p-3f);
+    const float32x4_t s2 = vdupq_n_f32(+0x1.110be2p-7f);
+    const float32x4_t s3 = vdupq_n_f32(-0x1.9ab22ap-13f);
+
+    const float32x4_t x2 = vmulq_f32(x, x);
+    const float32x4_t x3 = vmulq_f32(x2, x);
+
+    float32x4_t poly = vfmaq_f32(s2, x2, s3);
+    poly = vfmaq_f32(s1, x2, poly);
+    return vfmaq_f32(x, x3, poly);
+}
+
+/* NEONv8 FMA cos polynomial on [-pi/4, pi/4], coeffs via Remez (Sollya) */
+static inline float32x4_t _vcos_poly_neonv8(float32x4_t x)
+{
+    const float32x4_t c1 = vdupq_n_f32(-0x1.fffff4p-2f);
+    const float32x4_t c2 = vdupq_n_f32(+0x1.554a46p-5f);
+    const float32x4_t c3 = vdupq_n_f32(-0x1.661be2p-10f);
+    const float32x4_t one = vdupq_n_f32(1.0f);
+
+    const float32x4_t x2 = vmulq_f32(x, x);
+
+    float32x4_t poly = vfmaq_f32(c2, x2, c3);
+    poly = vfmaq_f32(c1, x2, poly);
+    return vfmaq_f32(one, x2, poly);
+}
+
+/*
+ * NEONv8 FMA log2 polynomial on [1, 2]
+ * log2(x) ≈ poly(x) * (x - 1)
+ * Max error: ~1.55e-6
+ */
+static inline float32x4_t _vlog2_poly_neonv8(float32x4_t x)
+{
+    const float32x4_t c0 = vdupq_n_f32(+0x1.a8a726p+1f);
+    const float32x4_t c1 = vdupq_n_f32(-0x1.0b7f7ep+2f);
+    const float32x4_t c2 = vdupq_n_f32(+0x1.05d9ccp+2f);
+    const float32x4_t c3 = vdupq_n_f32(-0x1.4d476cp+1f);
+    const float32x4_t c4 = vdupq_n_f32(+0x1.04fc3ap+0f);
+    const float32x4_t c5 = vdupq_n_f32(-0x1.c97982p-3f);
+    const float32x4_t c6 = vdupq_n_f32(+0x1.57aa42p-6f);
+
+    // Horner's method with FMA: c0 + x*(c1 + x*(c2 + ...))
+    float32x4_t poly = c6;
+    poly = vfmaq_f32(c5, poly, x);
+    poly = vfmaq_f32(c4, poly, x);
+    poly = vfmaq_f32(c3, poly, x);
+    poly = vfmaq_f32(c2, poly, x);
+    poly = vfmaq_f32(c1, poly, x);
+    poly = vfmaq_f32(c0, poly, x);
+    return poly;
+}
+#endif /* LV_HAVE_NEONV8 */
+
+#endif /* INCLUDE_VOLK_VOLK_NEON_INTRINSICS_H_ */

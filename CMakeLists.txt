@@ -98,11 +98,25 @@ endif()
 
 # Configure toolchain for android
 if (ANDROID)
-    set(SDR_KIT_ROOT "/sdr-kit" CACHE PATH "Path to the Android SDR kit root")
+    # Default to the kit committed in this repo at android/sdr-kit so the build
+    # works out of the box after `git clone`. Override with -DSDR_KIT_ROOT=...
+    # or the SDR_KIT_ROOT env var if you prefer a system-wide kit.
+    set(_PREDATOR_REPO_SDR_KIT "${CMAKE_SOURCE_DIR}/android/sdr-kit")
+    if (DEFINED ENV{SDR_KIT_ROOT})
+        set(_DEFAULT_SDR_KIT "$ENV{SDR_KIT_ROOT}")
+    elseif (EXISTS "${_PREDATOR_REPO_SDR_KIT}")
+        set(_DEFAULT_SDR_KIT "${_PREDATOR_REPO_SDR_KIT}")
+    else()
+        set(_DEFAULT_SDR_KIT "/sdr-kit")
+    endif()
+    set(SDR_KIT_ROOT "${_DEFAULT_SDR_KIT}" CACHE PATH "Path to the Android SDR kit root")
     file(TO_CMAKE_PATH "${SDR_KIT_ROOT}" SDR_KIT_ROOT)
     set(SDR_KIT_ABI_ROOT "${SDR_KIT_ROOT}/${ANDROID_ABI}")
     if (NOT EXISTS "${SDR_KIT_ABI_ROOT}")
-        message(FATAL_ERROR "SDR_KIT_ABI_ROOT does not exist: ${SDR_KIT_ABI_ROOT}")
+        message(FATAL_ERROR "SDR_KIT_ABI_ROOT does not exist: ${SDR_KIT_ABI_ROOT}\n"
+            "Tried: ${SDR_KIT_ROOT}/${ANDROID_ABI}\n"
+            "The repo ships a prebuilt kit at android/sdr-kit. If it is missing,\n"
+            "run scripts/fetch-sdr-kit.sh to rebuild it from the upstream APK + sources.")
     endif ()
 
     set(CMAKE_SHARED_LINKER_FLAGS
