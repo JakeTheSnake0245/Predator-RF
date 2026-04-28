@@ -92,13 +92,18 @@ namespace style {
         ImGuiStyle& s = ImGui::GetStyle();
 
         // Vertical/horizontal scrollbar thickness. Default is 14 px;
-        // ScaleAllSizes brings that to 14*uiScale. We want at least 24*uiScale
-        // for thumbs (≈7 mm at 440 PPI on uiScale=3).
-        s.ScrollbarSize = std::max(s.ScrollbarSize, 24.0f * uiScale);
+        // ScaleAllSizes brings that to 14*uiScale. Bumped to 32*uiScale
+        // (~9.5 mm at 440 PPI on uiScale=3) after on-device testing on a
+        // Samsung S22 portrait — 24*uiScale was still hard to grab with a
+        // thumb when the right panel scrollbar shared the screen edge.
+        s.ScrollbarSize = std::max(s.ScrollbarSize, 32.0f * uiScale);
 
-        // Slider grab: the draggable knob inside a slider track. Bump it
-        // so it is comfortably wider than a fingertip's contact patch.
-        s.GrabMinSize = std::max(s.GrabMinSize, 22.0f * uiScale);
+        // Slider grab: the draggable knob inside a slider track AND the
+        // thumb inside a scrollbar. ImGui caps the thumb size to the
+        // content's "natural" size, so a long list produces a tiny thumb;
+        // GrabMinSize is what keeps it thumb-grabbable. Bumped to 32*uiScale
+        // so even a long event log keeps a chunky scroll thumb.
+        s.GrabMinSize = std::max(s.GrabMinSize, 32.0f * uiScale);
 
         // Window/child border thickness so panel edges are visible against
         // the dark Diablo-tactical background on a small high-DPI screen.

@@ -596,4 +596,224 @@ protected:
     }
 };
 
+// ---------------------------------------------------------------------------
+// P25 ingester. Wire format: one JSON object per line emitted by a P25
+// trunked-voice decoder companion process (typically DSD-FME with a JSON
+// event-log feed, or an OP25 metadata bridge). All P25-specific fields
+// are accepted under multiple aliases so the user can point this at
+// either decoder family without reformatting.
+//
+// Recognised JSON keys (first-match-wins, case-sensitive — companion
+// scripts are expected to emit lowercase keys; uppercase aliases tolerated):
+//   wacn / WACN / wacn_id           Wide Area Communication Network id (hex)
+//   sysid / system_id / sys / system    System id within the WACN (hex)
+//   rfss / rfss_id                  RF Sub-System id
+//   site / site_id                  Site id within the RFSS
+//   tg / tgid / talkgroup / tg_id   Talkgroup id (decimal)
+//   alias / tg_alias / tg_tag       Talkgroup display name
+//   src / src_id / radio_id / ruid  Source unit / radio id (decimal)
+//   src_alias / src_tag             Source unit display name
+//   freq / frequency / freq_hz      Frequency (MHz if "freq"/"frequency"/
+//                                              "freq_mhz", Hz if "freq_hz")
+//   freq_mhz                        Frequency in MHz (explicit alias)
+//   rssi / level / strength_db      Signal level in dBFS or dB
+//   snr                             SNR in dB (used as fallback if no rssi)
+//   mode / phase / encoding         "P25P1"/"P25 Phase 1"/"P25P2"/"P25 Phase 2"
+//   enc / encrypted                 Boolean: encrypted call indicator
+//   alg / algorithm                 ALGID (DES-OFB, AES-256, ADP, ...)
+//   kid / keyid                     KEYID for encrypted calls
+//
+// Output mapping into DecoderIngestEvent:
+//   decoder    = "P25"
+//   protocol   = "P25 Phase 1" | "P25 Phase 2" (default Phase 1 if unknown)
+//   networkId  = "WACN" or "WACN/SYSID" if both present (hex, upper case)
+//   talkgroup  = TG alias if present, else "TG <tgid>"
+//   radioId    = SRC alias if present, else SRC id, else "?"
+//   label      = "[P25Px] TG <tg> (alias?) SRC <src>" — short summary
+//   raw        = original JSON merged with normalised {wacn, sysid, rfss,
+//                site, tg, src, encrypted, alg, kid} so the topology tree
+//                can render WACN/RFSS/Site/TG hierarchy without re-parsing.
+// ---------------------------------------------------------------------------
+class P25Ingester : public LineIngester {
+public:
+    P25Ingester() : LineIngester("P25") {}
+
+protected:
+    void parseLine(const std::string& line) override {
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(line);
+        } catch (...) {
+            return; // ignore non-JSON / partial lines
+        }
+        if (!j.is_object()) return;
+
+        // First-match-wins string lookup across alias keys. Coerces numbers
+        // to decimal strings and booleans to "true"/"false" so the UI can
+        // render any field without per-key type checks.
+        auto getStrAlias = [&](std::initializer_list<const char*> keys) -> std::string {
+            for (const char* k : keys) {
+                if (!j.contains(k)) continue;
+                const auto& v = j[k];
+                if (v.is_string())          return v.get<std::string>();
+                if (v.is_number_integer())  return std::to_string(v.get<long long>());
+                if (v.is_number_unsigned()) return std::to_string(v.get<unsigned long long>());
+                if (v.is_number_float()) {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%g", v.get<double>());
+                    return std::string(buf);
+                }
+                if (v.is_boolean())         return v.get<bool>() ? "true" : "false";
+            }
+            return "";
+        };
+        auto getNumAlias = [&](std::initializer_list<const char*> keys, double dflt) -> double {
+            for (const char* k : keys) {
+                if (j.contains(k) && j[k].is_number()) return j[k].get<double>();
+            }
+            return dflt;
+        };
+        auto getBoolAlias = [&](std::initializer_list<const char*> keys, bool dflt) -> bool {
+            for (const char* k : keys) {
+                if (!j.contains(k)) continue;
+                const auto& v = j[k];
+                if (v.is_boolean())         return v.get<bool>();
+                if (v.is_number_integer())  return v.get<long long>() != 0;
+                if (v.is_string()) {
+                    std::string s = v.get<std::string>();
+                    std::transform(s.begin(), s.end(), s.begin(),
+                                   [](unsigned char c){ return (char)std::tolower(c); });
+                    return (s == "true" || s == "1" || s == "yes" || s == "y");
+                }
+            }
+            return dflt;
+        };
+
+        std::string wacn      = getStrAlias({"wacn",  "WACN",       "wacn_id"});
+        std::string sysid     = getStrAlias({"sysid", "system_id",  "sys", "system"});
+        std::string rfss      = getStrAlias({"rfss",  "rfss_id"});
+        std::string site      = getStrAlias({"site",  "site_id"});
+        std::string tg        = getStrAlias({"tg",    "tgid",       "talkgroup", "tg_id", "talkgroup_id"});
+        std::string tgAlias   = getStrAlias({"alias", "tg_alias",   "tg_tag",    "talkgroup_alias"});
+        std::string src       = getStrAlias({"src",   "src_id",     "radio_id",  "ruid", "source", "srcaddr"});
+        std::string srcAlias  = getStrAlias({"src_alias", "src_tag", "rid_alias"});
+        std::string modeStr   = getStrAlias({"mode",  "phase",      "encoding",  "type"});
+        std::string algorithm = getStrAlias({"alg",   "algorithm",  "algid"});
+        std::string keyId     = getStrAlias({"kid",   "keyid"});
+
+        bool encrypted = getBoolAlias({"enc", "encrypted", "is_encrypted"}, false);
+
+        // Drop frames that carry no useful identifier at all. Accept anything
+        // with a TG/SRC (call event) OR WACN/SYSID/RFSS/Site (control-channel
+        // state) — DSD-FME and OP25 both emit site/system status records that
+        // are operationally useful even without an active call.
+        if (tg.empty() && src.empty() && wacn.empty()
+            && sysid.empty() && rfss.empty() && site.empty()) return;
+
+        // Frequency unit handling — different P25 decoders disagree:
+        //   * OP25 emits "freq" in Hz (e.g. 851012500)
+        //   * DSD-FME emits "freq"/"frequency" in MHz (e.g. 851.0125)
+        // Strategy: explicit "freq_hz" / "freq_mhz" win when present.
+        // For ambiguous "freq"/"frequency", heuristically treat values
+        // >= 1e7 (10 MHz) as Hz (covers entire P25 spectrum 138-960 MHz)
+        // and smaller values as MHz. Anything outside the plausible RF
+        // range is rejected back to 0 so the map doesn't plot garbage.
+        double freqHz = 0.0;
+        if (j.contains("freq_hz") && j["freq_hz"].is_number()) {
+            freqHz = j["freq_hz"].get<double>();
+        } else if (j.contains("freq_mhz") && j["freq_mhz"].is_number()) {
+            freqHz = j["freq_mhz"].get<double>() * 1e6;
+        } else {
+            double f = getNumAlias({"freq", "frequency"}, 0.0);
+            if (f > 0.0) {
+                freqHz = (f >= 1e7) ? f : (f * 1e6);
+            }
+        }
+        // Sanity: 1 MHz .. 6 GHz keeps us in plausible RF land.
+        if (freqHz < 1e6 || freqHz > 6e9) freqHz = 0.0;
+
+        // Phase: P1 default. Match common spellings from DSD-FME / OP25.
+        std::string protocol = "P25 Phase 1";
+        {
+            std::string lower = modeStr;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c){ return (char)std::tolower(c); });
+            if (lower.find("p2") != std::string::npos
+                || lower.find("phase 2") != std::string::npos
+                || lower.find("phase2") != std::string::npos
+                || lower.find("tdma") != std::string::npos) {
+                protocol = "P25 Phase 2";
+            }
+        }
+
+        // Normalise WACN to upper-case hex for stable networkId.
+        auto upper = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(),
+                           [](unsigned char c){ return (char)std::toupper(c); });
+            return s;
+        };
+        std::string wacnUp  = upper(wacn);
+        std::string sysidUp = upper(sysid);
+
+        DecoderIngestEvent ev;
+        ev.decoder  = "P25";
+        ev.protocol = protocol;
+
+        if (!wacnUp.empty() && !sysidUp.empty()) ev.networkId = wacnUp + "/" + sysidUp;
+        else if (!wacnUp.empty())                ev.networkId = wacnUp;
+        else if (!sysidUp.empty())               ev.networkId = sysidUp;
+        else                                     ev.networkId = "Unknown";
+
+        if (!tgAlias.empty())   ev.talkgroup = tgAlias;
+        else if (!tg.empty())   ev.talkgroup = std::string("TG ") + tg;
+        else                    ev.talkgroup = "?";
+
+        if (!srcAlias.empty())  ev.radioId = srcAlias;
+        else if (!src.empty())  ev.radioId = src;
+        else                    ev.radioId = "?";
+
+        // Compact label: protocol short tag, talkgroup, source.
+        // e.g. "[P25P1] TG 1234 (Tac 7) SRC 5001"
+        std::string protoShort = (protocol == "P25 Phase 2") ? "P25P2" : "P25P1";
+        std::string lbl = std::string("[") + protoShort + "] ";
+        if (!tg.empty())        lbl += std::string("TG ") + tg;
+        else                    lbl += "TG ?";
+        if (!tgAlias.empty())   lbl += std::string(" (") + tgAlias + ")";
+        if (!src.empty())       lbl += std::string(" SRC ") + src;
+        if (encrypted)          lbl += " [ENC]";
+        ev.label = lbl;
+
+        ev.frequencyHz = freqHz;
+
+        double rssi = getNumAlias({"rssi", "level", "strength_db"}, -200.0);
+        if (rssi > -200.0) {
+            ev.strengthDb = (float)rssi;
+        } else {
+            double snr = getNumAlias({"snr"}, -200.0);
+            if (snr > -200.0) ev.strengthDb = (float)snr;
+        }
+
+        // Echo normalised P25 fields back into raw so the WACN/RFSS/Site/TG
+        // topology tree and the session export can render them without
+        // re-parsing the wire format. Original JSON is preserved as raw.original.
+        nlohmann::json raw;
+        raw["original"] = j;
+        if (!wacnUp.empty())     raw["wacn"]      = wacnUp;
+        if (!sysidUp.empty())    raw["sysid"]     = sysidUp;
+        if (!rfss.empty())       raw["rfss"]      = rfss;
+        if (!site.empty())       raw["site"]      = site;
+        if (!tg.empty())         raw["tg"]        = tg;
+        if (!tgAlias.empty())    raw["tgAlias"]   = tgAlias;
+        if (!src.empty())        raw["src"]       = src;
+        if (!srcAlias.empty())   raw["srcAlias"]  = srcAlias;
+        raw["encrypted"]                          = encrypted;
+        if (!algorithm.empty())  raw["algorithm"] = algorithm;
+        if (!keyId.empty())      raw["keyId"]     = keyId;
+        raw["phase"]                              = protocol;
+        ev.raw = std::move(raw);
+
+        enqueue(std::move(ev));
+    }
+};
+
 } // namespace predator
