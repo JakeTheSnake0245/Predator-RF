@@ -28,6 +28,8 @@
 #include <cstring>
 #include <ctime>
 #include <algorithm>
+#include <map>
+#include <cctype>
 #include <signal_path/source.h>
 #include <gui/dialogs/loading_screen.h>
 #include <gui/colormaps.h>
@@ -633,6 +635,7 @@ void MainWindow::draw() {
     std::string dsdFmeHost = "127.0.0.1";
     int dsdFmePort = 7355;
     std::string dsdFmeMode = "TCP Direct Link Audio";
+    json decoderBridges;
     std::string voiceOutputPath = "%ROOT%/voice";
     std::string dataOutputPath = "%ROOT%/data";
     std::string sessionNote = "";
@@ -644,6 +647,7 @@ void MainWindow::draw() {
     hits = core::configManager.conf["predatorHits"];
     events = core::configManager.conf["predatorEvents"];
     networkAliases = core::configManager.conf.contains("predatorNetworkAliases") && core::configManager.conf["predatorNetworkAliases"].is_object() ? core::configManager.conf["predatorNetworkAliases"] : json::object();
+    decoderBridges = core::configManager.conf.contains("predatorDecoderBridges") && core::configManager.conf["predatorDecoderBridges"].is_object() ? core::configManager.conf["predatorDecoderBridges"] : json::object();
     missionThreshold = core::configManager.conf["predatorThreshold"];
     dwellMs = core::configManager.conf["predatorDwellMs"];
     quickScanDelayMs = core::configManager.conf["predatorQuickScanDelayMs"];
@@ -707,6 +711,31 @@ void MainWindow::draw() {
         core::configManager.acquire();
         core::configManager.conf["predatorNetworkAliases"] = newAliases;
         core::configManager.release(true);
+    };
+
+    auto saveDecoderBridges = [&](const json& newBridges) {
+        core::configManager.acquire();
+        core::configManager.conf["predatorDecoderBridges"] = newBridges;
+        core::configManager.release(true);
+    };
+
+    auto ensureDecoderBridge = [&](const std::string& key, const std::string& defaultHost, int defaultPort, const std::string& defaultMode, const std::string& defaultNotes) {
+        if (!decoderBridges.is_object()) { decoderBridges = json::object(); }
+        if (!decoderBridges.contains(key) || !decoderBridges[key].is_object()) {
+            json b;
+            b["enabled"] = false;
+            b["host"] = defaultHost;
+            b["port"] = defaultPort;
+            b["mode"] = defaultMode;
+            b["notes"] = defaultNotes;
+            decoderBridges[key] = b;
+        } else {
+            if (!decoderBridges[key].contains("enabled") || !decoderBridges[key]["enabled"].is_boolean()) { decoderBridges[key]["enabled"] = false; }
+            if (!decoderBridges[key].contains("host")    || !decoderBridges[key]["host"].is_string())     { decoderBridges[key]["host"]    = defaultHost; }
+            if (!decoderBridges[key].contains("port")    || !decoderBridges[key]["port"].is_number())     { decoderBridges[key]["port"]    = defaultPort; }
+            if (!decoderBridges[key].contains("mode")    || !decoderBridges[key]["mode"].is_string())     { decoderBridges[key]["mode"]    = defaultMode; }
+            if (!decoderBridges[key].contains("notes")   || !decoderBridges[key]["notes"].is_string())    { decoderBridges[key]["notes"]   = defaultNotes; }
+        }
     };
 
     auto saveSessionNote = [&](const std::string& note) {
@@ -2567,21 +2596,48 @@ void MainWindow::draw() {
                 static std::string selectedNetworkKey = "";
                 static char selectedNetworkAlias[128] = "";
                 static std::string networkActionStatus = "";
-                std::vector<NetworkSummary> summaries;
+                static char networkSearchBuf[128] = "";
+
+                struct TalkgroupNode {
+                    std::string key;
+                    std::string protocol;
+                    std::string networkId;
+                    std::string talkgroup;
+                    int events;
+                    double lastFrequency;
+                    double strongest;
+                    std::string lastSeen;
+                    std::vector<double> frequencies;
+                    std::vector<std::string> radioIds;
+                };
+                auto pushUniqueDouble = [](std::vector<double>& vec, double v, double tolHz) {
+                    for (size_t i = 0; i < vec.size(); i++) {
+                        if (std::abs(vec[i] - v) <= tolHz) { return; }
+                    }
+                    vec.push_back(v);
+                };
+                auto pushUniqueString = [](std::vector<std::string>& vec, const std::string& v) {
+                    if (v.empty() || v == "Unknown" || v == "unknown") { return; }
+                    for (size_t i = 0; i < vec.size(); i++) {
+                        if (vec[i] == v) { return; }
+                    }
+                    vec.push_back(v);
+                };
+
+                std::vector<TalkgroupNode> nodes;
                 for (int i = 0; i < events.size(); i++) {
                     std::string protocol = readJsonString(events[i], "protocol", "Unknown");
                     std::string networkId = readJsonString(events[i], "networkId", "Unknown");
                     std::string talkgroup = readJsonString(events[i], "talkgroup", "Unknown");
+                    std::string radioId = readJsonString(events[i], "radioId", "");
+                    if (radioId.empty()) { radioId = readJsonString(events[i], "eventId", ""); }
                     std::string key = networkKeyForParts(protocol, networkId, talkgroup);
                     int match = -1;
-                    for (int s = 0; s < summaries.size(); s++) {
-                        if (summaries[s].key == key) {
-                            match = s;
-                            break;
-                        }
+                    for (int s = 0; s < (int)nodes.size(); s++) {
+                        if (nodes[s].key == key) { match = s; break; }
                     }
                     if (match < 0) {
-                        NetworkSummary row;
+                        TalkgroupNode row;
                         row.key = key;
                         row.protocol = protocol;
                         row.networkId = networkId;
@@ -2589,35 +2645,205 @@ void MainWindow::draw() {
                         row.events = 0;
                         row.lastFrequency = 0.0;
                         row.strongest = -999.0;
-                        summaries.push_back(row);
-                        match = (int)summaries.size() - 1;
+                        nodes.push_back(row);
+                        match = (int)nodes.size() - 1;
                     }
-                    summaries[match].events++;
-                    summaries[match].lastFrequency = readJsonDouble(events[i], "frequency", summaries[match].lastFrequency);
-                    summaries[match].strongest = std::max<double>(summaries[match].strongest, readJsonDouble(events[i], "strengthDb", -999.0));
+                    nodes[match].events++;
+                    double freq = readJsonDouble(events[i], "frequency", 0.0);
+                    if (freq > 0.0) {
+                        nodes[match].lastFrequency = freq;
+                        pushUniqueDouble(nodes[match].frequencies, freq, 100.0);
+                    }
+                    nodes[match].strongest = std::max<double>(nodes[match].strongest, readJsonDouble(events[i], "strengthDb", -999.0));
+                    nodes[match].lastSeen = readJsonString(events[i], "time", nodes[match].lastSeen.c_str());
+                    pushUniqueString(nodes[match].radioIds, radioId);
                 }
-                if (summaries.empty()) {
+
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                ImGui::InputTextWithHint("##predator_network_filter", T("Filter protocol / network / TG / radio / alias"), networkSearchBuf, sizeof(networkSearchBuf));
+                std::string filter = networkSearchBuf;
+                std::string filterLower = filter;
+                std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), [](unsigned char c){ return std::tolower(c); });
+                auto matchesFilter = [&](const TalkgroupNode& n) {
+                    if (filter.empty()) { return true; }
+                    auto containsCi = [&](const std::string& s) {
+                        std::string lo = s;
+                        std::transform(lo.begin(), lo.end(), lo.begin(), [](unsigned char c){ return std::tolower(c); });
+                        return lo.find(filterLower) != std::string::npos;
+                    };
+                    if (containsCi(n.protocol) || containsCi(n.networkId) || containsCi(n.talkgroup)) { return true; }
+                    if (containsCi(networkAliasForKey(n.key, ""))) { return true; }
+                    for (size_t i = 0; i < n.radioIds.size(); i++) { if (containsCi(n.radioIds[i])) { return true; } }
+                    return false;
+                };
+
+                struct ProtoBucket { std::string protocol; std::vector<int> nodeIdx; int totalEvents; };
+                std::vector<ProtoBucket> protocols;
+                int filteredNodeCount = 0;
+                for (int i = 0; i < (int)nodes.size(); i++) {
+                    if (!matchesFilter(nodes[i])) { continue; }
+                    filteredNodeCount++;
+                    int pidx = -1;
+                    for (int p = 0; p < (int)protocols.size(); p++) {
+                        if (protocols[p].protocol == nodes[i].protocol) { pidx = p; break; }
+                    }
+                    if (pidx < 0) {
+                        ProtoBucket pb; pb.protocol = nodes[i].protocol; pb.totalEvents = 0;
+                        protocols.push_back(pb);
+                        pidx = (int)protocols.size() - 1;
+                    }
+                    protocols[pidx].nodeIdx.push_back(i);
+                    protocols[pidx].totalEvents += nodes[i].events;
+                }
+                std::sort(protocols.begin(), protocols.end(), [](const ProtoBucket& a, const ProtoBucket& b){ return a.protocol < b.protocol; });
+
+                if (nodes.empty()) {
                     ImGui::TextDisabled("%s", T("No entries."));
+                } else if (filteredNodeCount == 0) {
+                    ImGui::TextDisabled("No matches for filter.");
+                } else {
+                    ImGui::Text("Protocols: %d   Talkgroups: %d", (int)protocols.size(), filteredNodeCount);
                 }
-                for (int i = 0; i < summaries.size(); i++) {
-                    ImGui::PushID(9000 + i);
-                    std::string baseLabel = summaries[i].protocol + " / Net " + summaries[i].networkId + " / TG " + summaries[i].talkgroup;
-                    std::string label = networkAliasForKey(summaries[i].key, baseLabel);
-                    if (ImGui::TreeNode(label.c_str())) {
-                        ImGui::Text("Events: %d", summaries[i].events);
-                        ImGui::Text("Last Freq: %s", formatFrequency(summaries[i].lastFrequency).c_str());
-                        ImGui::Text("Strongest: %.1f dB", summaries[i].strongest);
-                        ImGui::TextDisabled("%s", baseLabel.c_str());
-                        if (ImGui::Button(T("Select"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                            selectedNetworkKey = summaries[i].key;
-                            snprintf(selectedNetworkAlias, sizeof(selectedNetworkAlias), "%s", networkAliasForKey(summaries[i].key, label).c_str());
+
+                int treeUid = 9000;
+                for (int p = 0; p < (int)protocols.size(); p++) {
+                    ImGui::PushID(treeUid++);
+                    std::string protoLabel = protocols[p].protocol + "  (" + std::to_string((int)protocols[p].nodeIdx.size()) + " TGs, " + std::to_string(protocols[p].totalEvents) + " events)";
+                    if (ImGui::TreeNodeEx(protoLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                        std::vector<std::string> netOrder;
+                        std::map<std::string, std::vector<int>> netGroups;
+                        for (size_t k = 0; k < protocols[p].nodeIdx.size(); k++) {
+                            int ni = protocols[p].nodeIdx[k];
+                            const std::string& nid = nodes[ni].networkId;
+                            if (netGroups.find(nid) == netGroups.end()) { netOrder.push_back(nid); }
+                            netGroups[nid].push_back(ni);
                         }
-                        ImGui::TextDisabled("Radio IDs will populate when DSD-FME decoded metadata is ingested.");
+                        std::sort(netOrder.begin(), netOrder.end());
+                        for (size_t n = 0; n < netOrder.size(); n++) {
+                            ImGui::PushID(treeUid++);
+                            const std::vector<int>& tgList = netGroups[netOrder[n]];
+                            int netEvents = 0;
+                            for (size_t k = 0; k < tgList.size(); k++) { netEvents += nodes[tgList[k]].events; }
+                            std::string netLabel = "Net " + netOrder[n] + "  (" + std::to_string((int)tgList.size()) + " TGs, " + std::to_string(netEvents) + " events)";
+                            if (ImGui::TreeNodeEx(netLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                                for (size_t k = 0; k < tgList.size(); k++) {
+                                    int ni = tgList[k];
+                                    ImGui::PushID(treeUid++);
+                                    std::string baseLabel = "TG " + nodes[ni].talkgroup;
+                                    std::string aliasLabel = networkAliasForKey(nodes[ni].key, "");
+                                    std::string tgLabel = aliasLabel.empty() ? baseLabel : (baseLabel + "  \xE2\x80\x94 " + aliasLabel);
+                                    bool selected = (selectedNetworkKey == nodes[ni].key);
+                                    if (selected) { ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 200, 90, 255)); }
+                                    bool open = ImGui::TreeNode(tgLabel.c_str());
+                                    if (selected) { ImGui::PopStyleColor(); }
+                                    if (open) {
+                                        ImGui::Text("Events: %d", nodes[ni].events);
+                                        ImGui::Text("Strongest: %.1f dB", nodes[ni].strongest);
+                                        if (!nodes[ni].lastSeen.empty()) {
+                                            ImGui::Text("Last Seen: %s", nodes[ni].lastSeen.c_str());
+                                        }
+                                        if (!nodes[ni].frequencies.empty()) {
+                                            std::string freqs = "Frequencies (" + std::to_string((int)nodes[ni].frequencies.size()) + "): ";
+                                            for (size_t f = 0; f < nodes[ni].frequencies.size() && f < 8; f++) {
+                                                if (f) { freqs += ", "; }
+                                                freqs += formatFrequency(nodes[ni].frequencies[f]);
+                                            }
+                                            if (nodes[ni].frequencies.size() > 8) { freqs += ", ..."; }
+                                            ImGui::TextWrapped("%s", freqs.c_str());
+                                        }
+                                        if (!nodes[ni].radioIds.empty()) {
+                                            std::string rids = "Radio IDs (" + std::to_string((int)nodes[ni].radioIds.size()) + "): ";
+                                            for (size_t r = 0; r < nodes[ni].radioIds.size() && r < 12; r++) {
+                                                if (r) { rids += ", "; }
+                                                rids += nodes[ni].radioIds[r];
+                                            }
+                                            if (nodes[ni].radioIds.size() > 12) { rids += ", ..."; }
+                                            ImGui::TextWrapped("%s", rids.c_str());
+                                        } else {
+                                            ImGui::TextDisabled("No radio IDs yet (populates when DSD-FME / native decoder ingests metadata).");
+                                        }
+                                        if (ImGui::Button(T("Select"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                                            selectedNetworkKey = nodes[ni].key;
+                                            std::string fallback = nodes[ni].protocol + " / Net " + nodes[ni].networkId + " / TG " + nodes[ni].talkgroup;
+                                            snprintf(selectedNetworkAlias, sizeof(selectedNetworkAlias), "%s", networkAliasForKey(nodes[ni].key, fallback).c_str());
+                                        }
+                                        ImGui::TreePop();
+                                    }
+                                    ImGui::PopID();
+                                }
+                                ImGui::TreePop();
+                            }
+                            ImGui::PopID();
+                        }
                         ImGui::TreePop();
                     }
                     ImGui::PopID();
                 }
+
+                static std::string topologyExportStatus = "";
+                ImGui::Separator();
+                bool topoDisabled = nodes.empty();
+                if (topoDisabled) { ImGui::BeginDisabled(); }
+                if (ImGui::Button(T("Export Topology CSV"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                    auto csvEsc = [](const std::string& s) {
+                        bool needs = false;
+                        for (size_t i = 0; i < s.size(); i++) {
+                            char c = s[i];
+                            if (c == ',' || c == '"' || c == '\n' || c == '\r') { needs = true; break; }
+                        }
+                        if (!needs) { return std::string("\"") + s + "\""; }
+                        std::string out = "\"";
+                        for (size_t i = 0; i < s.size(); i++) {
+                            char c = s[i];
+                            if (c == '"') { out += "\"\""; } else { out += c; }
+                        }
+                        out += "\"";
+                        return out;
+                    };
+                    std::filesystem::path dir = std::filesystem::path(core::args["root"].s()) / "exports";
+                    std::error_code ec;
+                    std::filesystem::create_directories(dir, ec);
+                    std::string fname = "predator_network_" + filenameTimestamp() + ".csv";
+                    std::filesystem::path full = dir / fname;
+                    std::ofstream f(full);
+                    if (f.is_open()) {
+                        f << "protocol,network_id,talkgroup,alias,events,last_seen,last_freq_hz,strongest_db,frequencies,radio_ids\n";
+                        for (size_t i = 0; i < nodes.size(); i++) {
+                            std::string alias = networkAliasForKey(nodes[i].key, "");
+                            std::string freqList;
+                            for (size_t k = 0; k < nodes[i].frequencies.size(); k++) {
+                                if (k) { freqList += ";"; }
+                                freqList += std::to_string((long long)std::llround(nodes[i].frequencies[k]));
+                            }
+                            std::string ridList;
+                            for (size_t k = 0; k < nodes[i].radioIds.size(); k++) {
+                                if (k) { ridList += ";"; }
+                                ridList += nodes[i].radioIds[k];
+                            }
+                            f << csvEsc(nodes[i].protocol) << ","
+                              << csvEsc(nodes[i].networkId) << ","
+                              << csvEsc(nodes[i].talkgroup) << ","
+                              << csvEsc(alias) << ","
+                              << nodes[i].events << ","
+                              << csvEsc(nodes[i].lastSeen) << ","
+                              << (long long)std::llround(nodes[i].lastFrequency) << ","
+                              << nodes[i].strongest << ","
+                              << csvEsc(freqList) << ","
+                              << csvEsc(ridList) << "\n";
+                        }
+                        f.close();
+                        topologyExportStatus = "Saved " + std::to_string((int)nodes.size()) + " nodes \xE2\x86\x92 " + full.string();
+                    } else {
+                        topologyExportStatus = "Failed to open " + full.string();
+                    }
+                }
+                if (topoDisabled) { ImGui::EndDisabled(); }
+                if (!topologyExportStatus.empty()) {
+                    ImGui::TextWrapped("%s", topologyExportStatus.c_str());
+                }
+
                 if (!selectedNetworkKey.empty() && ImGui::CollapsingHeader(T("Network Node Actions"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::TextDisabled("Selected: %s", selectedNetworkKey.c_str());
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                     if (ImGui::InputText(T("Alias"), selectedNetworkAlias, sizeof(selectedNetworkAlias))) {
                         networkAliases[selectedNetworkKey] = std::string(selectedNetworkAlias);
@@ -2637,6 +2863,11 @@ void MainWindow::draw() {
                     if (ImGui::Button(T("Mark Hits"), ImVec2(thirdWidth, 0))) {
                         int count = applyNetworkAction(selectedNetworkKey, "marker", selectedNetworkAlias);
                         networkActionStatus = "Marked " + std::to_string(count) + " node hits";
+                    }
+                    if (ImGui::Button(T("Clear Selection"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        selectedNetworkKey = "";
+                        selectedNetworkAlias[0] = '\0';
+                        networkActionStatus = "";
                     }
                     if (!networkActionStatus.empty()) {
                         ImGui::TextWrapped("%s", networkActionStatus.c_str());
