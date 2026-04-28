@@ -19,8 +19,10 @@ Since this is a native C++ application (not a web app), a simple Python HTTP ser
 
 ### Files
 
-- `server.py` — Python HTTP server serving the landing page on port 5000
-- `index.html` — Project info/landing page
+- `server.py` — Python HTTP server serving the landing page on port 5000 with routes `/` (info) and `/preview` (interactive operator UI mockup)
+- `index.html` — Project info/landing page (links to `/preview`)
+- `preview.html` — Interactive HTML mockup of the Predator RF operator interface (Spectrum, Hits, Network Tree, Map, Mission, System tabs) styled in Diablo-tactical dark theme; pure presentation, no backend
+- `core/src/predator/decoder_ingest.h` — Receive-only RTL433 ingester (header-only): TCP/UDP worker thread parsing newline-delimited rtl_433 JSON, normalizing to `predatorEvents`, with auto-reconnect and live status
 - `CMakeLists.txt` — CMake build configuration for the C++ application
 - `core/` — Core SDR engine (C++)
 - `source_modules/` — Hardware driver plugins (RTL-SDR, HackRF, Airspy, etc.)
@@ -86,7 +88,10 @@ MapLibre GL JS v4.7.1, OpenFreeMap dark style, 2D/3D toggle, layer toggles (Road
 - [x] Hits/Events export (CSV) — `exportHitsCsv`, `exportEventsCsv` in main_window.cpp; writes to `root/exports/`
 - [ ] Audio demod capture pipeline
 - [x] Network/topology view — Diablo-style hierarchical Protocol → Network → Talkgroup tree with radio IDs, frequency aggregation, search filter, alias persistence, bulk Target/Exclude/Marker actions, Topology CSV export
-- [x] Decoder Bridges scaffold (P25 / RTL433 / POCSAG-FLEX / ADS-B / AIS) — config persisted to `predatorDecoderBridges`; live status indicators in Network tree; protocol→bridge auto-mapping. Native ingestion threads still TODO
+- [x] Decoder Bridges scaffold (P25 / RTL433 / POCSAG-FLEX / ADS-B / AIS) — config persisted to `predatorDecoderBridges`; live status indicators in Network tree; protocol→bridge auto-mapping
+- [x] RTL433 native ingestion thread (`predator::Rtl433Ingester`) — TCP client / UDP server modes; auto-reconnect with exponential backoff; thread-safe queue drained into `predatorEvents` each frame; live link/status display in Network → Decoder Bridges
+- [ ] Native ingestion threads for P25, POCSAG/FLEX, ADS-B, AIS bridges (same pattern as RTL433)
+- [x] Web operator preview (`/preview` route) — interactive HTML mockup of all 6 tabs in Diablo-tactical aesthetic for non-Android viewers
 - [ ] Linux build
 - [ ] Windows build
 - [ ] Remote SDR ecosystem
