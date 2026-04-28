@@ -8,13 +8,25 @@ HOST = "0.0.0.0"
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            with open("index.html", "rb") as f:
-                self.wfile.write(f.read())
+            self._serve_file("index.html")
+        elif self.path == "/preview" or self.path == "/preview.html":
+            self._serve_file("preview.html")
         else:
             super().do_GET()
+
+    def _serve_file(self, filename):
+        try:
+            with open(filename, "rb") as f:
+                body = f.read()
+        except FileNotFoundError:
+            self.send_error(404, f"{filename} not found")
+            return
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, format, *args):
         print(f"[{self.address_string()}] {format % args}")

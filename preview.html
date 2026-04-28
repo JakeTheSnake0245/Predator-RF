@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Predator RF — Operator Preview</title>
+  <style>
+    :root {
+      --bg-0: #05080a;
+      --bg-1: #0a1014;
+      --bg-2: #0f171c;
+      --bg-3: #16222a;
+      --line: #1f3540;
+      --line-2: #2a4a5a;
+      --text: #c8d8e0;
+      --text-dim: #6a8090;
+      --text-faint: #3a4f5c;
+      --accent: #3fd17d;
+      --accent-dim: #1b6a3d;
+      --warn: #f0b94a;
+      --hot: #ff5040;
+      --cyan: #4ad8e8;
+      --magenta: #d870e0;
+      --gold: #c8a258;
+      --rule: 1px solid var(--line);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg-0);
+      color: var(--text);
+      font-family: 'JetBrains Mono', 'Consolas', 'Menlo', monospace;
+      font-size: 13px;
+      overflow: hidden;
+      letter-spacing: 0.02em;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: 36px 1fr 28px;
+      grid-template-columns: 56px 1fr 360px;
+      grid-template-areas:
+        "topbar topbar topbar"
+        "rail   main   side"
+        "status status status";
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* ---- top bar ---- */
+    .topbar {
+      grid-area: topbar;
+      background: linear-gradient(180deg, #0a141a, #050a0d);
+      border-bottom: 1px solid var(--line-2);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 14px;
+      font-size: 12px;
+    }
+    .brand {
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      text-shadow: 0 0 6px rgba(63, 209, 125, 0.4);
+    }
+    .brand .v { color: var(--text-faint); margin-left: 6px; font-weight: 400; }
+    .pill {
+      border: 1px solid var(--line-2);
+      padding: 2px 8px;
+      border-radius: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .pill.live { color: var(--accent); border-color: var(--accent-dim); }
+    .pill.live::before {
+      content: '';
+      display: inline-block;
+      width: 7px; height: 7px;
+      background: var(--accent);
+      margin-right: 6px;
+      border-radius: 50%;
+      box-shadow: 0 0 6px var(--accent);
+      animation: pulse 1.6s infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }
+    .pill.warn { color: var(--warn); border-color: #6a4a1a; }
+    .pill.cyan { color: var(--cyan); border-color: #1a4a55; }
+    .topbar .spacer { flex: 1; }
+    .clock { color: var(--text-dim); font-size: 11px; }
+
+    /* ---- left rail ---- */
+    .rail {
+      grid-area: rail;
+      background: var(--bg-1);
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      padding-top: 4px;
+    }
+    .rail .tab {
+      height: 56px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      color: var(--text-dim);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      gap: 4px;
+      transition: all 0.12s;
+    }
+    .rail .tab .glyph {
+      font-size: 18px;
+      line-height: 1;
+      color: var(--text-faint);
+    }
+    .rail .tab:hover { background: var(--bg-2); color: var(--text); }
+    .rail .tab:hover .glyph { color: var(--text); }
+    .rail .tab.active {
+      background: var(--bg-2);
+      color: var(--accent);
+      border-left-color: var(--accent);
+    }
+    .rail .tab.active .glyph { color: var(--accent); }
+
+    /* ---- main panel ---- */
+    .main {
+      grid-area: main;
+      background: var(--bg-0);
+      overflow: hidden;
+      position: relative;
+    }
+    .panel { display: none; height: 100%; }
+    .panel.active { display: flex; flex-direction: column; }
+
+    /* ---- spectrum ---- */
+    .spec {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .spec-meta {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 22px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .spec-meta b { color: var(--text); font-weight: 500; margin-left: 4px; }
+    .fft-box {
+      flex: 1;
+      position: relative;
+      background:
+        repeating-linear-gradient(0deg,  transparent 0 40px, rgba(31, 53, 64, 0.35) 40px 41px),
+        repeating-linear-gradient(90deg, transparent 0 80px, rgba(31, 53, 64, 0.35) 80px 81px),
+        var(--bg-0);
+    }
+    #fftCanvas, #wfCanvas { width: 100%; display: block; }
+    #fftCanvas { height: 50%; }
+    #wfCanvas { height: 50%; border-top: 1px solid var(--line); }
+    .freq-label {
+      position: absolute;
+      bottom: 50%;
+      transform: translateY(50%);
+      color: var(--text-faint);
+      font-size: 10px;
+      pointer-events: none;
+    }
+
+    /* ---- shared content panels ---- */
+    .panel-head {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .panel-head h2 {
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .panel-head .subtitle {
+      color: var(--text-dim);
+      font-size: 11px;
+    }
+    .panel-body {
+      flex: 1;
+      overflow: auto;
+      padding: 10px 14px;
+    }
+
+    /* hits */
+    .hit-row {
+      display: grid;
+      grid-template-columns: 28px 1fr 100px 90px 80px 200px;
+      gap: 10px;
+      padding: 8px 6px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      align-items: center;
+      cursor: pointer;
+    }
+    .hit-row.head {
+      color: var(--text-faint);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding-bottom: 4px;
+      cursor: default;
+      border-bottom: 1px solid var(--line-2);
+    }
+    .hit-row:hover:not(.head) { background: var(--bg-2); }
+    .hit-row .state {
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+    .state.target { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+    .state.unknown { background: var(--warn); }
+    .state.exclude { background: var(--text-faint); }
+    .hit-row .freq { color: var(--cyan); font-weight: 500; }
+    .hit-row .rssi { color: var(--text); }
+    .hit-row .dec { color: var(--gold); font-size: 11px; }
+    .hit-row .actions {
+      display: flex; gap: 4px; justify-content: flex-end;
+    }
+    .btn {
+      background: transparent;
+      border: 1px solid var(--line-2);
+      color: var(--text-dim);
+      padding: 3px 8px;
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+    .btn:hover { color: var(--text); border-color: var(--accent); }
+    .btn.primary { color: var(--accent); border-color: var(--accent-dim); }
+    .btn.warn { color: var(--warn); border-color: #6a4a1a; }
+    .btn.danger { color: var(--hot); border-color: #6a2a25; }
+
+    /* network tree */
+    .tree { font-size: 12px; }
+    .tree-node {
+      padding: 5px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .tree-node .row {
+      display: flex; align-items: center; gap: 8px; cursor: pointer;
+    }
+    .tree-node .row:hover .label { color: var(--text); }
+    .tree-node .twist {
+      width: 12px; color: var(--text-faint);
+      font-size: 10px;
+    }
+    .tree-node .dot {
+      width: 9px; height: 9px; border-radius: 50%;
+    }
+    .dot.on  { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
+    .dot.off { border: 1px solid var(--text-faint); }
+    .tree-node .label { color: var(--text-dim); flex: 1; }
+    .tree-node .label.proto { color: var(--accent); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 500; }
+    .tree-node .label.net   { color: var(--cyan); }
+    .tree-node .label.tg    { color: var(--text); }
+    .tree-node .meta {
+      color: var(--text-faint); font-size: 11px;
+    }
+    .tree-children {
+      padding-left: 18px;
+      margin-top: 4px;
+      border-left: 1px dashed var(--line);
+    }
+    .leaf-detail {
+      padding-left: 26px;
+      color: var(--text-faint);
+      font-size: 11px;
+      margin-top: 2px;
+    }
+
+    /* map */
+    .map-area {
+      flex: 1;
+      position: relative;
+      background:
+        repeating-linear-gradient(0deg,  transparent 0 60px, rgba(74, 216, 232, 0.08) 60px 61px),
+        repeating-linear-gradient(90deg, transparent 0 60px, rgba(74, 216, 232, 0.08) 60px 61px),
+        radial-gradient(ellipse at center, #0a1820 0%, #050a0d 90%);
+      overflow: hidden;
+    }
+    .map-marker {
+      position: absolute;
+      width: 16px; height: 16px;
+      border: 1.5px solid var(--accent);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 10px rgba(63, 209, 125, 0.6);
+    }
+    .map-marker::after {
+      content: attr(data-label);
+      position: absolute;
+      top: 16px; left: 12px;
+      font-size: 10px;
+      color: var(--accent);
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+    }
+    .map-marker.warn { border-color: var(--warn); box-shadow: 0 0 10px rgba(240, 185, 74, 0.6); }
+    .map-marker.warn::after { color: var(--warn); }
+    .map-marker.hot  { border-color: var(--hot);  box-shadow: 0 0 12px rgba(255, 80, 64, 0.7); animation: pulse 1.2s infinite; }
+    .map-marker.hot::after { color: var(--hot); }
+    .map-self {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 14px; height: 14px;
+      transform: translate(-50%, -50%);
+      background: var(--cyan);
+      box-shadow: 0 0 14px var(--cyan);
+      border-radius: 50%;
+    }
+    .map-self::before {
+      content: '';
+      position: absolute; top: 50%; left: 50%;
+      width: 80px; height: 80px;
+      border: 1px solid var(--cyan);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      opacity: 0.4;
+      animation: ringExpand 3s infinite ease-out;
+    }
+    @keyframes ringExpand {
+      0%   { transform: translate(-50%, -50%) scale(0.4); opacity: 0.6; }
+      100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
+    }
+    .map-overlay {
+      position: absolute; top: 10px; left: 10px;
+      padding: 8px 12px;
+      background: rgba(5, 8, 10, 0.85);
+      border: 1px solid var(--line-2);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .map-overlay b { color: var(--text); }
+    .df-banner {
+      position: absolute; top: 10px; right: 10px;
+      padding: 6px 10px;
+      background: rgba(5, 8, 10, 0.85);
+      border: 1px solid #6a4a1a;
+      color: var(--warn);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    /* mission */
+    .mission-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .field {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .field label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+    .field input, .field select, .field textarea {
+      background: var(--bg-1);
+      border: 1px solid var(--line-2);
+      color: var(--text);
+      padding: 6px 8px;
+      font-family: inherit;
+      font-size: 12px;
+    }
+    .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+    .mode-buttons {
+      display: flex; gap: 6px;
+    }
+    .mode-btn {
+      flex: 1;
+      padding: 10px 4px;
+      border: 1px solid var(--line-2);
+      background: var(--bg-1);
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .mode-btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(63, 209, 125, 0.08);
+      box-shadow: inset 0 0 8px rgba(63, 209, 125, 0.15);
+    }
+
+    /* system */
+    .sys-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px 18px;
+    }
+    .sys-row {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .sys-row .k { color: var(--text-faint); letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px; }
+    .sys-row .v { color: var(--text); }
+    .sys-row .v.ok { color: var(--accent); }
+    .sys-row .v.warn { color: var(--warn); }
+
+    /* ---- right side panel (always-on summary) ---- */
+    .side {
+      grid-area: side;
+      background: var(--bg-1);
+      border-left: 1px solid var(--line);
+      overflow: auto;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .side h3 {
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      color: var(--text-faint);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 4px;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      font-size: 11px;
+      padding: 3px 0;
+    }
+    .kv .k { color: var(--text-faint); letter-spacing: 0.06em; }
+    .kv .v { color: var(--text); }
+    .kv .v.acc { color: var(--accent); }
+    .kv .v.cy  { color: var(--cyan); }
+    .kv .v.warn { color: var(--warn); }
+    .ev-row {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      font-size: 11px;
+      padding: 4px 0;
+      border-bottom: 1px dashed var(--line);
+      gap: 8px;
+    }
+    .ev-row .t { color: var(--text-faint); }
+    .ev-row .e { color: var(--text-dim); }
+    .ev-row .e b { color: var(--text); font-weight: 500; }
+
+    /* ---- bottom status ---- */
+    .status {
+      grid-area: status;
+      background: var(--bg-1);
+      border-top: 1px solid var(--line-2);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 22px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .status .group { display: flex; gap: 6px; }
+    .status .group .k { color: var(--text-faint); }
+    .status .group .v { color: var(--text); }
+    .status .spacer { flex: 1; }
+    .safety {
+      color: var(--accent);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    /* preview banner */
+    .preview-banner {
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      padding: 8px 14px;
+      background: rgba(5, 8, 10, 0.95);
+      border: 1px solid var(--line-2);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      z-index: 100;
+    }
+    .preview-banner a { color: var(--accent); text-decoration: none; }
+    .preview-banner a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- TOP BAR -->
+    <div class="topbar">
+      <div class="brand">PREDATOR RF<span class="v">v0.1.0-dev</span></div>
+      <span class="pill live">LIVE</span>
+      <span class="pill cyan">SRC: HACKRF ONE</span>
+      <span class="pill">CTR: 433.920 MHz</span>
+      <span class="pill">BW: 2.4 MS/s</span>
+      <span class="pill warn">MODE: CLASSIFY</span>
+      <span class="pill">GPS: 3D FIX 4m</span>
+      <div class="spacer"></div>
+      <span class="clock" id="clock">--:--:-- UTC</span>
+    </div>
+
+    <!-- LEFT RAIL -->
+    <div class="rail">
+      <div class="tab active" data-tab="spectrum">
+        <div class="glyph">≋</div><div>SPEC</div>
+      </div>
+      <div class="tab" data-tab="hits">
+        <div class="glyph">◉</div><div>HITS</div>
+      </div>
+      <div class="tab" data-tab="network">
+        <div class="glyph">⌬</div><div>NET</div>
+      </div>
+      <div class="tab" data-tab="map">
+        <div class="glyph">⊕</div><div>MAP</div>
+      </div>
+      <div class="tab" data-tab="mission">
+        <div class="glyph">▣</div><div>MISN</div>
+      </div>
+      <div class="tab" data-tab="system">
+        <div class="glyph">⚙</div><div>SYS</div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main">
+      <!-- SPECTRUM -->
+      <div class="panel active" data-panel="spectrum">
+        <div class="spec">
+          <div class="spec-meta">
+            <span>CTR <b>433.920000 MHz</b></span>
+            <span>SPAN <b>2.400 MHz</b></span>
+            <span>RBW <b>1.2 kHz</b></span>
+            <span>NOISE <b>−92 dBm</b></span>
+            <span>VFO <b>433.920 MHz · NFM · 25 kHz</b></span>
+            <span>MARKERS <b>3 / 4</b></span>
+          </div>
+          <div class="fft-box">
+            <canvas id="fftCanvas"></canvas>
+            <canvas id="wfCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- HITS -->
+      <div class="panel" data-panel="hits">
+        <div class="panel-head">
+          <h2>Hits</h2>
+          <span class="subtitle">9 active · 3 unread · sorted by last seen</span>
+          <div style="flex:1"></div>
+          <button class="btn">All</button>
+          <button class="btn primary">Targets</button>
+          <button class="btn warn">Unknown</button>
+          <button class="btn danger">Excluded</button>
+          <button class="btn">Export CSV</button>
+        </div>
+        <div class="panel-body">
+          <div class="hit-row head">
+            <div></div><div>NAME</div><div>FREQ</div><div>RSSI</div><div>DECODER</div><div>ACTIONS</div>
+          </div>
+          <div class="hit-row">
+            <div class="state target"></div>
+            <div>Hit 433.920 MHz <span style="color:var(--text-faint)">— Acurite Tower #1247</span></div>
+            <div class="freq">433.920 MHz</div>
+            <div class="rssi">−54 dBm</div>
+            <div class="dec">RTL433</div>
+            <div class="actions">
+              <button class="btn">Tune</button>
+              <button class="btn primary">Promote</button>
+              <button class="btn">View</button>
+            </div>
+          </div>
+          <div class="hit-row">
+            <div class="state target"></div>
+            <div>Hit 162.025 MHz <span style="color:var(--text-faint)">— AIS Channel B · MMSI 366998510</span></div>
+            <div class="freq">162.025 MHz</div>
+            <div class="rssi">−63 dBm</div>
+            <div class="dec">AIS</div>
+            <div class="actions">
+              <button class="btn">Tune</button>
+              <button class="btn primary">Promote</button>
+              <button class="btn">View</button>
+            </div>
+          </div>
+          <div class="hit-row">
+            <div class="state unknown"></div>
+            <div>Hit 851.4625 MHz <span style="color:var(--text-faint)">— P25 ctrl candidate</span></div>
+            <div class="freq">851.463 MHz</div>
+            <div class="rssi">−71 dBm</div>
+            <div class="dec">P25</div>
+            <div class="actions">
+              <button class="btn">Tune</button>
+              <button class="btn warn">Mark</button>
+              <button class="btn">View</button>
+            </div>
+          </div>
+          <div class="hit-row">
+            <div class="state unknown"></div>
+            <div>Hit 929.6125 MHz <span style="color:var(--text-faint)">— FLEX paging burst</span></div>
+            <div class="freq">929.613 MHz</div>
+            <div class="rssi">−68 dBm</div>
+            <div class="dec">POCSAG</div>
+            <div class="actions">
+              <button class="btn">Tune</button>
+              <button class="btn warn">Mark</button>
+              <button class="btn">View</button>
+            </div>
+          </div>
+          <div class="hit-row">
+            <div class="state target"></div>
+            <div>Hit 1090.000 MHz <span style="color:var(--text-faint)">— ADS-B aircraft squitter (multi)</span></div>
+            <div class="freq">1090.000 MHz</div>
+            <div class="rssi">−59 dBm</div>
+            <div class="dec">ADS-B</div>
+            <div class="actions">
+              <button class="btn">Tune</button>
+              <button class="btn primary">Promote</button>
+              <button class="btn">View</button>
+            </div>
+          </div>
+          <div class="hit-row">
+            <div class="state exclude"></div>
+            <div>Hit 88.500 MHz <span style="color:var(--text-faint)">— FM broadcast (excluded)</span></div>
+            <div class="freq">88.500 MHz</div>
+            <div class="rssi">−42 dBm</div>
+            <div class="dec">None</div>
+            <div class="actions">
+              <button class="btn">Tune</button>
+              <button class="btn">View</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- NETWORK -->
+      <div class="panel" data-panel="network">
+        <div class="panel-head">
+          <h2>Network Topology</h2>
+          <span class="subtitle">5 protocols · 14 networks · 38 talkgroups · 287 events</span>
+          <div style="flex:1"></div>
+          <input class="field" style="width:200px;background:var(--bg-1);border:1px solid var(--line-2);color:var(--text);padding:4px 8px;" placeholder="Search protocol / network / TG / radio ID" />
+          <button class="btn">Export Topology CSV</button>
+        </div>
+        <div class="panel-body">
+          <div class="tree">
+
+            <div class="tree-node">
+              <div class="row">
+                <span class="twist">▼</span>
+                <span class="dot on"></span>
+                <span class="label proto">RTL433</span>
+                <span class="meta">8 networks · 18 TG · 142 events</span>
+              </div>
+              <div class="tree-children">
+
+                <div class="tree-node">
+                  <div class="row">
+                    <span class="twist">▼</span>
+                    <span class="label net">Acurite-Tower</span>
+                    <span class="meta">3 TG · 47 events</span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-node">
+                      <div class="row">
+                        <span class="twist">·</span>
+                        <span class="label tg">ch1</span>
+                        <span class="meta">id 1247 · 433.920 MHz · −54 dBm · 21 events</span>
+                      </div>
+                      <div class="leaf-detail">radio IDs: 1247 · last: 12s ago · battery_ok=1 temp_C=22.4</div>
+                    </div>
+                    <div class="tree-node">
+                      <div class="row">
+                        <span class="twist">·</span>
+                        <span class="label tg">ch2</span>
+                        <span class="meta">id 8810 · 433.920 MHz · −61 dBm · 18 events</span>
+                      </div>
+                    </div>
+                    <div class="tree-node">
+                      <div class="row">
+                        <span class="twist">·</span>
+                        <span class="label tg">ch3</span>
+                        <span class="meta">id 3402 · 433.918 MHz · −68 dBm · 8 events</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="tree-node">
+                  <div class="row">
+                    <span class="twist">▶</span>
+                    <span class="label net">LaCrosse-TX141Bv3</span>
+                    <span class="meta">2 TG · 24 events</span>
+                  </div>
+                </div>
+
+                <div class="tree-node">
+                  <div class="row">
+                    <span class="twist">▶</span>
+                    <span class="label net">Honeywell-ActivLink</span>
+                    <span class="meta">1 TG · 3 events</span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <div class="tree-node">
+              <div class="row">
+                <span class="twist">▼</span>
+                <span class="dot on"></span>
+                <span class="label proto">P25</span>
+                <span class="meta">2 networks · 9 TG · 64 events</span>
+              </div>
+              <div class="tree-children">
+                <div class="tree-node">
+                  <div class="row">
+                    <span class="twist">▼</span>
+                    <span class="label net">WACN BEE00 RFSS 1</span>
+                    <span class="meta">6 TG · 51 events</span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-node">
+                      <div class="row">
+                        <span class="twist">·</span>
+                        <span class="label tg">TG 1001 · OPS 1</span>
+                        <span class="meta">3 radios · 851.4625 MHz · 22 events</span>
+                      </div>
+                      <div class="leaf-detail">radio IDs: 5012, 5034, 5108 · last: 4s ago</div>
+                    </div>
+                    <div class="tree-node">
+                      <div class="row">
+                        <span class="twist">·</span>
+                        <span class="label tg">TG 1002 · DISPATCH</span>
+                        <span class="meta">5 radios · 851.7375 MHz · 19 events</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="tree-node">
+              <div class="row">
+                <span class="twist">▼</span>
+                <span class="dot on"></span>
+                <span class="label proto">ADS-B</span>
+                <span class="meta">1 network · 7 TG · 58 events</span>
+              </div>
+              <div class="tree-children">
+                <div class="tree-node">
+                  <div class="row">
+                    <span class="twist">▼</span>
+                    <span class="label net">ICAO Mode-S</span>
+                    <span class="meta">7 aircraft · 58 events</span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-node">
+                      <div class="row">
+                        <span class="twist">·</span>
+                        <span class="label tg">A8B240 · UAL2349</span>
+                        <span class="meta">FL340 · 1090 MHz · 12 events</span>
+                      </div>
+                    </div>
+                    <div class="tree-node">
+                      <div class="row">
+                        <span class="twist">·</span>
+                        <span class="label tg">AC4F12 · DAL188</span>
+                        <span class="meta">FL280 · 1090 MHz · 9 events</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="tree-node">
+              <div class="row">
+                <span class="twist">▶</span>
+                <span class="dot on"></span>
+                <span class="label proto">AIS</span>
+                <span class="meta">1 network · 3 vessels · 18 events</span>
+              </div>
+            </div>
+
+            <div class="tree-node">
+              <div class="row">
+                <span class="twist">▶</span>
+                <span class="dot off"></span>
+                <span class="label proto">POCSAG / FLEX</span>
+                <span class="meta">disabled · 0 events</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- MAP -->
+      <div class="panel" data-panel="map">
+        <div class="panel-head">
+          <h2>Tactical Map</h2>
+          <span class="subtitle">Phone GPS · MapLibre baselayer · 7 markers</span>
+          <div style="flex:1"></div>
+          <button class="btn">Recenter</button>
+          <button class="btn primary">Follow</button>
+          <button class="btn">Layers</button>
+        </div>
+        <div class="map-area">
+          <div class="map-self"></div>
+          <div class="map-marker"      style="top:32%; left:42%;"  data-label="Acurite #1247"></div>
+          <div class="map-marker"      style="top:58%; left:36%;"  data-label="Acurite #8810"></div>
+          <div class="map-marker warn" style="top:24%; left:65%;"  data-label="P25 OPS 1"></div>
+          <div class="map-marker hot"  style="top:46%; left:72%;"  data-label="UAL2349 · FL340"></div>
+          <div class="map-marker"      style="top:70%; left:58%;"  data-label="AIS MMSI 366998510"></div>
+          <div class="map-marker warn" style="top:18%; left:48%;"  data-label="Unknown 929.6 MHz"></div>
+          <div class="map-marker"      style="top:78%; left:30%;"  data-label="DAL188 · FL280"></div>
+
+          <div class="map-overlay">
+            <div>YOU · <b>40.7128° N · 74.0060° W</b></div>
+            <div>FIX <b>3D</b> · acc <b>4 m</b> · hdg <b>—</b></div>
+          </div>
+          <div class="df-banner">DF · UNAVAILABLE (no array)</div>
+        </div>
+      </div>
+
+      <!-- MISSION -->
+      <div class="panel" data-panel="mission">
+        <div class="panel-head">
+          <h2>Mission Configuration</h2>
+          <span class="subtitle">Persisted to predator config</span>
+        </div>
+        <div class="panel-body">
+          <div class="mode-buttons" style="margin-bottom:18px">
+            <div class="mode-btn">MANUAL</div>
+            <div class="mode-btn active">CLASSIFY</div>
+            <div class="mode-btn">SCAN</div>
+            <div class="mode-btn">QUICKSCAN</div>
+          </div>
+
+          <div class="mission-grid">
+            <div class="field">
+              <label>Search Bands</label>
+              <select multiple size="5">
+                <option selected>ISM 433 MHz (433.05 – 434.79)</option>
+                <option selected>ISM 915 MHz (902.0 – 928.0)</option>
+                <option selected>P25 800 MHz (851.0 – 869.0)</option>
+                <option>Marine VHF (156.0 – 162.05)</option>
+                <option>ADS-B (1090.0 – 1090.0)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Target Frequencies</label>
+              <textarea rows="5" style="resize:none">433.920 MHz · Acurite ground sensors
+851.4625 MHz · P25 OPS 1
+1090.000 MHz · ADS-B</textarea>
+            </div>
+
+            <div class="field">
+              <label>Detection Threshold (dB)</label>
+              <input type="number" value="8" />
+            </div>
+            <div class="field">
+              <label>Dwell (ms)</label>
+              <input type="number" value="240" />
+            </div>
+
+            <div class="field">
+              <label>QuickScan Delay (ms)</label>
+              <input type="number" value="120" />
+            </div>
+            <div class="field">
+              <label>QuickScan Duration (ms)</label>
+              <input type="number" value="800" />
+            </div>
+
+            <div class="field">
+              <label>Record Audio On Hit</label>
+              <select><option>Off</option><option selected>On (voice + data)</option></select>
+            </div>
+            <div class="field">
+              <label>Hit Cluster Width</label>
+              <input value="3000 Hz" />
+            </div>
+
+            <div class="field" style="grid-column:1 / -1">
+              <label>Session Note</label>
+              <input value="Predator RF — preview build · Acurite + P25 OPS 1 watch" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SYSTEM -->
+      <div class="panel" data-panel="system">
+        <div class="panel-head">
+          <h2>System</h2>
+          <span class="subtitle">Build · Modules · Decoder Bridges</span>
+        </div>
+        <div class="panel-body">
+          <div class="sys-grid">
+
+            <div>
+              <h3 style="font-size:10px;letter-spacing:0.16em;color:var(--text-faint);text-transform:uppercase;margin-bottom:6px">Build</h3>
+              <div class="sys-row"><span class="k">App</span><span class="v">Predator RF (fork of SDR++)</span></div>
+              <div class="sys-row"><span class="k">Version</span><span class="v">0.1.0-dev</span></div>
+              <div class="sys-row"><span class="k">Platform</span><span class="v">Android arm64-v8a · NDK 23.2 · minSdk 28</span></div>
+              <div class="sys-row"><span class="k">Standard</span><span class="v">C++17 · Kotlin/JNI</span></div>
+              <div class="sys-row"><span class="k">License</span><span class="v">GPLv3</span></div>
+            </div>
+
+            <div>
+              <h3 style="font-size:10px;letter-spacing:0.16em;color:var(--text-faint);text-transform:uppercase;margin-bottom:6px">Source / Sink Modules</h3>
+              <div class="sys-row"><span class="k">SDR Source</span><span class="v ok">HackRF One @ 2.4 MS/s</span></div>
+              <div class="sys-row"><span class="k">Audio Sink</span><span class="v">Android AudioTrack</span></div>
+              <div class="sys-row"><span class="k">Network Sink</span><span class="v">UDP loopback for DSD-FME</span></div>
+              <div class="sys-row"><span class="k">Recorder</span><span class="v">root/recordings · root/voice · root/data</span></div>
+              <div class="sys-row"><span class="k">Map Activity</span><span class="v">res/maps/index.html (MapLibre)</span></div>
+            </div>
+
+            <div style="grid-column:1 / -1">
+              <h3 style="font-size:10px;letter-spacing:0.16em;color:var(--text-faint);text-transform:uppercase;margin-bottom:6px;margin-top:10px">Decoder Bridges</h3>
+              <div class="sys-row"><span class="k">P25 (DSD-FME)</span><span class="v ok">[LINK] 127.0.0.1:7355 · DSD-FME Direct · events received: 64</span></div>
+              <div class="sys-row"><span class="k">RTL433</span><span class="v ok">[LINK] 127.0.0.1:1433 · TCP JSON Lines · events received: 142</span></div>
+              <div class="sys-row"><span class="k">POCSAG / FLEX</span><span class="v warn">[OFF]  127.0.0.1:1444 · TCP Lines · disabled</span></div>
+              <div class="sys-row"><span class="k">ADS-B (dump1090)</span><span class="v ok">[LINK] 127.0.0.1:30003 · BaseStation · events received: 58</span></div>
+              <div class="sys-row"><span class="k">AIS</span><span class="v ok">[LINK] 0.0.0.0:10110 (UDP) · NMEA · events received: 18</span></div>
+            </div>
+
+            <div style="grid-column:1 / -1">
+              <h3 style="font-size:10px;letter-spacing:0.16em;color:var(--text-faint);text-transform:uppercase;margin-bottom:6px;margin-top:10px">Safety Boundary</h3>
+              <div class="sys-row"><span class="k">Receive</span><span class="v ok">Enabled</span></div>
+              <div class="sys-row"><span class="k">Analyze / Log / Map</span><span class="v ok">Enabled</span></div>
+              <div class="sys-row"><span class="k">Export · CoT/ATAK</span><span class="v ok">Enabled (export only)</span></div>
+              <div class="sys-row"><span class="k">Transmit</span><span class="v">— Out of scope</span></div>
+              <div class="sys-row"><span class="k">Jamming · Effects</span><span class="v">— Out of scope</span></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT SIDE PANEL -->
+    <div class="side">
+      <div>
+        <h3>Mission</h3>
+        <div class="kv"><span class="k">Mode</span><span class="v acc">CLASSIFY</span></div>
+        <div class="kv"><span class="k">Status</span><span class="v cy">Sweeping ISM 433</span></div>
+        <div class="kv"><span class="k">Threshold</span><span class="v">8 dB</span></div>
+        <div class="kv"><span class="k">Dwell</span><span class="v">240 ms</span></div>
+        <div class="kv"><span class="k">Markers</span><span class="v">3 of 4</span></div>
+        <div class="kv"><span class="k">Bridges</span><span class="v acc">4 active</span></div>
+      </div>
+
+      <div>
+        <h3>Workflow Assets</h3>
+        <div class="kv"><span class="k">Targets</span><span class="v">3</span></div>
+        <div class="kv"><span class="k">Excludes</span><span class="v">8 (FM broadcast)</span></div>
+        <div class="kv"><span class="k">Active hits</span><span class="v acc">9</span></div>
+        <div class="kv"><span class="k">Unread</span><span class="v warn">3</span></div>
+        <div class="kv"><span class="k">Session events</span><span class="v">287</span></div>
+      </div>
+
+      <div>
+        <h3>Live Events</h3>
+        <div id="liveEvents"></div>
+      </div>
+
+      <div>
+        <h3>Decoder Bridges</h3>
+        <div class="kv"><span class="k">P25</span><span class="v acc">● link</span></div>
+        <div class="kv"><span class="k">RTL433</span><span class="v acc">● link · 142</span></div>
+        <div class="kv"><span class="k">POCSAG</span><span class="v" style="color:var(--text-faint)">○ off</span></div>
+        <div class="kv"><span class="k">ADS-B</span><span class="v acc">● link · 58</span></div>
+        <div class="kv"><span class="k">AIS</span><span class="v acc">● link · 18</span></div>
+      </div>
+    </div>
+
+    <!-- BOTTOM STATUS -->
+    <div class="status">
+      <div class="group"><span class="k">SDR</span><span class="v">HackRF One @ 2.4 MS/s</span></div>
+      <div class="group"><span class="k">CPU</span><span class="v">36 %</span></div>
+      <div class="group"><span class="k">FFT</span><span class="v">65 k @ 30 fps</span></div>
+      <div class="group"><span class="k">DROPS</span><span class="v">0</span></div>
+      <div class="group"><span class="k">BAT</span><span class="v">78 %</span></div>
+      <div class="spacer"></div>
+      <span class="safety">RX · ANALYZE · LOG · MAP</span>
+    </div>
+  </div>
+
+  <div class="preview-banner">
+    Static UI preview · <a href="/">back to project page</a>
+  </div>
+
+  <script>
+    // -------- tab switching --------
+    document.querySelectorAll('.rail .tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('.rail .tab').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        t.classList.add('active');
+        document.querySelector(`.panel[data-panel="${t.dataset.tab}"]`).classList.add('active');
+      });
+    });
+
+    // -------- clock --------
+    function tickClock() {
+      const d = new Date();
+      const pad = n => n.toString().padStart(2, '0');
+      document.getElementById('clock').textContent =
+        pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' UTC';
+    }
+    setInterval(tickClock, 1000); tickClock();
+
+    // -------- spectrum + waterfall animation --------
+    const fft = document.getElementById('fftCanvas');
+    const wf  = document.getElementById('wfCanvas');
+    const fctx = fft.getContext('2d');
+    const wctx = wf.getContext('2d');
+
+    function resize() {
+      [fft, wf].forEach(c => {
+        const r = c.getBoundingClientRect();
+        c.width = r.width;
+        c.height = r.height;
+      });
+    }
+    window.addEventListener('resize', resize);
+
+    // baseline FFT trace + a few synthetic peaks
+    const peaks = [
+      { x: 0.18, h: 0.55, w: 0.012 },   // ISM device 1
+      { x: 0.32, h: 0.72, w: 0.008 },   // ISM device 2
+      { x: 0.50, h: 0.30, w: 0.020 },
+      { x: 0.66, h: 0.85, w: 0.010 },   // strong target
+      { x: 0.81, h: 0.42, w: 0.015 }
+    ];
+
+    function fftSample(n) {
+      const out = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const u = i / n;
+        let v = 0.10 + Math.random() * 0.06;
+        for (const p of peaks) {
+          const d = (u - p.x) / p.w;
+          v += p.h * Math.exp(-d * d);
+        }
+        out[i] = Math.min(1, v);
+      }
+      return out;
+    }
+
+    function colorFor(v) {
+      // dark → green → amber → hot
+      if (v < 0.25) return `rgba(15, ${30 + v * 200}, 30, 1)`;
+      if (v < 0.55) return `rgba(${30 + v * 200}, 200, 60, 1)`;
+      if (v < 0.78) return `rgba(240, ${200 - (v - 0.55) * 350}, 40, 1)`;
+      return `rgba(255, ${80 - (v - 0.78) * 300}, 40, 1)`;
+    }
+
+    let waterfallBuffer = [];
+    function drawFrame() {
+      if (!fft.width) { resize(); }
+      const w = fft.width, h = fft.height;
+      const samples = fftSample(w);
+
+      // fft: filled trace
+      fctx.clearRect(0, 0, w, h);
+      const grad = fctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(63, 209, 125, 0.45)');
+      grad.addColorStop(1, 'rgba(63, 209, 125, 0.02)');
+      fctx.fillStyle = grad;
+      fctx.beginPath();
+      fctx.moveTo(0, h);
+      for (let i = 0; i < w; i++) fctx.lineTo(i, h - samples[i] * h * 0.92);
+      fctx.lineTo(w, h);
+      fctx.closePath();
+      fctx.fill();
+      fctx.strokeStyle = '#3fd17d';
+      fctx.lineWidth = 1;
+      fctx.beginPath();
+      for (let i = 0; i < w; i++) {
+        const y = h - samples[i] * h * 0.92;
+        if (i === 0) fctx.moveTo(i, y); else fctx.lineTo(i, y);
+      }
+      fctx.stroke();
+
+      // marker triangles
+      fctx.fillStyle = '#4ad8e8';
+      [0.32, 0.50, 0.66].forEach((x, i) => {
+        const px = x * w;
+        fctx.beginPath();
+        fctx.moveTo(px, 4);
+        fctx.lineTo(px - 4, 12);
+        fctx.lineTo(px + 4, 12);
+        fctx.closePath();
+        fctx.fill();
+        fctx.fillText('M' + (i + 1), px - 8, 22);
+      });
+
+      // waterfall: scroll + new line
+      waterfallBuffer.push(samples);
+      if (waterfallBuffer.length > h) waterfallBuffer.shift();
+      const img = wctx.createImageData(w, h);
+      for (let row = 0; row < waterfallBuffer.length; row++) {
+        const s = waterfallBuffer[waterfallBuffer.length - 1 - row];
+        for (let i = 0; i < w; i++) {
+          const v = s[i];
+          // rgb pulled out of colorFor logic for speed
+          let r, g, b;
+          if      (v < 0.25) { r = 15; g = 30 + v * 200; b = 30; }
+          else if (v < 0.55) { r = 30 + v * 200; g = 200; b = 60; }
+          else if (v < 0.78) { r = 240; g = 200 - (v - 0.55) * 350; b = 40; }
+          else               { r = 255; g = 80 - (v - 0.78) * 300; b = 40; }
+          const idx = (row * w + i) * 4;
+          img.data[idx] = r; img.data[idx + 1] = g; img.data[idx + 2] = b; img.data[idx + 3] = 255;
+        }
+      }
+      wctx.putImageData(img, 0, 0);
+    }
+
+    setInterval(drawFrame, 80);
+    resize(); drawFrame();
+
+    // -------- live event ticker --------
+    const livePool = [
+      ['HIT', 'Acurite #1247 · 433.920 MHz · −54 dBm'],
+      ['DEC', 'RTL433 LaCrosse-TX141Bv3 ch1 temp 19.2C'],
+      ['HIT', 'P25 OPS 1 · TG 1001 · radio 5012'],
+      ['DEC', 'ADS-B UAL2349 · FL340 · 487 kt'],
+      ['HIT', 'AIS MMSI 366998510 · −63 dBm'],
+      ['SCAN', 'Sweep complete · 9 hits / 287 events'],
+      ['DEC', 'RTL433 Acurite-Tower #8810 ch2'],
+      ['HIT', 'Unknown 929.613 MHz · −68 dBm · marked'],
+      ['DEC', 'ADS-B DAL188 · FL280 · 520 kt'],
+      ['NET', 'New TG observed · P25 1003 DISPATCH-2']
+    ];
+    const colors = { HIT: 'var(--accent)', DEC: 'var(--cyan)', SCAN: 'var(--warn)', NET: 'var(--magenta)' };
+    function pushEvent() {
+      const el = document.getElementById('liveEvents');
+      const [tag, msg] = livePool[Math.floor(Math.random() * livePool.length)];
+      const d = new Date();
+      const t = d.toTimeString().slice(0, 8);
+      const row = document.createElement('div');
+      row.className = 'ev-row';
+      row.innerHTML = `<span class="t">${t}</span><span class="e"><b style="color:${colors[tag]}">${tag}</b> ${msg}</span>`;
+      el.insertBefore(row, el.firstChild);
+      while (el.children.length > 8) el.removeChild(el.lastChild);
+    }
+    pushEvent(); pushEvent(); pushEvent();
+    setInterval(pushEvent, 2000);
+
+    // -------- mode buttons --------
+    document.querySelectorAll('.mode-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.mode-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

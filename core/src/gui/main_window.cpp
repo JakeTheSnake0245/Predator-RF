@@ -36,6 +36,7 @@
 #include <gui/widgets/snr_meter.h>
 #include <gui/tuner.h>
 #include <backend.h>
+#include "../predator/decoder_ingest.h"
 
 void MainWindow::init() {
     LoadingScreen::show("Initializing UI");
@@ -1006,6 +1007,83 @@ void MainWindow::draw() {
             savePredatorEvents(events);
         }
     };
+
+    // -------- Decoder bridge ingestion (RTL433) --------
+    // Ensure RTL433 bridge config is normalized every frame, even if the user
+    // never opened the Decoder Bridges section. This lets the ingester start
+    // automatically on app launch when enabled was persisted as true.
+    ensureDecoderBridge("rtl433", "127.0.0.1", 1433, "TCP JSON Lines",
+        "rtl_433 ISM device telemetry (315/433/868/915 MHz). Each JSON line becomes one Network event; protocol = device model, networkId = device id, talkgroup = channel.");
+
+    static predator::Rtl433Ingester rtl433Ingester;
+    {
+        json& b = decoderBridges["rtl433"];
+        bool wantActive   = readJsonBool(b, "enabled", false);
+        std::string wHost = readJsonString(b, "host", "127.0.0.1");
+        int         wPort = (int)readJsonDouble(b, "port", 1433.0);
+        std::string wMode = readJsonString(b, "mode", "TCP JSON Lines");
+
+        static bool        active = false;
+        static std::string activeHost;
+        static int         activePort = 0;
+        static std::string activeMode;
+
+        if (wantActive && (!active || activeHost != wHost || activePort != wPort || activeMode != wMode)) {
+            rtl433Ingester.start(wHost, wPort, wMode);
+            active = true;
+            activeHost = wHost;
+            activePort = wPort;
+            activeMode = wMode;
+        } else if (!wantActive && active) {
+            rtl433Ingester.stop();
+            active = false;
+        }
+    }
+
+    {
+        auto pending = rtl433Ingester.drain(64);
+        if (!pending.empty()) {
+            for (auto& e : pending) {
+                json row;
+                char idBuf[160];
+                snprintf(idBuf, sizeof(idBuf), "%s_rtl433_%lld_%d",
+                         filenameTimestamp().c_str(),
+                         (long long)std::llround(e.frequencyHz),
+                         (int)events.size());
+                row["time"]         = currentTimestamp();
+                row["eventId"]      = std::string(idBuf);
+                row["type"]         = "decoder";
+                row["frequency"]    = e.frequencyHz;
+                row["label"]        = e.label.empty() ? std::string("RTL433") : e.label;
+                row["strengthDb"]   = e.strengthDb;
+                row["decoder"]      = "RTL433";
+                row["hitState"]     = "decoded";
+                row["protocol"]     = e.protocol;
+                row["networkId"]    = e.networkId;
+                row["talkgroup"]    = e.talkgroup;
+                row["radioId"]      = e.radioId;
+                row["voicePath"]    = voiceOutputPath;
+                row["dataPath"]     = dataOutputPath;
+                row["clipBaseName"] = std::string(idBuf);
+                row["voiceClipPath"] = "";
+                row["dataClipPath"]  = "";
+                row["hasAudio"]     = false;
+                row["hasData"]      = true;
+                row["source"]       = "Bridge:RTL433";
+                row["mode"]         = predatorMissionMode;
+                row["gpsFix"]       = phoneHasFix;
+                if (phoneHasFix) {
+                    row["lat"]       = phoneLat;
+                    row["lon"]       = phoneLon;
+                    row["accuracyM"] = phoneAccuracy;
+                }
+                row["raw"] = e.raw;
+                events.insert(events.begin(), row);
+            }
+            while (events.size() > 200) events.erase(events.end() - 1);
+            savePredatorEvents(events);
+        }
+    }
 
     auto exportPredatorSession = [&]() {
         std::string root = (std::string)core::args["root"];
@@ -3005,6 +3083,20 @@ void MainWindow::draw() {
 
                 renderBridge("p25",    "P25 Trunked Voice (Phase 1 + 2)", "Digital Voice / P25", p25Modes,    3);
                 renderBridge("rtl433", "RTL433 ISM Devices",              "RTL433",               rtl433Modes, 3);
+                {
+                    ImGui::Indent();
+                    bool conn = rtl433Ingester.isConnected();
+                    bool run = rtl433Ingester.isRunning();
+                    ImVec4 col = conn ? ImVec4(0.25f, 0.85f, 0.25f, 1.0f)
+                                      : (run ? ImVec4(0.95f, 0.75f, 0.20f, 1.0f)
+                                             : ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+                    ImGui::TextColored(col, "%s", conn ? "[LINK]" : (run ? "[WAIT]" : "[OFF] "));
+                    ImGui::SameLine();
+                    std::string st = rtl433Ingester.status();
+                    ImGui::TextDisabled("%s  -  events received: %d",
+                                        st.c_str(), rtl433Ingester.eventsReceived());
+                    ImGui::Unindent();
+                }
                 renderBridge("pocsag", "POCSAG / FLEX Paging",            "Paging",               pocsagModes, 3);
                 renderBridge("adsb",   "ADS-B Aircraft (dump1090)",       "ADS-B",                adsbModes,   4);
                 renderBridge("ais",    "AIS Marine VHF",                  "AIS",                  aisModes,    3);
