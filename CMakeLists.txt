@@ -112,12 +112,29 @@ if (ANDROID)
     set(SDR_KIT_ROOT "${_DEFAULT_SDR_KIT}" CACHE PATH "Path to the Android SDR kit root")
     file(TO_CMAKE_PATH "${SDR_KIT_ROOT}" SDR_KIT_ROOT)
     set(SDR_KIT_ABI_ROOT "${SDR_KIT_ROOT}/${ANDROID_ABI}")
+
+    # Self-heal: if SDR_KIT_ROOT was forced from outside (e.g. an old build.gradle
+    # that hardcodes -DSDR_KIT_ROOT=/sdr-kit, or a stale Android Studio cache, or a
+    # leftover sdr.kit.dir in local.properties) but the path doesn't actually exist,
+    # silently fall back to the in-repo kit if it's available. This keeps the build
+    # working even when the user hasn't pulled the latest build.gradle yet.
+    if ((NOT EXISTS "${SDR_KIT_ABI_ROOT}") AND (EXISTS "${_PREDATOR_REPO_SDR_KIT}/${ANDROID_ABI}"))
+        message(WARNING "SDR_KIT_ROOT='${SDR_KIT_ROOT}' has no '${ANDROID_ABI}' subdir; "
+            "auto-switching to the in-repo kit at '${_PREDATOR_REPO_SDR_KIT}'. "
+            "Clear sdr.kit.dir in android/local.properties (or unset SDR_KIT_ROOT) to silence this.")
+        set(SDR_KIT_ROOT "${_PREDATOR_REPO_SDR_KIT}" CACHE PATH "Path to the Android SDR kit root" FORCE)
+        file(TO_CMAKE_PATH "${SDR_KIT_ROOT}" SDR_KIT_ROOT)
+        set(SDR_KIT_ABI_ROOT "${SDR_KIT_ROOT}/${ANDROID_ABI}")
+    endif()
+
     if (NOT EXISTS "${SDR_KIT_ABI_ROOT}")
         message(FATAL_ERROR "SDR_KIT_ABI_ROOT does not exist: ${SDR_KIT_ABI_ROOT}\n"
             "Tried: ${SDR_KIT_ROOT}/${ANDROID_ABI}\n"
             "The repo ships a prebuilt kit at android/sdr-kit. If it is missing,\n"
             "run scripts/fetch-sdr-kit.sh to rebuild it from the upstream APK + sources.")
     endif ()
+    message(STATUS "Predator: SDR_KIT_ROOT = ${SDR_KIT_ROOT}")
+    message(STATUS "Predator: SDR_KIT_ABI_ROOT = ${SDR_KIT_ABI_ROOT}")
 
     set(CMAKE_SHARED_LINKER_FLAGS
         "${CMAKE_SHARED_LINKER_FLAGS} -u ANativeActivity_onCreate"
