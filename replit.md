@@ -83,7 +83,7 @@ MapLibre GL JS v4.7.1, OpenFreeMap dark style, 2D/3D toggle, layer toggles (Road
 - [x] Hits tab full implementation
 - [x] Auto-marker passive detection
 - [x] MapLibre 2D/3D map with compass
-- [ ] Hits/Events export (CSV/JSON)
+- [x] Hits/Events export (CSV) — `exportHitsCsv`, `exportEventsCsv` in main_window.cpp; writes to `root/exports/`
 - [ ] Audio demod capture pipeline
 - [ ] Network/topology view
 - [ ] Linux build

@@ -431,6 +431,10 @@ void MainWindow::draw() {
         if (strcmp(text, "Event Filter") == 0) { return "\u4e8b\u4ef6\u7be9\u9078"; }
         if (strcmp(text, "Session Export") == 0) { return "\u5de5\u4f5c\u968e\u6bb5\u532f\u51fa"; }
         if (strcmp(text, "Export Session JSON") == 0) { return "\u532f\u51fa\u5de5\u4f5c\u968e\u6bb5 JSON"; }
+        if (strcmp(text, "Export CSV") == 0) { return "\u532f\u51fa CSV"; }
+        if (strcmp(text, "Export Hits CSV") == 0) { return "\u532f\u51fa\u547d\u4e2d CSV"; }
+        if (strcmp(text, "Export Events CSV") == 0) { return "\u532f\u51fa\u4e8b\u4ef6 CSV"; }
+        if (strcmp(text, "Export Status") == 0) { return "\u532f\u51fa\u72c0\u614b"; }
         if (strcmp(text, "Assign Marker") == 0) { return "\u6307\u6d3e\u6a19\u8a18"; }
         if (strcmp(text, "Release Marker") == 0) { return "\u91cb\u653e\u6a19\u8a18"; }
         if (strcmp(text, "Decoder") == 0) { return "\u89e3\u78bc\u5668"; }
@@ -1020,6 +1024,94 @@ void MainWindow::draw() {
         out << session.dump(2);
         out.close();
         exportStatus = "Exported " + exportPath.string();
+    };
+
+    // Export hits as CSV
+    auto exportHitsCsv = [&]() {
+        std::string root = (std::string)core::args["root"];
+        std::filesystem::path exportDir = std::filesystem::path(root) / "exports";
+        std::error_code ec;
+        std::filesystem::create_directories(exportDir, ec);
+        if (ec) { exportStatus = "Export failed: " + ec.message(); return; }
+
+        std::filesystem::path outPath = exportDir / ("predator_hits_" + filenameTimestamp() + ".csv");
+        std::ofstream out(outPath);
+        if (!out.is_open()) { exportStatus = "Export failed: cannot open file"; return; }
+
+        // Header
+        out << "timestamp,frequency_hz,frequency,name,state,snr_db,last_rssi_db,max_rssi_db,"
+               "hit_count,event_count,unread_count,decoder,marker_assigned,last_seen,note\n";
+
+        std::string now = currentTimestamp();
+        for (int i = 0; i < (int)hits.size(); i++) {
+            double freq   = readJsonDouble(hits[i], "frequency", 0.0);
+            std::string st = readJsonString(hits[i], "state", "unknown");
+            // Escape CSV fields that may contain commas or quotes
+            auto csvEsc = [](const std::string& s) {
+                bool needsQuote = s.find(',') != std::string::npos || s.find('"') != std::string::npos || s.find('\n') != std::string::npos;
+                if (!needsQuote) return s;
+                std::string out2 = "\"";
+                for (char c : s) { if (c == '"') out2 += '"'; out2 += c; }
+                out2 += '"';
+                return out2;
+            };
+            out << now << ","
+                << std::llround(freq) << ","
+                << csvEsc(formatFrequency(freq)) << ","
+                << csvEsc(readJsonString(hits[i], "name", "Hit")) << ","
+                << csvEsc(st) << ","
+                << readJsonDouble(hits[i], "snrDb", 0.0) << ","
+                << readJsonDouble(hits[i], "lastRssi", 0.0) << ","
+                << readJsonDouble(hits[i], "maxRssi", 0.0) << ","
+                << (int)readJsonDouble(hits[i], "hitCount", 0.0) << ","
+                << (int)readJsonDouble(hits[i], "eventCount", 0.0) << ","
+                << (int)readJsonDouble(hits[i], "unreadCount", 0.0) << ","
+                << csvEsc(readJsonString(hits[i], "decoder", "None")) << ","
+                << (readJsonBool(hits[i], "markerAssigned", false) ? "1" : "0") << ","
+                << csvEsc(readJsonString(hits[i], "lastSeen", "")) << ","
+                << csvEsc(readJsonString(hits[i], "note", "")) << "\n";
+        }
+        out.close();
+        exportStatus = "Hits exported: " + outPath.string() + " (" + std::to_string((int)hits.size()) + " rows)";
+    };
+
+    // Export events as CSV
+    auto exportEventsCsv = [&]() {
+        std::string root = (std::string)core::args["root"];
+        std::filesystem::path exportDir = std::filesystem::path(root) / "exports";
+        std::error_code ec;
+        std::filesystem::create_directories(exportDir, ec);
+        if (ec) { exportStatus = "Export failed: " + ec.message(); return; }
+
+        std::filesystem::path outPath = exportDir / ("predator_events_" + filenameTimestamp() + ".csv");
+        std::ofstream out(outPath);
+        if (!out.is_open()) { exportStatus = "Export failed: cannot open file"; return; }
+
+        out << "time,type,label,frequency_hz,frequency,strength_db,decoder,network_id,talkgroup\n";
+
+        auto csvEsc = [](const std::string& s) {
+            bool needsQuote = s.find(',') != std::string::npos || s.find('"') != std::string::npos || s.find('\n') != std::string::npos;
+            if (!needsQuote) return s;
+            std::string out2 = "\"";
+            for (char c : s) { if (c == '"') out2 += '"'; out2 += c; }
+            out2 += '"';
+            return out2;
+        };
+
+        for (int i = 0; i < (int)events.size(); i++) {
+            double freq = readJsonDouble(events[i], "frequency", 0.0);
+            out << csvEsc(readJsonString(events[i], "time",      "")) << ","
+                << csvEsc(readJsonString(events[i], "type",      "event")) << ","
+                << csvEsc(readJsonString(events[i], "label",     "")) << ","
+                << std::llround(freq) << ","
+                << csvEsc(formatFrequency(freq)) << ","
+                << readJsonDouble(events[i], "strengthDb", 0.0) << ","
+                << csvEsc(readJsonString(events[i], "decoder",   "None")) << ","
+                << csvEsc(readJsonString(events[i], "networkId", "")) << ","
+                << csvEsc(readJsonString(events[i], "talkgroup", "")) << "\n";
+        }
+        out.close();
+        exportStatus = "Events exported: " + outPath.string() + " (" + std::to_string((int)events.size()) + " rows)";
     };
 
     auto hitStateForFrequency = [&](double frequency, const json& row) {
@@ -2327,6 +2419,37 @@ void MainWindow::draw() {
             if (hitsChanged) {
                 saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
             }
+
+            // ── CSV Export ─────────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Export CSV"))) {
+                if (hits.empty()) {
+                    ImGui::TextDisabled("No hits to export");
+                } else {
+                    ImGui::TextDisabled("%d hits  %d events", (int)hits.size(), (int)events.size());
+                }
+                float halfW = (ImGui::GetContentRegionAvail().x - 4.0f * style::uiScale) * 0.5f;
+                bool hitsDisabled = hits.empty();
+                bool eventsDisabled = events.empty();
+
+                if (hitsDisabled) { style::beginDisabled(); }
+                if (ImGui::Button(T("Export Hits CSV"), ImVec2(halfW, 0))) {
+                    exportHitsCsv();
+                }
+                if (hitsDisabled) { style::endDisabled(); }
+
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+
+                if (eventsDisabled) { style::beginDisabled(); }
+                if (ImGui::Button(T("Export Events CSV"), ImVec2(halfW, 0))) {
+                    exportEventsCsv();
+                }
+                if (eventsDisabled) { style::endDisabled(); }
+
+                if (!exportStatus.empty()) {
+                    ImGui::TextWrapped("%s", exportStatus.c_str());
+                }
+            }
+            // ── End CSV Export ─────────────────────────────────────────────
         }
         else if (predatorTab == PREDATOR_TAB_NETWORK) {
             if (ImGui::CollapsingHeader(T("Network Workflow"), ImGuiTreeNodeFlags_DefaultOpen)) {
