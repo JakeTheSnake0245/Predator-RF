@@ -14,6 +14,12 @@ namespace style {
     void beginDisabled();
     void endDisabled();
     void testtt();
+
+    // Touch-friendly tweaks for phone/tablet builds.
+    // Bumps scrollbar width, slider grab size, frame border, and rounding
+    // so taps with a finger land reliably. Call once after
+    // ImGui::GetStyle().ScaleAllSizes(uiScale).
+    void applyTouchFriendlyTweaks();
 }
 
 namespace ImGui {

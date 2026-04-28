@@ -4,6 +4,7 @@
 #include <config.h>
 #include <utils/flog.h>
 #include <filesystem>
+#include <algorithm>
 
 namespace style {
     ImFont* baseFont;
@@ -70,6 +71,53 @@ namespace style {
     void endDisabled() {
         ImGui::PopItemFlag();
         ImGui::PopStyleColor(3);
+    }
+
+    void applyTouchFriendlyTweaks() {
+        // Touch ergonomics: ImGui defaults assume a mouse cursor. After
+        // ScaleAllSizes(uiScale), spacings are large in pixels but the
+        // *grab regions* for sliders/scrollbars/window edges are still
+        // designed for pixel-precise pointers. These tweaks ensure thumbs
+        // can hit them reliably on a phone.
+        //
+        // All values are absolute (already-scaled) pixel sizes computed
+        // from uiScale so they stay correct on tablets vs. phones.
+        //
+        // Gate on uiScale >= 1.5 so the desktop GLFW build (uiScale=1.0)
+        // is unaffected — its ImGui style stays exactly as upstream SDR++
+        // intends it. Any scaled build (Android at 3.0, hypothetical 4K
+        // desktop config at 2.0+) gets the thumb-friendly minimums.
+        if (uiScale < 1.5f) return;
+
+        ImGuiStyle& s = ImGui::GetStyle();
+
+        // Vertical/horizontal scrollbar thickness. Default is 14 px;
+        // ScaleAllSizes brings that to 14*uiScale. We want at least 24*uiScale
+        // for thumbs (≈7 mm at 440 PPI on uiScale=3).
+        s.ScrollbarSize = std::max(s.ScrollbarSize, 24.0f * uiScale);
+
+        // Slider grab: the draggable knob inside a slider track. Bump it
+        // so it is comfortably wider than a fingertip's contact patch.
+        s.GrabMinSize = std::max(s.GrabMinSize, 22.0f * uiScale);
+
+        // Window/child border thickness so panel edges are visible against
+        // the dark Diablo-tactical background on a small high-DPI screen.
+        s.WindowBorderSize = std::max(s.WindowBorderSize, 1.0f);
+        s.ChildBorderSize  = std::max(s.ChildBorderSize,  1.0f);
+        s.FrameBorderSize  = std::max(s.FrameBorderSize,  1.0f);
+
+        // Slightly increased rounding gives buttons/inputs a chunkier
+        // tactile feel that reads better at finger-distance.
+        s.FrameRounding   = std::max(s.FrameRounding,   2.0f * uiScale);
+        s.GrabRounding    = std::max(s.GrabRounding,    2.0f * uiScale);
+        s.ScrollbarRounding = std::max(s.ScrollbarRounding, 4.0f * uiScale);
+
+        // Looser item spacing makes adjacent buttons less likely to be
+        // hit accidentally by the same tap.
+        if (s.ItemSpacing.y < 6.0f * uiScale) s.ItemSpacing.y = 6.0f * uiScale;
+
+        // Touch-friendly resize grip in window corner.
+        s.TouchExtraPadding = ImVec2(4.0f * uiScale, 4.0f * uiScale);
     }
 }
 

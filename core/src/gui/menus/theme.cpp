@@ -31,10 +31,14 @@ namespace thememenu {
             selectedThemeName = "Dark";
         }
         themeId = std::distance(themeNames.begin(), it);
+        // applyTheme() now also handles ScaleAllSizes(uiScale) and the
+        // touch-friendly ergonomics tweaks, so a single call here gives
+        // us the fully-styled, fully-scaled, touch-ready ImGuiStyle in
+        // one shot. Doing it inside applyTheme() also means runtime
+        // theme switches via the dropdown can never silently lose the
+        // scaling or the touch tweaks (ThemeManager::applyTheme calls
+        // ImGui::StyleColorsDark() internally, which resets the style).
         applyTheme();
-
-        // Apply scaling
-        ImGui::GetStyle().ScaleAllSizes(style::uiScale);
 
         themeNamesTxt = "";
         for (auto name : themeNames) {
@@ -44,7 +48,17 @@ namespace thememenu {
     }
 
      void applyTheme() {
+         // ThemeManager::applyTheme calls ImGui::StyleColorsDark() and then
+         // overwrites rounding/border/padding/spacing with unscaled pixel
+         // constants — appropriate for a desktop mouse but tiny on a
+         // 3x-scaled phone screen. Re-running ScaleAllSizes(uiScale) here
+         // brings everything back to the right physical size, and
+         // applyTouchFriendlyTweaks() then enforces minimum thumb-friendly
+         // sizes for scrollbars / slider grabs / borders so that switching
+         // themes at runtime never regresses Android touch ergonomics.
          gui::themeManager.applyTheme(themeNames[themeId]);
+         ImGui::GetStyle().ScaleAllSizes(style::uiScale);
+         style::applyTouchFriendlyTweaks();
      }
 
     void draw(void* ctx) {

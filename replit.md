@@ -22,7 +22,9 @@ Since this is a native C++ application (not a web app), a simple Python HTTP ser
 - `server.py` — Python HTTP server serving the landing page on port 5000 with routes `/` (info) and `/preview` (interactive operator UI mockup)
 - `index.html` — Project info/landing page (links to `/preview`)
 - `preview.html` — Interactive HTML mockup of the Predator RF operator interface (Spectrum, Hits, Network Tree, Map, Mission, System tabs) styled in Diablo-tactical dark theme; pure presentation, no backend
-- `core/src/predator/decoder_ingest.h` — Receive-only RTL433 ingester (header-only): TCP/UDP worker thread parsing newline-delimited rtl_433 JSON, normalizing to `predatorEvents`, with auto-reconnect and live status
+- `core/src/predator/decoder_ingest.h` — Receive-only RTL433 ingester (header-only): TCP/UDP worker thread parsing newline-delimited rtl_433 JSON, normalizing to `predatorEvents`, with auto-reconnect, non-blocking connect with stop-flag polling, and live status
+- `core/src/gui/style.cpp` — Includes `applyTouchFriendlyTweaks()` for phone/tablet builds: bumps scrollbar, slider grab, frame border, rounding, and item spacing for thumb input. Called from `core/backends/android/backend.cpp::doPartialInit()` after `ScaleAllSizes(uiScale)` so the upstream desktop ImGui style is comfortable on a Samsung S22-class screen
+- `docs/android_build.md` — End-to-end APK build guide: NDK 23.2 setup, sdr-kit installation, Gradle build, sideloading to S22, troubleshooting, and optional rebranding
 - `CMakeLists.txt` — CMake build configuration for the C++ application
 - `core/` — Core SDR engine (C++)
 - `source_modules/` — Hardware driver plugins (RTL-SDR, HackRF, Airspy, etc.)
@@ -92,6 +94,8 @@ MapLibre GL JS v4.7.1, OpenFreeMap dark style, 2D/3D toggle, layer toggles (Road
 - [x] RTL433 native ingestion thread (`predator::Rtl433Ingester`) — TCP client / UDP server modes; auto-reconnect with exponential backoff; thread-safe queue drained into `predatorEvents` each frame; live link/status display in Network → Decoder Bridges
 - [ ] Native ingestion threads for P25, POCSAG/FLEX, ADS-B, AIS bridges (same pattern as RTL433)
 - [x] Web operator preview (`/preview` route) — interactive HTML mockup of all 6 tabs in Diablo-tactical aesthetic for non-Android viewers
+- [x] Android touch ergonomics — `style::applyTouchFriendlyTweaks()` runs after `ScaleAllSizes(uiScale)` in `core/backends/android/backend.cpp::doPartialInit()`. Bumps scrollbar (24×scale), slider grab (22×scale), borders (1px+), frame/grab/scrollbar rounding, item spacing (6×scale), and TouchExtraPadding (4×scale)
+- [x] Android APK build documented (`docs/android_build.md`) — NDK 23.2.8568313 + sdr-kit setup, Gradle steps, S22 sideload, troubleshooting, optional rebranding
 - [ ] Linux build
 - [ ] Windows build
 - [ ] Remote SDR ecosystem
