@@ -786,9 +786,9 @@ void MainWindow::draw() {
         return (double)row[key];
     };
 
-    auto readJsonString = [](const json& row, const char* key, const char* fallback) {
+    auto readJsonString = [](const json& row, const char* key, const std::string& fallback) {
         if (!row.is_object() || !row.contains(key) || !row[key].is_string()) {
-            return std::string(fallback);
+            return fallback;
         }
         return (std::string)row[key];
     };
