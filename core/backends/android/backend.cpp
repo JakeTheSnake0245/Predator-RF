@@ -38,8 +38,13 @@ namespace backend {
         backend::init();
         style::loadFonts(root + "/res"); // TODO: Don't hardcode, use config
         icons::load(root + "/res");
+        // thememenu::applyTheme() is now atomic: it applies the colors,
+        // re-runs ScaleAllSizes(uiScale), AND applies the touch-friendly
+        // ergonomics tweaks. This guarantees a single, consistent code path
+        // for the fully styled + scaled + touch-ready ImGuiStyle on Android,
+        // regardless of which init order (cold start vs window re-create)
+        // gets here.
         thememenu::applyTheme();
-        ImGui::GetStyle().ScaleAllSizes(style::uiScale);
         gui::mainWindow.setFirstMenuRender();
     }
 
