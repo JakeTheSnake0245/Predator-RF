@@ -4,11 +4,17 @@
 //
 // Receive-only socket reader for external decoder companion processes
 // (rtl_433, dump1090, ais-dispatcher, multimon-ng, OP25, DSD-FME, etc.).
-// This thread NEVER transmits — it only opens a listener (TCP client or
-// UDP server) and parses inbound newline-delimited JSON records emitted
+// Each ingester thread NEVER transmits — it only opens a listener
+// (TCP client or UDP server) and reads newline-delimited records emitted
 // by the companion process. Parsed records are pushed to a thread-safe
 // queue that the UI thread drains each frame and folds into the
 // existing predatorEvents stream.
+//
+// Architecture: LineIngester is the abstract socket+thread plumbing.
+// Per-decoder subclasses (Rtl433Ingester, AdsbIngester, ...) override
+// parseLine() to convert one wire-format record into a DecoderIngestEvent
+// and call enqueue(). Sockets, reconnect, status, queue, and shutdown
+// are shared.
 //
 // Safety boundary (see docs/rf_predator_alignment.md):
 //   Receive, analyze, log, map, export. No transmit, no jamming,
@@ -26,6 +32,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+#include <cctype>
 #include <algorithm>
 
 #include "../json.hpp"
@@ -67,22 +74,23 @@ struct DecoderIngestEvent {
     std::string label;       // short display label
     double frequencyHz = 0.0;
     float strengthDb = 0.0f;
-    nlohmann::json raw;      // original JSON record from companion process
+    nlohmann::json raw;      // original record (parsed JSON or echoed CSV fields)
 };
 
-class Rtl433Ingester {
+// Abstract base: socket/thread plumbing shared by every line-oriented decoder
+// bridge. Subclasses implement parseLine(line) and call enqueue() on success.
+class LineIngester {
 public:
-    Rtl433Ingester() = default;
-    ~Rtl433Ingester() { stop(); }
+    virtual ~LineIngester() { stop(); }
 
-    Rtl433Ingester(const Rtl433Ingester&) = delete;
-    Rtl433Ingester& operator=(const Rtl433Ingester&) = delete;
+    LineIngester(const LineIngester&) = delete;
+    LineIngester& operator=(const LineIngester&) = delete;
 
     // (Re)start the worker thread bound to host/port/mode. Mode strings
     // recognised: anything containing "UDP" -> UDP server bind on port,
     // anything containing "Stdin" -> parked (companion process drives stdin
     // of a future helper, not this thread), everything else -> TCP client
-    // connecting to host:port and reading newline-delimited JSON.
+    // connecting to host:port and reading newline-delimited records.
     void start(const std::string& host, int port, const std::string& mode) {
         stop();
         host_ = host;
@@ -108,7 +116,7 @@ public:
 
     bool isRunning() const   { return running_.load(); }
     bool isConnected() const { return connected_.load(); }
-    int eventsReceived() const { return eventsReceived_.load(); }
+    int  eventsReceived() const { return eventsReceived_.load(); }
 
     std::string status() const {
         std::lock_guard<std::mutex> lk(statusMtx_);
@@ -125,6 +133,25 @@ public:
         }
         return out;
     }
+
+protected:
+    explicit LineIngester(std::string decoderName)
+        : decoderName_(std::move(decoderName)) {}
+
+    // Subclasses parse one wire-format record and (if valid) call enqueue().
+    virtual void parseLine(const std::string& line) = 0;
+
+    // Push a parsed event to the UI-side queue. Bounded at 1000 to prevent
+    // unbounded growth if the UI thread stalls.
+    void enqueue(DecoderIngestEvent&& ev) {
+        if (ev.decoder.empty()) ev.decoder = decoderName_;
+        std::lock_guard<std::mutex> lk(queueMtx_);
+        while (queue_.size() > 1000) queue_.pop();
+        queue_.push(std::move(ev));
+        eventsReceived_++;
+    }
+
+    std::string decoderName_;
 
 private:
     void setStatus(const std::string& s) {
@@ -257,12 +284,28 @@ private:
                 backoffMs = 500;
                 setRecvTimeout(sock, 500);
 
+                std::string udpLineBuf;
                 char buf[4096];
                 while (!stopFlag_.load()) {
                     int n = (int)::recv(sock, buf, sizeof(buf) - 1, 0);
                     if (n > 0) {
-                        buf[n] = '\0';
-                        parseAndQueue(std::string(buf, n));
+                        // UDP datagrams may be one record or many newline-delimited
+                        // records (some bridges, e.g. AIS NMEA, batch them).
+                        udpLineBuf.append(buf, n);
+                        size_t pos;
+                        while ((pos = udpLineBuf.find('\n')) != std::string::npos) {
+                            std::string line = udpLineBuf.substr(0, pos);
+                            udpLineBuf.erase(0, pos + 1);
+                            if (!line.empty() && line.back() == '\r') line.pop_back();
+                            if (!line.empty()) parseLine(line);
+                        }
+                        // Flush any remaining single-record datagram without trailing '\n'
+                        if (!udpLineBuf.empty() && udpLineBuf.find('\n') == std::string::npos) {
+                            std::string leftover = udpLineBuf;
+                            udpLineBuf.clear();
+                            if (!leftover.empty() && leftover.back() == '\r') leftover.pop_back();
+                            if (!leftover.empty()) parseLine(leftover);
+                        }
                     }
                     // on timeout / error just loop and re-check stopFlag
                 }
@@ -321,7 +364,7 @@ private:
                             std::string line = lineBuf.substr(0, pos);
                             lineBuf.erase(0, pos + 1);
                             if (!line.empty() && line.back() == '\r') line.pop_back();
-                            if (!line.empty()) parseAndQueue(line);
+                            if (!line.empty()) parseLine(line);
                         }
                         // guard against runaway buffer if peer never sends '\n'
                         if (lineBuf.size() > (1 << 20)) lineBuf.clear();
@@ -355,7 +398,34 @@ private:
 #endif
     }
 
-    void parseAndQueue(const std::string& line) {
+    std::atomic<bool> running_{false};
+    std::atomic<bool> connected_{false};
+    std::atomic<bool> stopFlag_{false};
+    std::atomic<int>  eventsReceived_{0};
+
+    std::string host_;
+    int port_ = 0;
+    std::string mode_;
+
+    std::thread worker_;
+    std::mutex queueMtx_;
+    std::queue<DecoderIngestEvent> queue_;
+
+    mutable std::mutex statusMtx_;
+    std::string statusMsg_ = "Idle";
+};
+
+// ---------------------------------------------------------------------------
+// rtl_433 ingester. Wire format: one JSON object per line.
+// Example: {"time":"...","model":"Acurite-Tower","id":1234,"channel":"A",
+//           "freq":433.92,"rssi":-72.5,"temperature_C":21.3, ...}
+// ---------------------------------------------------------------------------
+class Rtl433Ingester : public LineIngester {
+public:
+    Rtl433Ingester() : LineIngester("RTL433") {}
+
+protected:
+    void parseLine(const std::string& line) override {
         nlohmann::json j;
         try {
             j = nlohmann::json::parse(line);
@@ -413,30 +483,117 @@ private:
             if (snr > -200.0) ev.strengthDb = (float)snr;
         }
 
-        {
-            std::lock_guard<std::mutex> lk(queueMtx_);
-            // bound queue at 1000 to prevent unbounded growth
-            while (queue_.size() > 1000) queue_.pop();
-            queue_.push(std::move(ev));
-        }
-        eventsReceived_++;
+        enqueue(std::move(ev));
     }
+};
 
-    std::atomic<bool> running_{false};
-    std::atomic<bool> connected_{false};
-    std::atomic<bool> stopFlag_{false};
-    std::atomic<int>  eventsReceived_{0};
+// ---------------------------------------------------------------------------
+// ADS-B ingester. Wire format: dump1090 / readsb BaseStation port 30003.
+// One CSV record per line, 22 comma-separated fields. Field 1 is message
+// type (MSG, SEL, ID, AIR, STA, CLK); field 2 is transmission subtype
+// (1..8 for MSG); field 5 is the 24-bit ICAO hex (the unique aircraft ID);
+// field 11 is callsign; field 12 altitude (ft); field 15/16 lat/lon;
+// field 18 squawk. Fields are blank when not present in that frame.
+//
+// Example MSG records:
+//   MSG,1,1,1,A12345,1,2024/04/28,12:34:56.789,2024/04/28,12:34:56.789,UAL123,,,,,,,,,,
+//   MSG,3,1,1,A12345,1,...,,38000,,,40.7589,-73.9851,,,,,,
+//   MSG,4,1,1,A12345,1,...,,,450,180,,,,,,,
+//   MSG,5,1,1,A12345,1,...,,38000,,,,,,,7777,0,0,0,0
+//
+// ADS-B is always on 1090 MHz. BaseStation does not transmit RSSI; we
+// leave strengthDb at 0 unless the feed supplies it (some forks do).
+// ---------------------------------------------------------------------------
+class AdsbIngester : public LineIngester {
+public:
+    AdsbIngester() : LineIngester("ADSB") {}
 
-    std::string host_;
-    int port_ = 0;
-    std::string mode_;
+protected:
+    void parseLine(const std::string& line) override {
+        // Split on ',' preserving empty fields.
+        std::vector<std::string> f;
+        f.reserve(24);
+        std::string cur;
+        for (char c : line) {
+            if (c == ',') { f.push_back(std::move(cur)); cur.clear(); }
+            else if (c == '\r') { /* tolerate stray CR */ }
+            else cur.push_back(c);
+        }
+        f.push_back(std::move(cur));
 
-    std::thread worker_;
-    std::mutex queueMtx_;
-    std::queue<DecoderIngestEvent> queue_;
+        if (f.size() < 5) return;
+        const std::string& msgType = f[0];
+        // Accept the BaseStation message kinds. SEL/ID/AIR/STA/CLK are status
+        // events (selection change, identification, new aircraft, status,
+        // clock change); MSG is the data envelope. All carry a hex ident.
+        if (msgType != "MSG" && msgType != "SEL" && msgType != "ID"
+            && msgType != "AIR" && msgType != "STA" && msgType != "CLK") {
+            return;
+        }
 
-    mutable std::mutex statusMtx_;
-    std::string statusMsg_ = "Idle";
+        auto field = [&](size_t i) -> std::string {
+            return (i < f.size()) ? f[i] : std::string();
+        };
+        auto trim = [](std::string s) {
+            size_t a = s.find_first_not_of(" \t");
+            if (a == std::string::npos) return std::string();
+            size_t b = s.find_last_not_of(" \t");
+            return s.substr(a, b - a + 1);
+        };
+
+        std::string hexIdent  = trim(field(4));   // ICAO 24-bit hex
+        std::string callsign  = trim(field(10));
+        std::string altitude  = trim(field(11));
+        std::string gndSpeed  = trim(field(12));
+        std::string track     = trim(field(13));
+        std::string latStr    = trim(field(14));
+        std::string lonStr    = trim(field(15));
+        std::string vRate     = trim(field(16));
+        std::string squawk    = trim(field(17));
+        std::string txType    = trim(field(1));   // MSG transmission subtype
+
+        if (hexIdent.empty()) return;
+
+        // Normalise hex ident to upper case for stable networkId.
+        std::transform(hexIdent.begin(), hexIdent.end(), hexIdent.begin(),
+                       [](unsigned char c){ return (char)std::toupper(c); });
+
+        DecoderIngestEvent ev;
+        ev.decoder  = "ADSB";
+        ev.protocol = "ADS-B";
+
+        ev.networkId = hexIdent;                                  // ICAO hex
+        ev.talkgroup = !callsign.empty() ? callsign : hexIdent;   // callsign or hex
+        ev.radioId   = !squawk.empty() ? squawk : hexIdent;       // squawk or hex
+        ev.label     = !callsign.empty() ? (callsign + " (" + hexIdent + ")")
+                                         : hexIdent;
+        ev.frequencyHz = 1090e6;
+        ev.strengthDb  = 0.0f;
+
+        // Echo parsed fields back into the JSON raw payload so the UI and
+        // session export can show altitude/position/speed without re-parsing.
+        nlohmann::json raw;
+        raw["msg"]      = msgType;
+        if (!txType.empty())   raw["txType"]   = txType;
+        raw["hex"]      = hexIdent;
+        if (!callsign.empty()) raw["callsign"] = callsign;
+        if (!altitude.empty()) raw["altitudeFt"] = altitude;
+        if (!gndSpeed.empty()) raw["groundSpeedKt"] = gndSpeed;
+        if (!track.empty())    raw["trackDeg"] = track;
+        if (!latStr.empty() && !lonStr.empty()) {
+            try {
+                raw["lat"] = std::stod(latStr);
+                raw["lon"] = std::stod(lonStr);
+            } catch (...) {
+                // leave coords out if unparseable
+            }
+        }
+        if (!vRate.empty())    raw["verticalRateFpm"] = vRate;
+        if (!squawk.empty())   raw["squawk"] = squawk;
+        ev.raw = std::move(raw);
+
+        enqueue(std::move(ev));
+    }
 };
 
 } // namespace predator

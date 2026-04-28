@@ -1085,6 +1085,90 @@ void MainWindow::draw() {
         }
     }
 
+    // -------- Decoder bridge ingestion (ADS-B / dump1090) --------
+    // BaseStation port 30003 CSV feed from dump1090 / readsb. Each MSG line
+    // becomes one Network event tagged decoder=ADSB; lat/lon/altitude live in
+    // the raw payload for the tactical map to consume.
+    ensureDecoderBridge("adsb", "127.0.0.1", 30003, "BaseStation 30003",
+        "dump1090 / readsb feed. networkId = ICAO hex, talkgroup = callsign, radioId = squawk. Aircraft positions can be forwarded to the tactical map.");
+
+    static predator::AdsbIngester adsbIngester;
+    {
+        json& b = decoderBridges["adsb"];
+        bool wantActive   = readJsonBool(b, "enabled", false);
+        std::string wHost = readJsonString(b, "host", "127.0.0.1");
+        int         wPort = (int)readJsonDouble(b, "port", 30003.0);
+        std::string wMode = readJsonString(b, "mode", "BaseStation 30003");
+
+        static bool        active = false;
+        static std::string activeHost;
+        static int         activePort = 0;
+        static std::string activeMode;
+
+        if (wantActive && (!active || activeHost != wHost || activePort != wPort || activeMode != wMode)) {
+            adsbIngester.start(wHost, wPort, wMode);
+            active = true;
+            activeHost = wHost;
+            activePort = wPort;
+            activeMode = wMode;
+        } else if (!wantActive && active) {
+            adsbIngester.stop();
+            active = false;
+        }
+    }
+
+    {
+        auto pending = adsbIngester.drain(64);
+        if (!pending.empty()) {
+            for (auto& e : pending) {
+                json row;
+                char idBuf[160];
+                snprintf(idBuf, sizeof(idBuf), "%s_adsb_%s_%d",
+                         filenameTimestamp().c_str(),
+                         e.networkId.empty() ? "unk" : e.networkId.c_str(),
+                         (int)events.size());
+                row["time"]         = currentTimestamp();
+                row["eventId"]      = std::string(idBuf);
+                row["type"]         = "decoder";
+                row["frequency"]    = e.frequencyHz;
+                row["label"]        = e.label.empty() ? std::string("ADS-B") : e.label;
+                row["strengthDb"]   = e.strengthDb;
+                row["decoder"]      = "ADSB";
+                row["hitState"]     = "decoded";
+                row["protocol"]     = e.protocol;
+                row["networkId"]    = e.networkId;
+                row["talkgroup"]    = e.talkgroup;
+                row["radioId"]      = e.radioId;
+                row["voicePath"]    = voiceOutputPath;
+                row["dataPath"]     = dataOutputPath;
+                row["clipBaseName"] = std::string(idBuf);
+                row["voiceClipPath"] = "";
+                row["dataClipPath"]  = "";
+                row["hasAudio"]     = false;
+                row["hasData"]      = true;
+                row["source"]       = "Bridge:ADSB";
+                row["mode"]         = predatorMissionMode;
+                row["gpsFix"]       = phoneHasFix;
+                if (phoneHasFix) {
+                    row["lat"]       = phoneLat;
+                    row["lon"]       = phoneLon;
+                    row["accuracyM"] = phoneAccuracy;
+                }
+                // Surface aircraft position at top level when present so the
+                // tactical map and exporter can plot it without digging into raw.
+                if (e.raw.is_object() && e.raw.contains("lat") && e.raw.contains("lon")
+                    && e.raw["lat"].is_number() && e.raw["lon"].is_number()) {
+                    row["aircraftLat"] = e.raw["lat"];
+                    row["aircraftLon"] = e.raw["lon"];
+                }
+                row["raw"] = e.raw;
+                events.insert(events.begin(), row);
+            }
+            while (events.size() > 200) events.erase(events.end() - 1);
+            savePredatorEvents(events);
+        }
+    }
+
     auto exportPredatorSession = [&]() {
         std::string root = (std::string)core::args["root"];
         std::filesystem::path exportDir = std::filesystem::path(root) / "exports";
@@ -3099,6 +3183,32 @@ void MainWindow::draw() {
                 }
                 renderBridge("pocsag", "POCSAG / FLEX Paging",            "Paging",               pocsagModes, 3);
                 renderBridge("adsb",   "ADS-B Aircraft (dump1090)",       "ADS-B",                adsbModes,   4);
+                {
+                    ImGui::Indent();
+                    bool conn = adsbIngester.isConnected();
+                    bool run = adsbIngester.isRunning();
+                    ImVec4 col = conn ? ImVec4(0.25f, 0.85f, 0.25f, 1.0f)
+                                      : (run ? ImVec4(0.95f, 0.75f, 0.20f, 1.0f)
+                                             : ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+                    ImGui::TextColored(col, "%s", conn ? "[LINK]" : (run ? "[WAIT]" : "[OFF] "));
+                    ImGui::SameLine();
+                    std::string st = adsbIngester.status();
+                    ImGui::TextDisabled("%s  -  events received: %d",
+                                        st.c_str(), adsbIngester.eventsReceived());
+                    // The CSV parser only understands the BaseStation 30003 wire
+                    // format. The other dropdown options (Beast binary, SBS-3,
+                    // aircraft.json) require their own decoders and would
+                    // silently produce zero events otherwise -- warn explicitly.
+                    {
+                        std::string adsbMode = readJsonString(decoderBridges["adsb"], "mode", "BaseStation 30003");
+                        if (adsbMode.find("BaseStation") == std::string::npos) {
+                            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f),
+                                "[NOTICE] Mode '%s' is not yet decoded -- only 'BaseStation 30003' produces events. Run dump1090 with --net to expose port 30003.",
+                                adsbMode.c_str());
+                        }
+                    }
+                    ImGui::Unindent();
+                }
                 renderBridge("ais",    "AIS Marine VHF",                  "AIS",                  aisModes,    3);
             }
             if (ImGui::CollapsingHeader(T("DSD-FME Digital Voice"), ImGuiTreeNodeFlags_DefaultOpen)) {
