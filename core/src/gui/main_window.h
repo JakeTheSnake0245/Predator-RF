@@ -9,6 +9,7 @@
 #include <mutex>
 #include <gui/tuner.h>
 #include <vector>
+#include "../json.hpp"
 
 #define WINDOW_FLAGS ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground
 
@@ -48,7 +49,13 @@ private:
         PREDATOR_TAB_NETWORK,
         PREDATOR_TAB_MAP,
         PREDATOR_TAB_MISSION,
+        PREDATOR_TAB_KUJHAD,
         PREDATOR_TAB_SYSTEM
+    };
+
+    enum PredatorRole {
+        PREDATOR_ROLE_DEVICE,
+        PREDATOR_ROLE_CONTROLLER
     };
 
     static void vfoAddedHandler(VFOManager::VFO* vfo, void* ctx);
@@ -107,6 +114,58 @@ private:
     int predatorDuplicateHitWindowSec = 20;
     int predatorMarkerSlots = 4;
     std::string predatorScanStatus = "Idle";
+
+    // Kujhad fleet console state. The role determines whether this
+    // instance publishes its state to peers (Device) or pulls state
+    // from peers (Controller). API key is shared per overlay network.
+    int predatorRole = PREDATOR_ROLE_DEVICE;
+    bool kujhadDeviceServerEnabled = false;
+    int kujhadDeviceListenPort = 41947;
+    std::string kujhadApiKey;
+    std::string kujhadDeviceName;
+    std::string kujhadAdvertiseAddress;
+    std::string kujhadDeviceServerStatus = "Idle";
+    bool kujhadDeviceServerRunning = false;
+    int kujhadActivePeerIdx = -1;
+    char kujhadAddPeerName[64] = {0};
+    char kujhadAddPeerHost[128] = {0};
+    char kujhadAddPeerKey[96] = {0};
+    int kujhadAddPeerPort = 41947;
+    std::string kujhadStatusBanner;
+    double kujhadStatusBannerUntil = 0.0;
+    // Thread-safe snapshot of frame-local state that the Kujhad device
+    // server worker threads read on each request. The UI thread refreshes
+    // these values once per frame from inside MainWindow::draw().
+    std::mutex kujhadSnapshotMtx;
+    nlohmann::json kujhadEventsSnapshot = nlohmann::json::array();
+    double kujhadCenterFreqSnapshot = 0.0;
+    bool kujhadPlayingSnapshot = false;
+    int kujhadMissionModeSnapshot = 0;
+    bool kujhadScanRunningSnapshot = false;
+    std::string kujhadScanStatusSnapshot;
+    std::string kujhadSourceNameSnapshot;
+    bool kujhadGpsHasFix = false;
+    double kujhadGpsLat = 0.0;
+    double kujhadGpsLon = 0.0;
+    float kujhadGpsAccuracy = 0.0f;
+    // Queue of commands accepted by the device server and waiting to be
+    // applied on the UI thread. The server worker only enqueues; the
+    // draw() loop drains and applies. This keeps SDR / tuner mutation
+    // off background threads.
+    struct KujhadPendingCommand {
+        std::string commandClass;
+        std::string action;
+        nlohmann::json args;
+    };
+    std::mutex kujhadCommandMtx;
+    std::vector<KujhadPendingCommand> kujhadPendingCommands;
+    // Monotonic event serial for the /v1/events?since=<id> cursor.
+    // Every event row inserted into `events` (locally generated, decoder
+    // bridge, or mirrored from a peer) is tagged with row["serial"] =
+    // ++predatorEventSerial. The Kujhad device server uses this to
+    // emit an incremental tail to controllers and avoid re-pushing the
+    // same rows on every poll.
+    uint64_t predatorEventSerial = 0;
 
     bool initComplete = false;
     bool autostart = false;

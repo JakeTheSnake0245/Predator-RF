@@ -544,6 +544,9 @@
       <div class="tab" data-tab="mission">
         <div class="glyph">▣</div><div>MISN</div>
       </div>
+      <div class="tab" data-tab="kujhad">
+        <div class="glyph">⌖</div><div>KUJ</div>
+      </div>
       <div class="tab" data-tab="system">
         <div class="glyph">⚙</div><div>SYS</div>
       </div>
@@ -912,6 +915,57 @@
             <div class="field" style="grid-column:1 / -1">
               <label>Session Note</label>
               <input value="Predator RF — preview build · Acurite + P25 OPS 1 watch" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KUJHAD FLEET -->
+      <div class="panel" data-panel="kujhad">
+        <div class="panel-head">
+          <h2>Kujhad Fleet</h2>
+          <span class="subtitle">Hub-and-spoke peer console · RX-only command channel</span>
+        </div>
+        <div class="panel-body" style="padding:16px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div style="background:var(--bg-1);border:1px solid var(--line);padding:12px;border-radius:2px">
+              <div style="color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Role</div>
+              <div style="display:flex;gap:10px;align-items:center">
+                <select style="background:var(--bg-2);color:var(--text);border:1px solid var(--line-2);padding:5px 8px">
+                  <option>Device</option>
+                  <option>Controller</option>
+                </select>
+                <span class="pill live">DEVICE MODE</span>
+              </div>
+              <div style="color:var(--text-dim);margin-top:8px;font-size:12px">
+                Device publishes its SDR state, GPS, events and accepts RX-only commands from peers.
+              </div>
+            </div>
+            <div style="background:var(--bg-1);border:1px solid var(--line);padding:12px;border-radius:2px">
+              <div style="color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Device Server</div>
+              <div style="display:grid;grid-template-columns:120px 1fr;gap:4px 10px;font-size:12px">
+                <div style="color:var(--text-dim)">Listen</div><div>0.0.0.0:41947</div>
+                <div style="color:var(--text-dim)">Status</div><div style="color:var(--accent)">Listening</div>
+                <div style="color:var(--text-dim)">API key</div><div>•••••••••• 32 hex</div>
+                <div style="color:var(--text-dim)">Requests</div><div>17 / commands 4 / rejected 1</div>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:14px;background:var(--bg-1);border:1px solid var(--line);padding:12px;border-radius:2px">
+            <div style="color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Reachable Addresses</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text)">
+              <div>[ZT]  ztkujhad     10.241.7.14:41947</div>
+              <div>[TS]  tailscale0   100.83.12.221:41947</div>
+              <div>[LAN] eth0         192.168.7.42:41947</div>
+            </div>
+          </div>
+          <div style="margin-top:14px;background:var(--bg-1);border:1px solid var(--line);padding:12px;border-radius:2px">
+            <div style="color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Protocol</div>
+            <div style="color:var(--text-dim);font-size:12px;line-height:1.6">
+              HTTP/JSON over a private overlay or loopback. Auth: <span style="color:var(--text)">X-Kujhad-Key</span> header.
+              Endpoints: <span style="color:var(--text)">/v1/identify · /v1/state · /v1/gps · /v1/events · /v1/command</span>.
+              Command classes: <span style="color:var(--accent)">tune · scan · mission · identify</span>.
+              The <span style="color:var(--hot)">tx.*</span> class is rejected at the wire (RX-only build).
             </div>
           </div>
         </div>
