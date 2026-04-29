@@ -51,6 +51,7 @@
 #include <vector>
 
 #include "../../../core/src/predator/decoder_ingest.h"
+#include "../../../core/src/predator/native_decoder_registry.h"
 
 extern "C" {
     #include "rtl_433.h"
@@ -113,10 +114,17 @@ public:
 
         gui::menu.registerEntry(name_, menuHandler, this, this);
 
+        // Register with the process-wide native decoder registry so
+        // main_window.cpp can drain decoded events into predatorEvents
+        // each frame (same path the bridge ingesters use).
+        predator::registerNativeDecoder(this, "RTL433",
+            [this](std::size_t maxItems) { return drain(maxItems); });
+
         if (enabled_) startPipeline();
     }
 
     ~Rtl433DecoderModule() override {
+        predator::unregisterNativeDecoder(this);
         gui::menu.removeEntry(name_);
         stopPipeline();
     }
