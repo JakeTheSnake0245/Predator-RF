@@ -161,6 +161,9 @@ namespace ImGui {
         int getFFTHeight();
 
         void setRawFFTSize(int size);
+        // Number of bins per FFT row, matching the buffer returned by
+        // getFFTBuffer(). Used by spectrum mirroring to size copies.
+        int getRawFFTSize() const { return rawFFTSize; }
 
         void setFullWaterfallUpdate(bool fullUpdate);
 
