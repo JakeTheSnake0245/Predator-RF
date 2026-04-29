@@ -37,6 +37,8 @@
 #include <gui/tuner.h>
 #include <backend.h>
 #include "../predator/decoder_ingest.h"
+#include "../predator/kujhad_fleet.h"
+#include <ctime>
 
 void MainWindow::init() {
     LoadingScreen::show("Initializing UI");
@@ -230,6 +232,27 @@ void MainWindow::init() {
     predatorExtendDwellOnStrongHit = core::configManager.conf["predatorExtendDwellOnStrongHit"];
     predatorStrongHitSnrDb = core::configManager.conf["predatorStrongHitSnrDb"];
     predatorClassifyAutoMarker = core::configManager.conf["predatorClassifyAutoMarker"];
+
+    // Kujhad fleet console state. Defaults are populated by core::init() so
+    // these reads are always present.
+    {
+        auto& cfg = core::configManager.conf;
+        predatorRole = std::clamp<int>((int)cfg.value("predatorRole", (int)PREDATOR_ROLE_DEVICE),
+                                       (int)PREDATOR_ROLE_DEVICE, (int)PREDATOR_ROLE_CONTROLLER);
+        kujhadDeviceServerEnabled = cfg.value("kujhadDeviceServerEnabled", false);
+        kujhadDeviceListenPort = std::clamp<int>(cfg.value("kujhadDeviceListenPort", 41947), 1, 65535);
+        kujhadApiKey = cfg.value("kujhadApiKey", std::string(""));
+        kujhadDeviceName = cfg.value("kujhadDeviceName", std::string(""));
+        kujhadAdvertiseAddress = cfg.value("kujhadAdvertiseAddress", std::string(""));
+        if (kujhadApiKey.empty()) {
+            kujhadApiKey = predator::kujhadGenerateApiKey();
+            cfg["kujhadApiKey"] = kujhadApiKey;
+        }
+        if (kujhadDeviceName.empty()) {
+            kujhadDeviceName = std::string("predator-") + std::to_string((int)(std::time(nullptr) % 100000));
+            cfg["kujhadDeviceName"] = kujhadDeviceName;
+        }
+    }
 
     tuningMode = core::configManager.conf["centerTuning"] ? tuner::TUNER_MODE_CENTER : tuner::TUNER_MODE_NORMAL;
     gui::waterfall.VFOMoveSingleClick = (tuningMode == tuner::TUNER_MODE_CENTER);
@@ -521,6 +544,7 @@ void MainWindow::draw() {
         "NET",
         "MAP",
         "MIS",
+        "KUJ",
         "SYS"
     };
 
@@ -530,6 +554,7 @@ void MainWindow::draw() {
         T("Network"),
         T("Map"),
         T("Mission Config"),
+        T("Kujhad Fleet"),
         T("System")
     };
 
@@ -539,6 +564,7 @@ void MainWindow::draw() {
         T("Hold the Predator RF navigation slot for decoder-backed structure and labels."),
         T("Launch the touch-first phone map tied to handset GPS."),
         T("Drive search bands, targets, excludes, dwell, and quick-scan workflow."),
+        T("Operate this unit as a Device or pull peer state from a Controller."),
         T("Health, theme, legacy modules, and operator-level status.")
     };
 
@@ -558,6 +584,18 @@ void MainWindow::draw() {
         core::configManager.conf["predatorHitSortMode"] = predatorHitSortMode;
         core::configManager.conf["predatorEventFilter"] = predatorEventFilter;
         core::configManager.conf["predatorLanguage"] = predatorLanguage;
+        core::configManager.conf["predatorRole"] = predatorRole;
+        core::configManager.conf["kujhadDeviceServerEnabled"] = kujhadDeviceServerEnabled;
+        core::configManager.conf["kujhadDeviceListenPort"] = kujhadDeviceListenPort;
+        core::configManager.conf["kujhadApiKey"] = kujhadApiKey;
+        core::configManager.conf["kujhadDeviceName"] = kujhadDeviceName;
+        core::configManager.conf["kujhadAdvertiseAddress"] = kujhadAdvertiseAddress;
+        core::configManager.release(true);
+    };
+
+    auto saveKujhadPeers = [&](const json& peers) {
+        core::configManager.acquire();
+        core::configManager.conf["kujhadPeers"] = peers;
         core::configManager.release(true);
     };
 
@@ -992,6 +1030,7 @@ void MainWindow::draw() {
         row["hasAudio"] = false;
         row["hasData"] = false;
         row["source"] = sourceName.empty() ? "None" : sourceName;
+        row["sourceDevice"] = "local";
         row["mode"] = predatorMissionMode;
         row["gpsFix"] = phoneHasFix;
         if (phoneHasFix) {
@@ -999,6 +1038,7 @@ void MainWindow::draw() {
             row["lon"] = phoneLon;
             row["accuracyM"] = phoneAccuracy;
         }
+        row["serial"] = ++predatorEventSerial;
         events.insert(events.begin(), row);
         while (events.size() > 200) {
             events.erase(events.end() - 1);
@@ -1078,6 +1118,7 @@ void MainWindow::draw() {
                     row["accuracyM"] = phoneAccuracy;
                 }
                 row["raw"] = e.raw;
+                row["serial"] = ++predatorEventSerial;
                 events.insert(events.begin(), row);
             }
             while (events.size() > 200) events.erase(events.end() - 1);
@@ -1162,6 +1203,7 @@ void MainWindow::draw() {
                     row["aircraftLon"] = e.raw["lon"];
                 }
                 row["raw"] = e.raw;
+                row["serial"] = ++predatorEventSerial;
                 events.insert(events.begin(), row);
             }
             while (events.size() > 200) events.erase(events.end() - 1);
@@ -1248,10 +1290,262 @@ void MainWindow::draw() {
                     row["encrypted"] = e.raw["encrypted"];
                 }
                 row["raw"] = e.raw;
+                row["serial"] = ++predatorEventSerial;
                 events.insert(events.begin(), row);
             }
             while (events.size() > 200) events.erase(events.end() - 1);
             savePredatorEvents(events);
+        }
+    }
+
+    // -------- Kujhad fleet lifecycle --------
+    // Device-side server runs when role==Device and the server is enabled.
+    // Controller-side clients are reloaded from the persisted peer list
+    // any time it changes. Both halves are reused across roles so an
+    // operator can run as a Device while still browsing peers; only the
+    // active workflow differs by role.
+    static predator::KujhadDeviceServer kujhadServer;
+    static bool kujhadProvidersBound = false;
+
+    // Bind snapshot providers exactly once. The captures see the current
+    // frame's locals via reference; this is safe because all callers run
+    // from worker threads that read snapshots through atomics or copies.
+    if (!kujhadProvidersBound) {
+        kujhadProvidersBound = true;
+        kujhadServer.setIdentifyProvider([this]() {
+            std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
+            json j;
+            j["device"]      = kujhadDeviceName;
+            j["version"]     = "Predator RF 1.x (Kujhad v1)";
+            j["role"]        = (predatorRole == PREDATOR_ROLE_CONTROLLER) ? "controller" : "device";
+            j["api"]         = 1;
+            j["rxOnly"]      = true;
+            // Operator-supplied advertised address. Empty means "let
+            // the controller use whatever IP it dialed in on" — the
+            // Reachable Addresses panel surfaces auto-detected NICs as
+            // a fallback.
+            j["advertise"]   = kujhadAdvertiseAddress;
+            j["hwProfile"]   = {
+                {"source", kujhadSourceNameSnapshot.empty() ? std::string("None") : kujhadSourceNameSnapshot},
+                {"centerFreq", kujhadCenterFreqSnapshot}
+            };
+            return j;
+        });
+        kujhadServer.setStateProvider([this]() {
+            std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
+            json j;
+            j["centerFreq"]  = kujhadCenterFreqSnapshot;
+            j["playing"]     = kujhadPlayingSnapshot;
+            j["missionMode"] = kujhadMissionModeSnapshot;
+            j["scanRunning"] = kujhadScanRunningSnapshot;
+            j["scanStatus"]  = kujhadScanStatusSnapshot;
+            return j;
+        });
+        kujhadServer.setGpsProvider([this]() {
+            std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
+            json j;
+            j["hasFix"]   = kujhadGpsHasFix;
+            j["lat"]      = kujhadGpsLat;
+            j["lon"]      = kujhadGpsLon;
+            j["accuracy"] = kujhadGpsAccuracy;
+            return j;
+        });
+        kujhadServer.setEventsProvider([this](uint64_t since) {
+            // Incremental cursor: only events with serial > since are
+            // returned. lastId is the max serial seen in the snapshot,
+            // so the controller advances its `since` watermark and
+            // never receives the same row twice. The snapshot is the
+            // newest-first tail kept by the UI thread; we filter and
+            // re-emit oldest-first so the controller can append in
+            // order without sorting.
+            std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
+            json events = json::array();
+            uint64_t lastId = since;
+            // kujhadEventsSnapshot is newest-first; iterate in reverse
+            // to deliver oldest-first.
+            for (int i = (int)kujhadEventsSnapshot.size() - 1; i >= 0; i--) {
+                const auto& row = kujhadEventsSnapshot[i];
+                if (!row.is_object()) continue;
+                uint64_t serial = row.contains("serial") && row["serial"].is_number_unsigned()
+                                ? row["serial"].get<uint64_t>()
+                                : (row.contains("serial") && row["serial"].is_number_integer()
+                                   ? (uint64_t)row["serial"].get<int64_t>()
+                                   : 0);
+                if (serial == 0) continue; // untagged rows skip the wire
+                if (serial <= since) continue;
+                events.push_back(row);
+                if (serial > lastId) lastId = serial;
+            }
+            json j;
+            j["events"] = events;
+            j["lastId"] = lastId;
+            return j;
+        });
+        kujhadServer.setCommandHandler([this](const predator::KujhadDeviceCommand& cmd, std::string& errOut) {
+            // Validate basic shape on the worker thread, then enqueue
+            // for the UI thread to actually mutate SDR state. The
+            // protocol still returns ok=true here because the command
+            // was accepted; rejection happens at the wire/protocol layer
+            // (tx.* class) and is reported as 403 separately.
+            if (cmd.commandClass == "tune" && cmd.action == "set") {
+                if (cmd.args.value("frequencyHz", 0.0) <= 0) {
+                    errOut = "frequencyHz required"; return false;
+                }
+            }
+            else if (cmd.commandClass == "mission" && cmd.action == "setMode") {
+                int mode = cmd.args.value("mode", -1);
+                if (mode < PREDATOR_MODE_MANUAL || mode > PREDATOR_MODE_QUICKSCAN) {
+                    errOut = "invalid mode"; return false;
+                }
+            }
+            else if (cmd.commandClass == "identify") {
+                // Ack only — no action needed.
+                return true;
+            }
+            else if (cmd.commandClass == "scan") {
+                if (cmd.action != "start" && cmd.action != "stop") {
+                    errOut = "unknown scan action"; return false;
+                }
+            }
+            else {
+                errOut = "unhandled command";
+                return false;
+            }
+            std::lock_guard<std::mutex> lk(kujhadCommandMtx);
+            kujhadPendingCommands.push_back({ cmd.commandClass, cmd.action, cmd.args });
+            return true;
+        });
+    }
+
+    // Refresh the snapshot members so the device-server providers have
+    // current data on the next request. Cheap copies under a short lock.
+    {
+        std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
+        kujhadCenterFreqSnapshot   = gui::waterfall.getCenterFrequency();
+        kujhadPlayingSnapshot      = playing;
+        kujhadMissionModeSnapshot  = predatorMissionMode;
+        kujhadScanRunningSnapshot  = predatorScanRunning;
+        kujhadScanStatusSnapshot   = predatorScanStatus;
+        kujhadSourceNameSnapshot   = sourceName;
+        kujhadGpsHasFix            = phoneHasFix;
+        kujhadGpsLat               = phoneLat;
+        kujhadGpsLon               = phoneLon;
+        kujhadGpsAccuracy          = phoneAccuracy;
+        // Tail of last 32 events.
+        kujhadEventsSnapshot = json::array();
+        int n = (int)std::min<size_t>(events.size(), 32);
+        for (int i = n - 1; i >= 0; i--) {
+            kujhadEventsSnapshot.push_back(events[i]);
+        }
+    }
+
+    // Drain any pending commands from the device server worker.
+    {
+        std::vector<KujhadPendingCommand> drained;
+        {
+            std::lock_guard<std::mutex> lk(kujhadCommandMtx);
+            drained.swap(kujhadPendingCommands);
+        }
+        for (auto& cmd : drained) {
+            if (cmd.commandClass == "tune" && cmd.action == "set") {
+                double freq = cmd.args.value("frequencyHz", 0.0);
+                if (freq > 0) {
+                    gui::freqSelect.setFrequency(freq);
+                    sigpath::sourceManager.tune(freq);
+                    gui::waterfall.setCenterFrequency(freq);
+                }
+            }
+            else if (cmd.commandClass == "scan") {
+                if (cmd.action == "start") predatorScanRunning = true;
+                else if (cmd.action == "stop") predatorScanRunning = false;
+            }
+            else if (cmd.commandClass == "mission" && cmd.action == "setMode") {
+                int mode = cmd.args.value("mode", -1);
+                if (mode >= PREDATOR_MODE_MANUAL && mode <= PREDATOR_MODE_QUICKSCAN) {
+                    predatorMissionMode = mode;
+                }
+            }
+        }
+    }
+
+    // Match desired vs running state for the Device server.
+    {
+        bool wantRun = (predatorRole == PREDATOR_ROLE_DEVICE) && kujhadDeviceServerEnabled;
+        if (wantRun && !kujhadServer.isRunning()) {
+            kujhadServer.start(kujhadDeviceListenPort, kujhadApiKey);
+            kujhadDeviceServerRunning = kujhadServer.isListening();
+        }
+        if (!wantRun && kujhadServer.isRunning()) {
+            kujhadServer.stop();
+            kujhadDeviceServerRunning = false;
+        }
+        kujhadDeviceServerStatus = kujhadServer.status();
+        kujhadDeviceServerRunning = kujhadServer.isListening();
+    }
+
+    // Controller side: persisted peers turn into per-peer worker clients.
+    // We diff the persisted list against the live client list each frame
+    // and reconcile (add new, remove deleted, restart on config change).
+    static std::vector<std::unique_ptr<predator::KujhadControllerClient>> kujhadClients;
+    static std::vector<json> kujhadActivePeers; // mirror of persisted peers
+    {
+        json& persistedPeers = core::configManager.conf["kujhadPeers"];
+        if (!persistedPeers.is_array()) persistedPeers = json::array();
+        bool wantRun = (predatorRole == PREDATOR_ROLE_CONTROLLER);
+        // Detect change via crude content compare against active mirror.
+        bool changed = (persistedPeers.size() != kujhadActivePeers.size());
+        if (!changed) {
+            for (size_t i = 0; i < persistedPeers.size() && !changed; i++) {
+                if (persistedPeers[i] != kujhadActivePeers[i]) changed = true;
+            }
+        }
+        if (changed || (wantRun && kujhadClients.size() != persistedPeers.size())) {
+            // Tear down current clients and rebuild from scratch — the
+            // peer count is small (typically 1-4) so a full rebuild is
+            // simpler than incremental diffing.
+            for (auto& c : kujhadClients) { if (c) c->stop(); }
+            kujhadClients.clear();
+            kujhadActivePeers.clear();
+            if (wantRun) {
+                for (auto& p : persistedPeers) {
+                    auto client = std::make_unique<predator::KujhadControllerClient>();
+                    bool enabled = readJsonBool(p, "enabled", true);
+                    if (enabled) {
+                        client->start(readJsonString(p, "host", "127.0.0.1"),
+                                      (int)readJsonDouble(p, "port", 41947.0),
+                                      readJsonString(p, "apiKey", kujhadApiKey));
+                    }
+                    kujhadClients.push_back(std::move(client));
+                    kujhadActivePeers.push_back(p);
+                }
+            }
+        }
+        if (!wantRun && !kujhadClients.empty()) {
+            for (auto& c : kujhadClients) { if (c) c->stop(); }
+            kujhadClients.clear();
+            kujhadActivePeers.clear();
+        }
+        // Drain peer events into the local event log, tagged with the
+        // sourceDevice = peer name so the Hits/Network tables can show
+        // origin without a join.
+        for (size_t i = 0; i < kujhadClients.size() && i < kujhadActivePeers.size(); i++) {
+            auto& c = kujhadClients[i];
+            if (!c) continue;
+            std::string peerName = readJsonString(kujhadActivePeers[i], "name", "peer");
+            auto pendingEvents = c->drainEvents(64);
+            for (auto& e : pendingEvents) {
+                if (!e.is_object()) continue;
+                json row = e;
+                row["sourceDevice"] = peerName;
+                if (!row.contains("source")) row["source"] = "Peer:" + peerName;
+                // Re-stamp serial on local insertion so the local
+                // /v1/events stream has its own monotonic cursor —
+                // the peer's own serial may collide with ours.
+                row["peerSerial"] = row.value("serial", (uint64_t)0);
+                row["serial"] = ++predatorEventSerial;
+                events.insert(events.begin(), row);
+            }
+            while (events.size() > 200) events.erase(events.end() - 1);
         }
     }
 
@@ -2661,8 +2955,12 @@ void MainWindow::draw() {
                         std::string evType    = readJsonString(events[i], "type",      "event");
                         std::string evLabel   = readJsonString(events[i], "label",     evType);
                         std::string evDecoder = readJsonString(events[i], "decoder",   "None");
+                        std::string evDevice  = readJsonString(events[i], "sourceDevice", "local");
                         double      evFreq    = readJsonDouble(events[i], "frequency",  0.0);
                         double      evStr     = readJsonDouble(events[i], "strengthDb", 0.0);
+                        double      evLat     = readJsonDouble(events[i], "lat",        0.0);
+                        double      evLon     = readJsonDouble(events[i], "lon",        0.0);
+                        bool        evHasGps  = (evLat != 0.0 || evLon != 0.0);
 
                         ImVec4 evCol;
                         if      (evType == "hit")    { evCol = ImVec4(0.20f, 0.86f, 0.40f, 1.0f); }
@@ -2671,10 +2969,26 @@ void MainWindow::draw() {
                         else if (evDecoder != "None"){ evCol = ImVec4(0.75f, 0.35f, 0.90f, 1.0f); }
                         else                         { evCol = ImVec4(0.65f, 0.65f, 0.65f, 1.0f); }
 
+                        // Source-device column: highlight peer-origin rows in
+                        // amber so the operator can see at a glance which
+                        // events came in through the fleet console.
+                        ImVec4 devCol = (evDevice == "local")
+                            ? ImVec4(0.55f, 0.55f, 0.55f, 1.0f)
+                            : ImVec4(0.95f, 0.65f, 0.20f, 1.0f);
+                        ImGui::TextColored(devCol, "[%-10s]", evDevice.c_str());
+                        ImGui::SameLine();
                         ImGui::TextColored(evCol, "[%s] %-8s %s  %.0f dB  %s",
                             evTime.c_str(), evType.c_str(),
                             formatFrequency(evFreq).c_str(), evStr,
                             (evDecoder != "None") ? evDecoder.c_str() : evLabel.c_str());
+                        if (evHasGps) {
+                            ImGui::SameLine();
+                            ImGui::PushID(i);
+                            if (ImGui::SmallButton(T("\u2192 Map"))) {
+                                predatorTab = PREDATOR_TAB_MAP;
+                            }
+                            ImGui::PopID();
+                        }
                     }
                 }
                 ImGui::EndChild();
@@ -3392,6 +3706,46 @@ void MainWindow::draw() {
                     backend::openMapView();
                 }
             }
+            if (ImGui::CollapsingHeader(T("Fleet Peers"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                // List every Kujhad peer with a known GPS fix as a marker
+                // candidate. The Android map view uses these via its own
+                // peer-marker layer; here we surface them so the operator
+                // can confirm what will be plotted.
+                json& peers = core::configManager.conf["kujhadPeers"];
+                if (!peers.is_array() || peers.empty()) {
+                    ImGui::TextDisabled("%s", T("No fleet peers configured. Add some in the Kujhad tab."));
+                } else {
+                    int markerCount = 0;
+                    for (size_t i = 0; i < peers.size() && i < kujhadClients.size(); i++) {
+                        if (!kujhadClients[i]) continue;
+                        std::string name = readJsonString(peers[i], "name", "peer");
+                        predator::KujhadPeerSnapshot snap = kujhadClients[i]->snapshot();
+                        if (!snap.reachable) {
+                            ImGui::TextDisabled("[%s] %s", name.c_str(), T("offline"));
+                            continue;
+                        }
+                        bool hasFix = snap.gps.is_object() && snap.gps.value("hasFix", false);
+                        if (!hasFix) {
+                            ImGui::TextDisabled("[%s] %s", name.c_str(), T("no GPS fix"));
+                            continue;
+                        }
+                        double pLat = snap.gps.value("lat", 0.0);
+                        double pLon = snap.gps.value("lon", 0.0);
+                        double pAcc = snap.gps.value("accuracy", 0.0);
+                        std::string role = snap.identify.is_object()
+                            ? snap.identify.value("role", std::string("?")) : std::string("?");
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+                        ImGui::Text("[%s]", name.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::SameLine();
+                        ImGui::Text("%.6f, %.6f  +/-%.1fm  role=%s",
+                                    pLat, pLon, pAcc, role.c_str());
+                        markerCount++;
+                    }
+                    ImGui::TextDisabled("%s: %d", T("Peer markers ready"), markerCount);
+                    ImGui::TextWrapped("%s", T("Peer markers are plotted on the tactical map alongside the local position. Tap one to see device, role, and last sync time."));
+                }
+            }
             if (ImGui::CollapsingHeader(T("DF Status"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextWrapped("Direction-finding is intentionally excluded for now. Only the placeholder directory exists so we can add it cleanly later.");
             }
@@ -3676,6 +4030,226 @@ void MainWindow::draw() {
                 saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
             }
         }
+        else if (predatorTab == PREDATOR_TAB_KUJHAD) {
+            // Role selector — toggling changes which workflow runs.
+            if (ImGui::CollapsingHeader(T("Role"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                int role = predatorRole;
+                if (ImGui::Combo(T("Role##kujhad_role"), &role, "Device\0Controller\0")) {
+                    predatorRole = role;
+                    savePredatorState();
+                }
+                ImGui::TextWrapped("%s",
+                    (predatorRole == PREDATOR_ROLE_DEVICE)
+                        ? T("Device: this unit publishes its SDR state to peers and accepts RX-only commands from a Controller.")
+                        : T("Controller: this unit pulls state from one or more remote Devices and can take control of any peer."));
+            }
+
+            if (predatorRole == PREDATOR_ROLE_DEVICE) {
+                if (ImGui::CollapsingHeader(T("Device Server"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    bool enabled = kujhadDeviceServerEnabled;
+                    if (ImGui::Checkbox(T("Enable peer access"), &enabled)) {
+                        kujhadDeviceServerEnabled = enabled;
+                        savePredatorState();
+                    }
+                    int port = kujhadDeviceListenPort;
+                    if (ImGui::InputInt(T("Listen port"), &port)) {
+                        kujhadDeviceListenPort = std::clamp(port, 1, 65535);
+                        savePredatorState();
+                    }
+                    char nameBuf[64];
+                    std::snprintf(nameBuf, sizeof(nameBuf), "%s", kujhadDeviceName.c_str());
+                    if (ImGui::InputText(T("Device name"), nameBuf, sizeof(nameBuf))) {
+                        kujhadDeviceName = nameBuf;
+                        savePredatorState();
+                    }
+                    // Optional operator override for the address that will
+                    // be advertised to controllers in the identify payload
+                    // and shown in Reachable Addresses. Useful when the
+                    // detected NICs aren't what the operator wants peers
+                    // to dial — for example a NAT'd public IP, a DNS name,
+                    // or the inside-VPN address when multi-homed.
+                    char advBuf[128];
+                    std::snprintf(advBuf, sizeof(advBuf), "%s", kujhadAdvertiseAddress.c_str());
+                    if (ImGui::InputText(T("Advertise address (override)"), advBuf, sizeof(advBuf))) {
+                        kujhadAdvertiseAddress = advBuf;
+                        savePredatorState();
+                    }
+                    ImGui::TextDisabled("%s", T("Leave empty to publish only the auto-detected NICs below."));
+                    char keyBuf[96];
+                    std::snprintf(keyBuf, sizeof(keyBuf), "%s", kujhadApiKey.c_str());
+                    if (ImGui::InputText(T("API key"), keyBuf, sizeof(keyBuf))) {
+                        kujhadApiKey = keyBuf;
+                        kujhadServer.setApiKey(kujhadApiKey);
+                        savePredatorState();
+                    }
+                    if (ImGui::Button(T("Regenerate API key"))) {
+                        kujhadApiKey = predator::kujhadGenerateApiKey();
+                        kujhadServer.setApiKey(kujhadApiKey);
+                        savePredatorState();
+                    }
+                    ImGui::Text("%s: %s", T("Status"), kujhadDeviceServerStatus.c_str());
+                    ImGui::Text("%s: %s", T("Listening"), kujhadDeviceServerRunning ? "yes" : "no");
+                    ImGui::Text("%s: %d / %s: %d / %s: %d",
+                                T("Requests"), kujhadServer.inboundRequests(),
+                                T("Commands"), kujhadServer.inboundCommands(),
+                                T("Rejected"), kujhadServer.rejectedCommands());
+                    ImGui::TextWrapped("%s", T("Plain HTTP over a private overlay (Tailscale/ZeroTier) or loopback for v1. TLS is on the v1.x roadmap; the wire protocol is unchanged."));
+                }
+
+                if (ImGui::CollapsingHeader(T("Reachable Addresses"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (!kujhadAdvertiseAddress.empty()) {
+                        // Operator override always wins; show it first
+                        // and highlighted so peers know which entry to
+                        // dial.
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+                        ImGui::Text("[OVERRIDE]   %s:%d", kujhadAdvertiseAddress.c_str(), kujhadDeviceListenPort);
+                        ImGui::PopStyleColor();
+                        ImGui::TextDisabled("%s", T("Published in /v1/identify as advertise=..."));
+                        ImGui::Separator();
+                    }
+                    auto cands = predator::kujhadEnumerateInterfaces();
+                    if (cands.empty() && kujhadAdvertiseAddress.empty()) {
+                        ImGui::TextDisabled("%s", T("No non-loopback IPv4 interfaces detected."));
+                    }
+                    for (auto& c : cands) {
+                        const char* tag = c.isZerotier ? "[ZT] "
+                                       : c.isTailscale ? "[TS] "
+                                       : c.isPrivate   ? "[LAN] "
+                                       :                 "";
+                        ImGui::Text("%s%-12s %s:%d", tag, c.name.c_str(), c.address.c_str(), kujhadDeviceListenPort);
+                    }
+                    ImGui::TextWrapped("%s", T("ZeroTier and Tailscale interfaces are preferred for cross-instance traffic. Override above to publish a different host (e.g. DNS name, NAT'd IP)."));
+                }
+            }
+            else { // Controller
+                if (ImGui::CollapsingHeader(T("Peers"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    json& peers = core::configManager.conf["kujhadPeers"];
+                    if (!peers.is_array()) peers = json::array();
+                    if (peers.empty()) {
+                        ImGui::TextDisabled("%s", T("No peers configured. Add one below."));
+                    }
+                    int delIdx = -1;
+                    for (size_t i = 0; i < peers.size(); i++) {
+                        ImGui::PushID((int)i);
+                        std::string name = readJsonString(peers[i], "name", "peer");
+                        std::string host = readJsonString(peers[i], "host", "127.0.0.1");
+                        int port = (int)readJsonDouble(peers[i], "port", 41947.0);
+                        bool enabled = readJsonBool(peers[i], "enabled", true);
+                        bool live = (i < kujhadClients.size() && kujhadClients[i] && kujhadClients[i]->isRunning());
+                        predator::KujhadPeerSnapshot snap;
+                        if (i < kujhadClients.size() && kujhadClients[i]) snap = kujhadClients[i]->snapshot();
+                        ImGui::Text("%s  %s:%d  %s", name.c_str(), host.c_str(), port,
+                                    snap.reachable ? "REACHABLE" : (live ? "trying..." : "stopped"));
+                        if (snap.reachable) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("(%dms)", snap.linkLatencyMs);
+                        }
+                        if (ImGui::Checkbox(T("Enabled"), &enabled)) {
+                            peers[i]["enabled"] = enabled;
+                            saveKujhadPeers(peers);
+                        }
+                        ImGui::SameLine();
+                        bool isActive = ((int)i == kujhadActivePeerIdx);
+                        if (ImGui::RadioButton(T("Take control"), isActive)) {
+                            kujhadActivePeerIdx = (int)i;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(T("Remove"))) {
+                            delIdx = (int)i;
+                        }
+                        if (snap.reachable && snap.identify.is_object()) {
+                            ImGui::TextDisabled("device=%s role=%s",
+                                snap.identify.value("device", std::string("?")).c_str(),
+                                snap.identify.value("role", std::string("?")).c_str());
+                        }
+                        if (!snap.lastError.empty() && !snap.reachable) {
+                            ImGui::TextDisabled("err: %s", snap.lastError.c_str());
+                        }
+                        ImGui::Separator();
+                        ImGui::PopID();
+                    }
+                    if (delIdx >= 0) {
+                        peers.erase(peers.begin() + delIdx);
+                        saveKujhadPeers(peers);
+                        if (kujhadActivePeerIdx == delIdx) kujhadActivePeerIdx = -1;
+                    }
+                }
+
+                if (ImGui::CollapsingHeader(T("Add Peer"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::InputText(T("Name"), kujhadAddPeerName, sizeof(kujhadAddPeerName));
+                    ImGui::InputText(T("Host"), kujhadAddPeerHost, sizeof(kujhadAddPeerHost));
+                    ImGui::InputInt(T("Port"), &kujhadAddPeerPort);
+                    ImGui::InputText(T("API Key"), kujhadAddPeerKey, sizeof(kujhadAddPeerKey));
+                    if (ImGui::Button(T("Add peer"))) {
+                        if (kujhadAddPeerName[0] && kujhadAddPeerHost[0]) {
+                            json& peers = core::configManager.conf["kujhadPeers"];
+                            if (!peers.is_array()) peers = json::array();
+                            json p;
+                            p["name"]    = std::string(kujhadAddPeerName);
+                            p["host"]    = std::string(kujhadAddPeerHost);
+                            p["port"]    = std::clamp(kujhadAddPeerPort, 1, 65535);
+                            p["apiKey"]  = std::string(kujhadAddPeerKey);
+                            p["enabled"] = true;
+                            peers.push_back(p);
+                            saveKujhadPeers(peers);
+                            kujhadAddPeerName[0] = 0;
+                            kujhadAddPeerHost[0] = 0;
+                            kujhadAddPeerKey[0]  = 0;
+                        }
+                    }
+                }
+
+                if (ImGui::CollapsingHeader(T("Active Peer Commands"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (kujhadActivePeerIdx < 0 || kujhadActivePeerIdx >= (int)kujhadClients.size()) {
+                        ImGui::TextDisabled("%s", T("Select 'Take control' on a peer above to enable commands."));
+                    }
+                    else {
+                        auto& client = kujhadClients[kujhadActivePeerIdx];
+                        static double cmdFreq = 433920000.0;
+                        ImGui::InputDouble(T("Frequency Hz"), &cmdFreq, 1000.0, 1000000.0, "%.0f");
+                        if (ImGui::Button(T("Send tune.set"))) {
+                            std::string err;
+                            json args; args["frequencyHz"] = cmdFreq;
+                            bool ok = client && client->sendCommand("tune", "set", args, err);
+                            kujhadStatusBanner = ok ? std::string(T("tune.set ok"))
+                                                    : (std::string(T("tune.set failed: ")) + err);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(T("Identify"))) {
+                            std::string err;
+                            bool ok = client && client->sendCommand("identify", "ping", json::object(), err);
+                            kujhadStatusBanner = ok ? std::string(T("identify ok"))
+                                                    : (std::string(T("identify failed: ")) + err);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(T("Scan start"))) {
+                            std::string err;
+                            bool ok = client && client->sendCommand("scan", "start", json::object(), err);
+                            kujhadStatusBanner = ok ? std::string(T("scan.start ok"))
+                                                    : (std::string(T("scan.start failed: ")) + err);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(T("Scan stop"))) {
+                            std::string err;
+                            bool ok = client && client->sendCommand("scan", "stop", json::object(), err);
+                            kujhadStatusBanner = ok ? std::string(T("scan.stop ok"))
+                                                    : (std::string(T("scan.stop failed: ")) + err);
+                        }
+                        if (!kujhadStatusBanner.empty()) {
+                            ImGui::TextWrapped("%s", kujhadStatusBanner.c_str());
+                        }
+                    }
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Protocol"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextWrapped("%s", T(
+                    "Kujhad v1 protocol: HTTP/JSON over a private overlay or loopback. "
+                    "Auth = X-Kujhad-Key header. Endpoints: /v1/identify, /v1/state, "
+                    "/v1/gps, /v1/events, /v1/command. Command classes: tune, scan, "
+                    "mission, identify. The tx.* class is rejected at the wire (RX-only build)."));
+            }
+        }
         else {
             if (ImGui::CollapsingHeader(T("Language"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 int languageIndex = (predatorLanguage == "zh-Hant") ? 1 : 0;
@@ -3824,7 +4398,7 @@ void MainWindow::draw() {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true);
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         bool activeTab = (predatorTab == i);
         if (activeTab) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));

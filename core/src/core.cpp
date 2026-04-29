@@ -284,6 +284,15 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["predatorHits"] = json::array();
     defConfig["predatorEvents"] = json::array();
     defConfig["predatorNetworkAliases"] = json::object();
+    // Kujhad fleet console — role + device server defaults. The API key
+    // and device name are filled in by the UI on first run if blank.
+    defConfig["predatorRole"] = 0; // 0 = Device, 1 = Controller
+    defConfig["kujhadDeviceServerEnabled"] = false;
+    defConfig["kujhadDeviceListenPort"] = 41947;
+    defConfig["kujhadApiKey"] = "";
+    defConfig["kujhadDeviceName"] = "";
+    defConfig["kujhadAdvertiseAddress"] = "";
+    defConfig["kujhadPeers"] = json::array();
     defConfig["showMenu"] = true;
     defConfig["showWaterfall"] = true;
 #ifdef __ANDROID__
