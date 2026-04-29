@@ -36,7 +36,7 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments "-DOPT_BACKEND_GLFW=OFF", "-DOPT_BACKEND_ANDROID=ON", "-DOPT_BUILD_SOAPY_SOURCE=OFF", "-DOPT_BUILD_ANDROID_AUDIO_SINK=ON", "-DOPT_BUILD_AUDIO_SINK=OFF", "-DOPT_BUILD_DISCORD_PRESENCE=OFF", "-DOPT_BUILD_M17_DECODER=ON", "-DOPT_BUILD_PLUTOSDR_SOURCE=ON", "-DOPT_BUILD_AUDIO_SOURCE=OFF", "-DSDR_KIT_ROOT=${sdrKitRoot}"
+                arguments "-DOPT_BACKEND_GLFW=OFF", "-DOPT_BACKEND_ANDROID=ON", "-DOPT_BUILD_SOAPY_SOURCE=OFF", "-DOPT_BUILD_ANDROID_AUDIO_SINK=ON", "-DOPT_BUILD_AUDIO_SINK=OFF", "-DOPT_BUILD_DISCORD_PRESENCE=OFF", "-DOPT_BUILD_M17_DECODER=ON", "-DOPT_BUILD_RTL433_DECODER=ON", "-DOPT_BUILD_PLUTOSDR_SOURCE=ON", "-DOPT_BUILD_AUDIO_SOURCE=OFF", "-DSDR_KIT_ROOT=${sdrKitRoot}"
                 targets "sdrpp_core",
                         "airspy_source",
                         "airspyhf_source",
@@ -53,6 +53,7 @@ android {
                         "audio_sink",
                         "network_sink",
                         "m17_decoder",
+                        "rtl433_decoder",
                         "meteor_demodulator",
                         "radio",
                         "frequency_manager",

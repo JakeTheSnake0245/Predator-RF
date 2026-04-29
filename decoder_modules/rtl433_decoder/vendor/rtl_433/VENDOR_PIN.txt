@@ -1,0 +1,2 @@
+VENDOR-VERSION-PIN: rtl_433 24.10 (https://github.com/merbanan/rtl_433/releases/tag/24.10)
+License: GPL-2.0-or-later (compatible with SDR++ GPL-3.0)
