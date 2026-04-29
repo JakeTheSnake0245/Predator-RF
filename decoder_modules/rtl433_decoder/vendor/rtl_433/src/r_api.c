@@ -15,6 +15,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
+#include <limits.h>   /* Predator: UINT_MAX (used in priority loops ~L502, L563) */
+#include <errno.h>    /* Predator: errno (used in dumper fstat error path ~L1158) */
 
 #include "r_api.h"
 #include "r_util.h"
