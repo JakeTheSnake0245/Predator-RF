@@ -7,6 +7,7 @@
 #include <string>
 #include <utils/event.h>
 #include <mutex>
+#include <atomic>
 #include <gui/tuner.h>
 #include <vector>
 #include "../json.hpp"
@@ -139,6 +140,9 @@ private:
     std::mutex kujhadSnapshotMtx;
     nlohmann::json kujhadEventsSnapshot = nlohmann::json::array();
     double kujhadCenterFreqSnapshot = 0.0;
+    double kujhadBandwidthSnapshot = 0.0;
+    float kujhadFFTMinSnapshot = -120.0f;
+    float kujhadFFTMaxSnapshot = 0.0f;
     bool kujhadPlayingSnapshot = false;
     int kujhadMissionModeSnapshot = 0;
     bool kujhadScanRunningSnapshot = false;
@@ -159,6 +163,49 @@ private:
     };
     std::mutex kujhadCommandMtx;
     std::vector<KujhadPendingCommand> kujhadPendingCommands;
+    // Spectrum mirror state. The IQFrontEnd FFT thread fills
+    // `kujhadSpectrumRaw` (sized fftSize) under `kujhadSpectrumMtx` so the
+    // device server can downsample to ~`kujhadSpectrumBins` bins on demand.
+    // Controller-side, the Kujhad tab decides whether to forward a peer
+    // frame into the local waterfall (kujhadMirrorPeerSpectrum=true).
+    std::mutex kujhadSpectrumMtx;
+    std::vector<float> kujhadSpectrumRaw;
+    int kujhadSpectrumRawSize = 0;
+    // Pointer captured by acquireFFTBuffer and reused by releaseFFTBuffer
+    // to snapshot the freshly written FFT row WITHOUT re-entering
+    // waterfall.getFFTBuffer() (which mutates lock state and would
+    // unbalance the buf_mtx held by acquire/pushFFT).
+    float* kujhadLastAcquiredBuf = nullptr;
+    int kujhadLastAcquiredSize = 0;
+    bool kujhadSpectrumHaveRaw = false;
+    uint64_t kujhadSpectrumLocalSerial = 0;
+    // Atomic — read by the device-server spectrum provider on the
+    // server worker thread, mutated by the UI on the main thread.
+    std::atomic<int> kujhadSpectrumBins{256};
+    std::atomic<int> kujhadSpectrumIntervalMs{200};
+    // Snapshot of the local waterfall view captured the moment we first
+    // entered peer-mirror mode, so toggling mirror OFF restores the
+    // operator's previous local center frequency / bandwidth instead of
+    // leaving the waterfall stuck on the peer's last retune.
+    bool   kujhadLocalViewSaved   = false;
+    double kujhadLocalSavedCenter = 0.0;
+    double kujhadLocalSavedBW     = 0.0;
+    double kujhadLocalSavedViewBW = 0.0;
+    bool kujhadMirrorPeerSpectrum = false;
+    int kujhadMirroredFromPeerIdx = -1;
+    uint64_t kujhadLastPeerSpectrumSerial = 0;
+    // Atomic gate read by the FFT worker thread: when true, releaseFFTBuffer
+    // OVERWRITES the freshly acquired waterfall row with the cached peer
+    // frame before pushFFT(). This is what makes the source switch
+    // *exclusive* — local FFT data is suppressed entirely while the
+    // peer view is selected, so the displayed waterfall is deterministic
+    // peer-only rather than a flicker between local and peer rows.
+    std::atomic<bool> kujhadMirrorActive{false};
+    // Latest peer frame copied from the controller worker for the FFT
+    // thread to consume. Lives under kujhadSpectrumMtx alongside the
+    // local snapshot fields above; FFT thread reads it every tick.
+    std::vector<float> kujhadPeerCachedBins;
+    uint64_t kujhadPeerCachedSerial = 0;
     // Monotonic event serial for the /v1/events?since=<id> cursor.
     // Every event row inserted into `events` (locally generated, decoder
     // bridge, or mirrored from a peer) is tagged with row["serial"] =

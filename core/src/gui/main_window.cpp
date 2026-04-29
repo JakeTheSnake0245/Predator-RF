@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#include <chrono>
 #include <algorithm>
 #include <map>
 #include <cctype>
@@ -245,6 +246,9 @@ void MainWindow::init() {
         kujhadApiKey = cfg.value("kujhadApiKey", std::string(""));
         kujhadDeviceName = cfg.value("kujhadDeviceName", std::string(""));
         kujhadAdvertiseAddress = cfg.value("kujhadAdvertiseAddress", std::string(""));
+        kujhadSpectrumIntervalMs.store(std::clamp<int>(cfg.value("kujhadSpectrumIntervalMs", 200), 50, 5000), std::memory_order_relaxed);
+        kujhadSpectrumBins.store(std::clamp<int>(cfg.value("kujhadSpectrumBins", 256), 32, 1024), std::memory_order_relaxed);
+        kujhadMirrorPeerSpectrum = cfg.value("kujhadMirrorPeerSpectrum", false);
         if (kujhadApiKey.empty()) {
             kujhadApiKey = predator::kujhadGenerateApiKey();
             cfg["kujhadApiKey"] = kujhadApiKey;
@@ -280,10 +284,79 @@ void MainWindow::init() {
 }
 
 float* MainWindow::acquireFFTBuffer(void* ctx) {
-    return gui::waterfall.getFFTBuffer();
+    // getFFTBuffer() locks waterfall.buf_mtx and advances the row cursor.
+    // The matching unlock happens inside pushFFT(). We cache the pointer
+    // and current row size so releaseFFTBuffer can snapshot the row for
+    // the Kujhad spectrum provider WITHOUT re-acquiring the buffer
+    // (which would unbalance the lock and double-advance the cursor).
+    float* buf = gui::waterfall.getFFTBuffer();
+    MainWindow* self = (MainWindow*)ctx;
+    if (self) {
+        self->kujhadLastAcquiredBuf  = buf;
+        self->kujhadLastAcquiredSize = gui::waterfall.getRawFFTSize();
+    }
+    return buf;
 }
 
 void MainWindow::releaseFFTBuffer(void* ctx) {
+    // This runs on the FFT worker thread between acquireFFTBuffer and
+    // pushFFT(), while waterfall.buf_mtx is still held — the cached
+    // pointer from acquire is therefore valid and exclusive.
+    MainWindow* self = (MainWindow*)ctx;
+    if (self && self->kujhadLastAcquiredBuf && self->kujhadLastAcquiredSize > 0) {
+        int   n   = self->kujhadLastAcquiredSize;
+        float* buf = self->kujhadLastAcquiredBuf;
+
+        // 1) Snapshot the freshly written local FFT row for the device
+        //    server, but only when the device server is actually enabled
+        //    (the controller may not be hosting). Done before any peer
+        //    overwrite below, so peers see TRUE local SDR data.
+        if (self->kujhadDeviceServerEnabled) {
+            std::lock_guard<std::mutex> lk(self->kujhadSpectrumMtx);
+            if ((int)self->kujhadSpectrumRaw.size() != n) {
+                self->kujhadSpectrumRaw.assign(n, -150.0f);
+            }
+            std::memcpy(self->kujhadSpectrumRaw.data(), buf, n * sizeof(float));
+            self->kujhadSpectrumRawSize = n;
+            self->kujhadSpectrumHaveRaw = true;
+            self->kujhadSpectrumLocalSerial++;
+        }
+
+        // 2) EXCLUSIVE peer-mirror substitution: if the operator selected
+        //    the peer view, OVERWRITE the local row with the most recent
+        //    cached peer frame so pushFFT() scrolls peer data — not local
+        //    SDR data. This makes the UI a true source switch, not a
+        //    flickering overlay. When no peer frame is cached yet, the
+        //    row is filled with the floor so stale local content cannot
+        //    leak through.
+        if (self->kujhadMirrorActive.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(self->kujhadSpectrumMtx);
+            int peerN = (int)self->kujhadPeerCachedBins.size();
+            if (peerN > 0) {
+                // Linear resample peerN -> n
+                if (peerN == n) {
+                    std::memcpy(buf, self->kujhadPeerCachedBins.data(),
+                                n * sizeof(float));
+                } else {
+                    for (int i = 0; i < n; i++) {
+                        float t   = (n > 1) ? ((float)i * (peerN - 1) / (n - 1))
+                                            : 0.0f;
+                        int   i0  = (int)t;
+                        int   i1  = std::min(i0 + 1, peerN - 1);
+                        float f   = t - i0;
+                        buf[i] = self->kujhadPeerCachedBins[i0] * (1.0f - f)
+                               + self->kujhadPeerCachedBins[i1] * f;
+                    }
+                }
+            } else {
+                std::fill(buf, buf + n, -150.0f);
+            }
+        }
+    }
+    if (self) {
+        self->kujhadLastAcquiredBuf  = nullptr;
+        self->kujhadLastAcquiredSize = 0;
+    }
     gui::waterfall.pushFFT();
 }
 
@@ -591,6 +664,9 @@ void MainWindow::draw() {
         core::configManager.conf["kujhadApiKey"] = kujhadApiKey;
         core::configManager.conf["kujhadDeviceName"] = kujhadDeviceName;
         core::configManager.conf["kujhadAdvertiseAddress"] = kujhadAdvertiseAddress;
+        core::configManager.conf["kujhadSpectrumIntervalMs"] = kujhadSpectrumIntervalMs.load(std::memory_order_relaxed);
+        core::configManager.conf["kujhadSpectrumBins"] = kujhadSpectrumBins.load(std::memory_order_relaxed);
+        core::configManager.conf["kujhadMirrorPeerSpectrum"] = kujhadMirrorPeerSpectrum;
         core::configManager.release(true);
     };
 
@@ -1441,6 +1517,62 @@ void MainWindow::draw() {
             j["lastId"] = lastId;
             return j;
         });
+        kujhadServer.setSpectrumProvider([this](json& out) -> bool {
+            // Downsample the latest captured FFT row to ~kujhadSpectrumBins
+            // bins via max-bucketing. Returns false when no frame has ever
+            // been captured, so the device server skips the tick. Frames
+            // carry the local serial so a controller can detect a stalled
+            // capture.
+            std::vector<float> raw;
+            uint64_t serial = 0;
+            int srcSize = 0;
+            {
+                std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+                if (!kujhadSpectrumHaveRaw || kujhadSpectrumRawSize <= 0) return false;
+                raw = kujhadSpectrumRaw; // small copy under lock
+                srcSize = kujhadSpectrumRawSize;
+                serial = kujhadSpectrumLocalSerial;
+            }
+            int targetBins = kujhadSpectrumBins.load(std::memory_order_relaxed);
+            if (targetBins < 32) targetBins = 32;
+            if (targetBins > 1024) targetBins = 1024;
+            if (targetBins > srcSize) targetBins = srcSize;
+            std::vector<float> bins(targetBins, -150.0f);
+            // Max-bucketing keeps narrow peaks visible after downsample —
+            // averaging would smear narrowband emitters into noise.
+            double step = (double)srcSize / (double)targetBins;
+            for (int i = 0; i < targetBins; i++) {
+                int a = (int)(i * step);
+                int b = (int)((i + 1) * step);
+                if (b > srcSize) b = srcSize;
+                if (b <= a) b = a + 1;
+                float m = -INFINITY;
+                for (int k = a; k < b; k++) {
+                    if (raw[k] > m) m = raw[k];
+                }
+                if (!std::isfinite(m)) m = -150.0f;
+                bins[i] = m;
+            }
+            double centerFreq = 0.0, bandwidth = 0.0;
+            float fftMin = -120.0f, fftMax = 0.0f;
+            {
+                std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
+                centerFreq = kujhadCenterFreqSnapshot;
+                bandwidth  = kujhadBandwidthSnapshot;
+                fftMin     = kujhadFFTMinSnapshot;
+                fftMax     = kujhadFFTMaxSnapshot;
+            }
+            out = json::object();
+            out["serial"]     = serial;
+            out["tsMs"]       = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            out["centerFreq"] = centerFreq;
+            out["bandwidth"]  = bandwidth;
+            out["fftMinDb"]   = fftMin;
+            out["fftMaxDb"]   = fftMax;
+            out["bins"]       = bins;
+            return true;
+        });
         kujhadServer.setCommandHandler([this](const predator::KujhadDeviceCommand& cmd, std::string& errOut) {
             // Validate basic shape on the worker thread, then enqueue
             // for the UI thread to actually mutate SDR state. The
@@ -1482,6 +1614,9 @@ void MainWindow::draw() {
     {
         std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
         kujhadCenterFreqSnapshot   = gui::waterfall.getCenterFrequency();
+        kujhadBandwidthSnapshot    = gui::waterfall.getBandwidth();
+        kujhadFFTMinSnapshot       = gui::waterfall.getFFTMin();
+        kujhadFFTMaxSnapshot       = gui::waterfall.getFFTMax();
         kujhadPlayingSnapshot      = playing;
         kujhadMissionModeSnapshot  = predatorMissionMode;
         kujhadScanRunningSnapshot  = predatorScanRunning;
@@ -1539,6 +1674,9 @@ void MainWindow::draw() {
             kujhadServer.stop();
             kujhadDeviceServerRunning = false;
         }
+        // Push the operator-tunable spectrum cadence into the server so
+        // existing chunked streams pick up the change on the next tick.
+        kujhadServer.setSpectrumIntervalMs(kujhadSpectrumIntervalMs.load(std::memory_order_relaxed));
         kujhadDeviceServerStatus = kujhadServer.status();
         kujhadDeviceServerRunning = kujhadServer.isListening();
     }
@@ -1606,6 +1744,51 @@ void MainWindow::draw() {
                 events.insert(events.begin(), row);
             }
             while (events.size() > 200) events.erase(events.end() - 1);
+        }
+        // Spectrum subscription follows the active peer + mirror toggle.
+        // Only the selected peer's stream is opened, since the controller
+        // can only display one mirrored peer at a time. Bandwidth is
+        // capped at the device's spectrum cadence, but this also keeps
+        // the link cost tied to a single connection.
+        bool wantMirror = wantRun && kujhadMirrorPeerSpectrum
+                          && kujhadActivePeerIdx >= 0
+                          && kujhadActivePeerIdx < (int)kujhadClients.size()
+                          && kujhadClients[kujhadActivePeerIdx];
+        for (size_t i = 0; i < kujhadClients.size(); i++) {
+            auto& c = kujhadClients[i];
+            if (!c) continue;
+            bool shouldStream = wantMirror && (int)i == kujhadActivePeerIdx;
+            if (shouldStream && !c->spectrumActive()) c->startSpectrum();
+            if (!shouldStream && c->spectrumActive())  c->stopSpectrum();
+        }
+        // When the operator turns the mirror OFF (or switches active peer
+        // away), drop the cached peer frame so a stale peer row cannot
+        // leak into the next FFT push, reset the per-frame serial tracker
+        // so re-enabling repaints from a clean state, AND restore the
+        // local waterfall view (center freq + bandwidth) that was in
+        // effect just before the operator entered mirror mode. Without
+        // this restore the waterfall would stay tuned to the peer's
+        // last frame, defeating the source-switch contract.
+        if (!wantMirror) {
+            bool wasMirroring = kujhadMirrorActive.exchange(false, std::memory_order_release);
+            if (wasMirroring && kujhadLocalViewSaved) {
+                if (gui::waterfall.getCenterFrequency() != kujhadLocalSavedCenter) {
+                    gui::waterfall.setCenterFrequency(kujhadLocalSavedCenter);
+                }
+                if (kujhadLocalSavedBW > 0.0
+                    && gui::waterfall.getBandwidth() != kujhadLocalSavedBW) {
+                    gui::waterfall.setBandwidth(kujhadLocalSavedBW);
+                }
+                if (kujhadLocalSavedViewBW > 0.0) {
+                    gui::waterfall.setViewBandwidth(kujhadLocalSavedViewBW);
+                }
+                kujhadLocalViewSaved = false;
+            }
+            std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+            kujhadPeerCachedBins.clear();
+            kujhadPeerCachedSerial = 0;
+            kujhadLastPeerSpectrumSerial = 0;
+            kujhadMirroredFromPeerIdx = -1;
         }
     }
 
@@ -2373,7 +2556,109 @@ void MainWindow::draw() {
     ImGui::SetCursorPos(ImVec2(pad, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.04f, 0.98f));
     ImGui::BeginChild("Waterfall", ImVec2(waterfallWidth, contentHeight), true);
+
+    // Kujhad: if mirroring an active peer's spectrum, retune the waterfall
+    // to the peer's center/bandwidth, cache the latest peer frame for the
+    // FFT worker thread to substitute into every local push (making the
+    // source switch *exclusive* — local SDR rows are overwritten in
+    // releaseFFTBuffer so the displayed waterfall is deterministic peer
+    // data only). When the local SDR is not running and no FFT pushes
+    // arrive, this UI path also pushes a single frame on each new peer
+    // serial so the waterfall still scrolls. Only one peer is mirrored
+    // at a time (the "Take control" target).
+    std::string kujhadMirrorPeerName;
+    bool kujhadMirrorBannerActive = false;
+    if (predatorRole == PREDATOR_ROLE_CONTROLLER && kujhadMirrorPeerSpectrum
+        && kujhadActivePeerIdx >= 0 && kujhadActivePeerIdx < (int)kujhadClients.size()
+        && kujhadClients[kujhadActivePeerIdx]
+        && kujhadActivePeerIdx < (int)kujhadActivePeers.size()) {
+        auto& client = kujhadClients[kujhadActivePeerIdx];
+        predator::KujhadSpectrumFrame frame;
+        if (client->latestSpectrum(frame) && !frame.bins.empty() && frame.bandwidth > 0.0) {
+            // First-frame capture: snapshot the operator's current local
+            // waterfall view BEFORE we retune to the peer's center/BW,
+            // so toggling mirror off can restore exactly that state.
+            if (!kujhadLocalViewSaved) {
+                kujhadLocalSavedCenter = gui::waterfall.getCenterFrequency();
+                kujhadLocalSavedBW     = gui::waterfall.getBandwidth();
+                kujhadLocalSavedViewBW = gui::waterfall.getViewBandwidth();
+                kujhadLocalViewSaved   = true;
+            }
+            // Always retune the waterfall to the peer's view so the axis
+            // labels match what we are now displaying. Cheap idempotent ops.
+            if (gui::waterfall.getCenterFrequency() != frame.centerFreq) {
+                gui::waterfall.setCenterFrequency(frame.centerFreq);
+            }
+            if (gui::waterfall.getBandwidth() != frame.bandwidth) {
+                gui::waterfall.setBandwidth(frame.bandwidth);
+                gui::waterfall.setViewBandwidth(frame.bandwidth);
+            }
+            // Publish the peer frame to the FFT worker. The worker reads
+            // this on every releaseFFTBuffer to substitute over the local
+            // row before pushFFT(), so peer data is the ONLY thing the
+            // user sees while the mirror is on.
+            {
+                std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+                kujhadPeerCachedBins   = frame.bins;
+                kujhadPeerCachedSerial = frame.serial;
+            }
+            kujhadMirrorActive.store(true, std::memory_order_release);
+
+            // Fallback: if the local SDR isn't producing FFT pushes (e.g.
+            // operator stopped the source) the waterfall would freeze on
+            // FFT-thread-driven substitution alone. So on each new peer
+            // serial, also do one direct push from the UI thread. Safe
+            // concurrently with FFT-thread pushes — buf_mtx is recursive
+            // and either writer ends up writing peer data to the row.
+            if (frame.serial != kujhadLastPeerSpectrumSerial) {
+                kujhadLastPeerSpectrumSerial = frame.serial;
+                int dst = gui::waterfall.getRawFFTSize();
+                float* buf = gui::waterfall.getFFTBuffer();
+                if (buf && dst > 0) {
+                    int src = (int)frame.bins.size();
+                    for (int i = 0; i < dst; i++) {
+                        int j = (int)((double)i * (double)src / (double)dst);
+                        if (j < 0) j = 0;
+                        if (j >= src) j = src - 1;
+                        buf[i] = frame.bins[j];
+                    }
+                }
+                gui::waterfall.pushFFT();
+            }
+
+            kujhadMirrorBannerActive = true;
+            kujhadMirrorPeerName = readJsonString(kujhadActivePeers[kujhadActivePeerIdx], "name", "peer");
+            kujhadMirroredFromPeerIdx = kujhadActivePeerIdx;
+        }
+    }
+
     gui::waterfall.draw();
+
+    // PEER overlay banner: drawn over the FFT area while a mirror is live
+    // so the operator can never confuse a peer's view with their own.
+    if (kujhadMirrorBannerActive) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 fMin = gui::waterfall.fftAreaMin;
+        ImVec2 fMax = gui::waterfall.fftAreaMax;
+        if (fMax.x > fMin.x && fMax.y > fMin.y) {
+            char banner[160];
+            std::snprintf(banner, sizeof(banner), "PEER: %s", kujhadMirrorPeerName.c_str());
+            ImVec2 tsz = ImGui::CalcTextSize(banner);
+            float padX = 10.0f * style::uiScale;
+            float padY = 5.0f  * style::uiScale;
+            float bx = fMin.x + 12.0f * style::uiScale;
+            float by = fMin.y + 8.0f  * style::uiScale;
+            dl->AddRectFilled(ImVec2(bx - padX, by - padY),
+                              ImVec2(bx + tsz.x + padX, by + tsz.y + padY),
+                              IM_COL32(180, 50, 30, 220),
+                              4.0f * style::uiScale);
+            dl->AddRect(ImVec2(bx - padX, by - padY),
+                        ImVec2(bx + tsz.x + padX, by + tsz.y + padY),
+                        IM_COL32(255, 220, 200, 230),
+                        4.0f * style::uiScale, 0, 1.5f * style::uiScale);
+            dl->AddText(ImVec2(bx, by), IM_COL32(255, 255, 255, 255), banner);
+        }
+    }
 
     // Draw Predator hit markers on live spectrum (labeled vertical lines for all tracked hits)
     if (hits.is_array() && !hits.empty()) {
@@ -4156,6 +4441,29 @@ void MainWindow::draw() {
                     ImGui::TextWrapped("%s", T("Plain HTTP over a private overlay (Tailscale/ZeroTier) or loopback for v1. TLS is on the v1.x roadmap; the wire protocol is unchanged."));
                 }
 
+                if (ImGui::CollapsingHeader(T("Spectrum Stream"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    int interval = kujhadSpectrumIntervalMs.load(std::memory_order_relaxed);
+                    if (ImGui::SliderInt(T("Frame interval (ms)"), &interval, 50, 2000)) {
+                        kujhadSpectrumIntervalMs.store(std::clamp(interval, 50, 5000), std::memory_order_relaxed);
+                        savePredatorState();
+                    }
+                    int bins = kujhadSpectrumBins.load(std::memory_order_relaxed);
+                    if (ImGui::SliderInt(T("Bins per frame"), &bins, 64, 1024)) {
+                        kujhadSpectrumBins.store(std::clamp(bins, 32, 1024), std::memory_order_relaxed);
+                        savePredatorState();
+                    }
+                    ImGui::Text("%s: %d", T("Active subscribers"), kujhadServer.activeSpectrumStreams());
+                    // Quick estimate: ~6 bytes/bin (JSON float) + ~80 byte
+                    // header per frame, times the configured cadence.
+                    int curInterval = kujhadSpectrumIntervalMs.load(std::memory_order_relaxed);
+                    int curBins     = kujhadSpectrumBins.load(std::memory_order_relaxed);
+                    double framesPerSec = 1000.0 / std::max<int>(curInterval, 1);
+                    double bytesPerFrame = 80.0 + (double)curBins * 6.0;
+                    double kbps = (framesPerSec * bytesPerFrame * 8.0) / 1024.0;
+                    ImGui::TextDisabled("~ %.1f kb/s per subscriber (peak)", kbps);
+                    ImGui::TextWrapped("%s", T("Bandwidth cap: lower the bin count for slow links, raise the interval for low-watt operations. Defaults trade ~10 kb/s for 5 fps situational awareness."));
+                }
+
                 if (ImGui::CollapsingHeader(T("Reachable Addresses"), ImGuiTreeNodeFlags_DefaultOpen)) {
                     if (!kujhadAdvertiseAddress.empty()) {
                         // Operator override always wins; show it first
@@ -4256,6 +4564,29 @@ void MainWindow::draw() {
                             kujhadAddPeerHost[0] = 0;
                             kujhadAddPeerKey[0]  = 0;
                         }
+                    }
+                }
+
+                if (ImGui::CollapsingHeader(T("View Source"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    bool mirror = kujhadMirrorPeerSpectrum;
+                    if (ImGui::Checkbox(T("Mirror active peer spectrum"), &mirror)) {
+                        kujhadMirrorPeerSpectrum = mirror;
+                        savePredatorState();
+                    }
+                    ImGui::TextDisabled("%s", mirror
+                        ? T("Local waterfall shows PEER spectrum. Tuner controls still affect the local SDR.")
+                        : T("Local waterfall shows LOCAL SDR spectrum."));
+                    if (kujhadActivePeerIdx >= 0 && kujhadActivePeerIdx < (int)kujhadClients.size()
+                        && kujhadClients[kujhadActivePeerIdx]) {
+                        auto& client = kujhadClients[kujhadActivePeerIdx];
+                        bool streaming = client->spectrumStreaming();
+                        uint64_t frames = client->spectrumFramesReceived();
+                        ImGui::Text("%s: %s  (%llu %s)",
+                                    T("Stream"), streaming ? "live" : "idle",
+                                    (unsigned long long)frames, T("frames"));
+                    }
+                    else if (mirror) {
+                        ImGui::TextDisabled("%s", T("Select 'Take control' on a peer to start the spectrum stream."));
                     }
                 }
 

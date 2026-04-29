@@ -368,10 +368,28 @@ struct KujhadDeviceCommand {
     kujhad_json args;
 };
 
+// One downsampled spectrum frame. Bins are dB values (typically dBFS) of
+// length `bins.size()`, covering `bandwidth` Hz centered at `centerFreq`.
+// `serial` increments per published frame so a controller can detect a
+// stalled stream. `tsMs` is a steady-clock millisecond stamp from the
+// device for client-side latency estimates.
+struct KujhadSpectrumFrame {
+    uint64_t serial = 0;
+    uint64_t tsMs = 0;
+    double centerFreq = 0.0;
+    double bandwidth = 0.0;
+    float fftMinDb = -120.0f;
+    float fftMaxDb = 0.0f;
+    std::vector<float> bins;
+};
+
 class KujhadDeviceServer {
 public:
     using CommandHandler = std::function<bool(const KujhadDeviceCommand&, std::string& errOut)>;
     using SnapshotProvider = std::function<kujhad_json()>;
+    // Spectrum provider returns true and fills `out` if a fresh frame is
+    // available. Returning false means "no new data, skip this tick".
+    using SpectrumProvider = std::function<bool(kujhad_json& out)>;
 
     ~KujhadDeviceServer() { stop(); }
 
@@ -382,6 +400,16 @@ public:
     void setGpsProvider(SnapshotProvider fn)      { gpsProvider_      = std::move(fn); }
     void setEventsProvider(std::function<kujhad_json(uint64_t since)> fn) { eventsProvider_ = std::move(fn); }
     void setCommandHandler(CommandHandler fn)     { commandHandler_   = std::move(fn); }
+    void setSpectrumProvider(SpectrumProvider fn) { spectrumProvider_ = std::move(fn); }
+    // Bound floor of 50ms (20 fps) keeps a runaway operator from saturating
+    // the link; default 200ms (5 fps) is enough for situational awareness.
+    void setSpectrumIntervalMs(int ms) {
+        if (ms < 50) ms = 50;
+        if (ms > 5000) ms = 5000;
+        spectrumIntervalMs_ = ms;
+    }
+    int spectrumIntervalMs() const { return spectrumIntervalMs_.load(); }
+    int activeSpectrumStreams() const { return activeSpectrumStreams_.load(); }
 
     void setApiKey(const std::string& key) {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -577,6 +605,80 @@ private:
             kujhad_json j = eventsProvider_ ? eventsProvider_(since) : kujhad_json::object();
             res.body = j.dump();
         }
+        else if (req.method == "GET" && path == "/v1/spectrum") {
+            // Long-lived chunked NDJSON stream of downsampled FFT frames.
+            // Each chunk is one JSON object terminated by a newline so a
+            // controller can parse them line-at-a-time without state.
+            // Server-side rate limiting bounds bandwidth on slow links.
+            if (!spectrumProvider_) {
+                res.status = 503;
+                res.body = "{\"error\":\"spectrum stream unavailable\"}";
+                kujhadSendResponse(conn, res);
+                KUJHAD_CLOSESOCK(conn);
+                return;
+            }
+            const char* hdr =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/x-ndjson\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "Cache-Control: no-cache\r\n"
+                "Connection: close\r\n"
+                "X-Accel-Buffering: no\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                "\r\n";
+            if (!kujhadWriteAll(conn, hdr, (int)std::strlen(hdr))) {
+                KUJHAD_CLOSESOCK(conn);
+                return;
+            }
+            // RAII guard for the active-stream counter so the decrement
+            // always pairs with the increment, even if the loop body
+            // throws or returns early through a future code path.
+            struct StreamCountGuard {
+                std::atomic<int>& c;
+                explicit StreamCountGuard(std::atomic<int>& v) : c(v) { c++; }
+                ~StreamCountGuard() { c--; }
+            } streamGuard(activeSpectrumStreams_);
+            int interval = spectrumIntervalMs_.load();
+            if (interval < 50) interval = 50;
+            uint64_t lastSerial = 0;
+            while (!stopFlag_.load()) {
+                kujhad_json frame;
+                bool got = false;
+                try { got = spectrumProvider_(frame); } catch (...) { got = false; }
+                if (got) {
+                    // Skip identical frames (provider may return the same
+                    // snapshot repeatedly when the FFT thread hasn't ticked).
+                    uint64_t serial = frame.is_object() && frame.contains("serial") && frame["serial"].is_number_unsigned()
+                                      ? frame["serial"].get<uint64_t>() : 0;
+                    if (serial == 0 || serial != lastSerial) {
+                        lastSerial = serial;
+                        std::string body = frame.dump();
+                        body.push_back('\n');
+                        char chunkHdr[32];
+                        int hn = std::snprintf(chunkHdr, sizeof(chunkHdr), "%X\r\n", (unsigned)body.size());
+                        if (!kujhadWriteAll(conn, chunkHdr, hn)) break;
+                        if (!kujhadWriteAll(conn, body.data(), (int)body.size())) break;
+                        const char* trailer = "\r\n";
+                        if (!kujhadWriteAll(conn, trailer, 2)) break;
+                    }
+                }
+                // Sleep in small slices so a stop() can tear us down.
+                int slept = 0;
+                int slice = 25;
+                while (slept < interval && !stopFlag_.load()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+                    slept += slice;
+                }
+                // Refresh interval each tick — operator may have changed it.
+                interval = spectrumIntervalMs_.load();
+                if (interval < 50) interval = 50;
+            }
+            const char* end = "0\r\n\r\n";
+            kujhadWriteAll(conn, end, 5);
+            // streamGuard's destructor decrements activeSpectrumStreams_.
+            KUJHAD_CLOSESOCK(conn);
+            return;
+        }
         else if (req.method == "POST" && path == "/v1/command") {
             kujhad_json body;
             try { body = kujhad_json::parse(req.body.empty() ? std::string("{}") : req.body); }
@@ -640,6 +742,9 @@ private:
     SnapshotProvider gpsProvider_;
     std::function<kujhad_json(uint64_t)> eventsProvider_;
     CommandHandler commandHandler_;
+    SpectrumProvider spectrumProvider_;
+    std::atomic<int> spectrumIntervalMs_{200};
+    std::atomic<int> activeSpectrumStreams_{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -675,14 +780,54 @@ public:
     void stop() {
         if (!running_.load()) {
             if (worker_.joinable()) worker_.join();
+            stopSpectrum();
             return;
         }
         stopFlag_ = true;
         running_ = false;
         if (worker_.joinable()) worker_.join();
+        stopSpectrum();
     }
 
     bool isRunning() const { return running_.load(); }
+
+    // Open a long-lived /v1/spectrum subscription on the same host/key.
+    // The worker thread parses chunked NDJSON frames and stores the
+    // most recent one for the UI thread to read via latestSpectrum().
+    // Idempotent: a second start() restarts the worker.
+    void startSpectrum() {
+        stopSpectrum();
+        spectrumStop_ = false;
+        spectrumActive_ = true;
+        spectrumWorker_ = std::thread([this]() { spectrumLoop(); });
+    }
+
+    void stopSpectrum() {
+        if (!spectrumActive_.load()) {
+            if (spectrumWorker_.joinable()) spectrumWorker_.join();
+            return;
+        }
+        spectrumStop_ = true;
+        spectrumActive_ = false;
+        if (spectrumWorker_.joinable()) spectrumWorker_.join();
+        std::lock_guard<std::mutex> lk(spectrumMtx_);
+        spectrumStreaming_ = false;
+    }
+
+    bool spectrumActive() const { return spectrumActive_.load(); }
+    bool spectrumStreaming() const {
+        std::lock_guard<std::mutex> lk(spectrumMtx_);
+        return spectrumStreaming_;
+    }
+    uint64_t spectrumFramesReceived() const { return spectrumFramesReceived_.load(); }
+
+    // Returns true if a frame has ever been received and copies it into out.
+    bool latestSpectrum(KujhadSpectrumFrame& out) const {
+        std::lock_guard<std::mutex> lk(spectrumMtx_);
+        if (!spectrumHaveFrame_) return false;
+        out = spectrumLatest_;
+        return true;
+    }
 
     KujhadPeerSnapshot snapshot() const {
         std::lock_guard<std::mutex> lk(snapMtx_);
@@ -875,6 +1020,175 @@ private:
         return true;
     }
 
+    // Long-poll /v1/spectrum and decode chunked NDJSON frames. Runs on a
+    // dedicated worker so the main poll loop is unaffected by the longer
+    // socket lifetime. Reconnects with backoff on transport failure.
+    void spectrumLoop() {
+#ifdef _WIN32
+        WSADATA wsa; WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+        while (!spectrumStop_.load()) {
+            kujhad_socket_t sock = ::socket(AF_INET, SOCK_STREAM, 0);
+            if (sock == KUJHAD_INVALID_SOCK) {
+                spectrumBackoff();
+                continue;
+            }
+#ifndef _WIN32
+            // Short read timeout so we can poll spectrumStop_ between frames.
+            timeval tv{}; tv.tv_sec = 1; tv.tv_usec = 0;
+            ::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            ::setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
+            addrinfo hints{}; hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
+            addrinfo* res = nullptr;
+            std::string portStr = std::to_string(port_);
+            int gai = ::getaddrinfo(host_.c_str(), portStr.c_str(), &hints, &res);
+            if (gai != 0 || !res) {
+                if (res) ::freeaddrinfo(res);
+                KUJHAD_CLOSESOCK(sock);
+                spectrumBackoff();
+                continue;
+            }
+            bool connected = (::connect(sock, res->ai_addr, (socklen_t)res->ai_addrlen) == 0);
+            ::freeaddrinfo(res);
+            if (!connected) {
+                KUJHAD_CLOSESOCK(sock);
+                spectrumBackoff();
+                continue;
+            }
+            char req[1024];
+            int rn = std::snprintf(req, sizeof(req),
+                "GET /v1/spectrum HTTP/1.1\r\n"
+                "Host: %s:%d\r\n"
+                "X-Kujhad-Key: %s\r\n"
+                "Accept: application/x-ndjson\r\n"
+                "Connection: close\r\n"
+                "\r\n",
+                host_.c_str(), port_, apiKey_.c_str());
+            if (!kujhadWriteAll(sock, req, rn)) {
+                KUJHAD_CLOSESOCK(sock);
+                spectrumBackoff();
+                continue;
+            }
+            // Buffered reader bound to this socket + stop flag.
+            std::string buf;
+            auto pump = [&]() -> bool {
+                char tmp[4096];
+                int r = (int)::recv(sock, tmp, sizeof(tmp), 0);
+                if (r > 0) { buf.append(tmp, r); return true; }
+                if (r == 0) return false;
+#ifndef _WIN32
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    return !spectrumStop_.load();
+                }
+#endif
+                return false;
+            };
+            auto readLine = [&](std::string& out) -> bool {
+                while (true) {
+                    size_t i = buf.find("\r\n");
+                    if (i != std::string::npos) {
+                        out = buf.substr(0, i);
+                        buf.erase(0, i + 2);
+                        return true;
+                    }
+                    if (buf.size() > 65536) return false;
+                    if (!pump()) return false;
+                    if (spectrumStop_.load()) return false;
+                }
+            };
+            auto readBytes = [&](size_t n, std::string& out) -> bool {
+                while (buf.size() < n) {
+                    if (!pump()) return false;
+                    if (spectrumStop_.load()) return false;
+                }
+                out = buf.substr(0, n);
+                buf.erase(0, n);
+                return true;
+            };
+            // Drain HTTP headers until blank line.
+            bool ok200 = false;
+            bool firstLine = true;
+            std::string line;
+            while (!spectrumStop_.load() && readLine(line)) {
+                if (firstLine) {
+                    firstLine = false;
+                    // "HTTP/1.1 200 OK"
+                    if (line.find(" 200 ") != std::string::npos) ok200 = true;
+                }
+                if (line.empty()) break;
+            }
+            if (!ok200) {
+                KUJHAD_CLOSESOCK(sock);
+                spectrumBackoff();
+                continue;
+            }
+            {
+                std::lock_guard<std::mutex> lk(spectrumMtx_);
+                spectrumStreaming_ = true;
+            }
+            // Read chunked body. Each chunk: <hex size>\r\n<data>\r\n.
+            bool brokeOut = false;
+            while (!spectrumStop_.load()) {
+                if (!readLine(line)) { brokeOut = true; break; }
+                if (line.empty()) continue;
+                // Chunk extension after ';' is optional, skip it.
+                size_t semi = line.find(';');
+                std::string sizeStr = (semi == std::string::npos) ? line : line.substr(0, semi);
+                unsigned long sz = std::strtoul(sizeStr.c_str(), nullptr, 16);
+                if (sz == 0) { brokeOut = true; break; }
+                if (sz > (1u << 20)) { brokeOut = true; break; }
+                std::string body;
+                if (!readBytes((size_t)sz, body)) { brokeOut = true; break; }
+                std::string trailer;
+                if (!readBytes(2, trailer)) { brokeOut = true; break; }
+                // Parse JSON line into a frame.
+                try {
+                    kujhad_json j = kujhad_json::parse(body);
+                    if (!j.is_object()) continue;
+                    KujhadSpectrumFrame f;
+                    f.serial = j.value("serial", (uint64_t)0);
+                    f.tsMs = j.value("tsMs", (uint64_t)0);
+                    f.centerFreq = j.value("centerFreq", 0.0);
+                    f.bandwidth = j.value("bandwidth", 0.0);
+                    f.fftMinDb = (float)j.value("fftMinDb", -120.0);
+                    f.fftMaxDb = (float)j.value("fftMaxDb", 0.0);
+                    if (j.contains("bins") && j["bins"].is_array()) {
+                        f.bins.reserve(j["bins"].size());
+                        for (auto& v : j["bins"]) {
+                            if (v.is_number()) f.bins.push_back((float)v.get<double>());
+                        }
+                    }
+                    {
+                        std::lock_guard<std::mutex> lk(spectrumMtx_);
+                        spectrumLatest_ = std::move(f);
+                        spectrumHaveFrame_ = true;
+                    }
+                    spectrumFramesReceived_++;
+                } catch (...) {
+                    // Bad frame — drop and continue.
+                }
+            }
+            (void)brokeOut;
+            {
+                std::lock_guard<std::mutex> lk(spectrumMtx_);
+                spectrumStreaming_ = false;
+            }
+            KUJHAD_CLOSESOCK(sock);
+            if (!spectrumStop_.load()) spectrumBackoff();
+        }
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    }
+
+    void spectrumBackoff() {
+        // ~1s backoff broken into 25ms slices so stop unblocks fast.
+        for (int i = 0; i < 40 && !spectrumStop_.load(); i++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+    }
+
     std::string host_;
     int port_ = 0;
     std::string apiKey_;
@@ -888,6 +1202,16 @@ private:
 
     std::mutex eventMtx_;
     std::queue<kujhad_json> events_;
+
+    // Spectrum subscriber state.
+    std::atomic<bool> spectrumActive_{false};
+    std::atomic<bool> spectrumStop_{false};
+    std::thread spectrumWorker_;
+    mutable std::mutex spectrumMtx_;
+    KujhadSpectrumFrame spectrumLatest_;
+    bool spectrumHaveFrame_ = false;
+    bool spectrumStreaming_ = false;
+    std::atomic<uint64_t> spectrumFramesReceived_{0};
 };
 
 } // namespace predator

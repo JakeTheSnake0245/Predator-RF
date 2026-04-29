@@ -293,6 +293,9 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["kujhadDeviceName"] = "";
     defConfig["kujhadAdvertiseAddress"] = "";
     defConfig["kujhadPeers"] = json::array();
+    defConfig["kujhadSpectrumIntervalMs"] = 200;
+    defConfig["kujhadSpectrumBins"] = 256;
+    defConfig["kujhadMirrorPeerSpectrum"] = false;
     defConfig["showMenu"] = true;
     defConfig["showWaterfall"] = true;
 #ifdef __ANDROID__
