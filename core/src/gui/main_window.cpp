@@ -38,6 +38,7 @@
 #include <backend.h>
 #include "../predator/decoder_ingest.h"
 #include "../predator/kujhad_fleet.h"
+#include "../predator/native_decoder_registry.h"
 #include <ctime>
 
 void MainWindow::init() {
@@ -1121,6 +1122,65 @@ void MainWindow::draw() {
                 row["serial"] = ++predatorEventSerial;
                 events.insert(events.begin(), row);
             }
+            while (events.size() > 200) events.erase(events.end() - 1);
+            savePredatorEvents(events);
+        }
+    }
+
+    // -------- Native in-APK decoder modules (rtl_433, future P25, ...) --------
+    // Plugins like decoder_modules/rtl433_decoder register a drain callback
+    // with predator::registerNativeDecoder() on construction. We pull from
+    // every registered native module here and fold their events into the
+    // same predatorEvents stream the bridge ingesters feed, so the Hits
+    // tab, Network tree, Map, and exporter all just work.
+    {
+        auto batches = predator::drainAllNativeDecoders(64);
+        bool anyAdded = false;
+        for (auto& batch : batches) {
+            const std::string& src = batch.sourceKey;
+            const std::string  sourceLabel = std::string("Native:") + src;
+            for (auto& e : batch.events) {
+                json row;
+                char idBuf[160];
+                snprintf(idBuf, sizeof(idBuf), "%s_native%s_%lld_%d",
+                         filenameTimestamp().c_str(),
+                         src.c_str(),
+                         (long long)std::llround(e.frequencyHz),
+                         (int)events.size());
+                row["time"]          = currentTimestamp();
+                row["eventId"]       = std::string(idBuf);
+                row["type"]          = "decoder";
+                row["frequency"]     = e.frequencyHz;
+                row["label"]         = e.label.empty() ? src : e.label;
+                row["strengthDb"]    = e.strengthDb;
+                row["decoder"]       = src;
+                row["hitState"]      = "decoded";
+                row["protocol"]      = e.protocol;
+                row["networkId"]     = e.networkId;
+                row["talkgroup"]     = e.talkgroup;
+                row["radioId"]       = e.radioId;
+                row["voicePath"]     = voiceOutputPath;
+                row["dataPath"]      = dataOutputPath;
+                row["clipBaseName"]  = std::string(idBuf);
+                row["voiceClipPath"] = "";
+                row["dataClipPath"]  = "";
+                row["hasAudio"]      = false;
+                row["hasData"]       = true;
+                row["source"]        = sourceLabel;
+                row["mode"]          = predatorMissionMode;
+                row["gpsFix"]        = phoneHasFix;
+                if (phoneHasFix) {
+                    row["lat"]       = phoneLat;
+                    row["lon"]       = phoneLon;
+                    row["accuracyM"] = phoneAccuracy;
+                }
+                row["raw"]    = e.raw;
+                row["serial"] = ++predatorEventSerial;
+                events.insert(events.begin(), row);
+                anyAdded = true;
+            }
+        }
+        if (anyAdded) {
             while (events.size() > 200) events.erase(events.end() - 1);
             savePredatorEvents(events);
         }
