@@ -1,0 +1,43 @@
+Got the vision. Before I scaffold anything, let me show you what I understood and flag a few decisions that shape the design.
+
+What I heard you want
+A Kujhad tab that turns Predator RF from a single-operator tool into a small tactical fleet console:
+
+Peer roster: a list of other Predator RF nodes (Android / Linux / Windows) reachable over your VLAN/VPN, each entered as IP:port + an API key
+Take control: pick a peer and operate it remotely — tune VFOs, change mode, start/stop scans, switch mission profile
+Spectrum mirroring: stream the selected peer's live FFT + waterfall into your local Spectrum view, with their VFOs/markers/mission overlays painted on top so you can see what they're seeing
+Map fusion: every connected peer's GPS appears as a marker on your local map (with peer name + signal-quality dot), and their hits flow into your unified Hits/Network feeds tagged with the peer they came from
+Settings tab: where you set your own API key (the one peers must present to connect to you), plus your listening port and a peer allowlist
+Connect flow: in Kujhad tab → "+ Add Peer" → enter IP, port, peer's API key → connect → live status pill goes [LINK]
+That all sits inside the same RX-only safety boundary — remote control means tuning a remote receiver, not initiating any transmission. I want to confirm that's still the line.
+
+What we can leverage
+Good news — SDR++ already ships with sdrpp_server (a binary IQ/FFT/VFO streaming protocol over TCP, with zstd compression) and a matching client source module. That gives us the spectrum-streaming half for free — we'd wrap it with our auth layer and a per-peer session, rather than inventing a new wire format. The other half (peer state sync — GPS, hits, markers, mission state, decoder bridge status) is a small JSON/WebSocket channel we'd add on top.
+
+Three decisions that shape the design
+Auth model — API key is fine, but where does it live?
+
+Option A (simpler): One API key per node. Same key opens all access (view + control). You set it once in Settings; peers paste it once when adding you. Easy, mirrors how home automation tools work.
+Option B (slightly better): Two keys per node — a view-only key (lets a peer mirror your spectrum + see your GPS/hits) and a control key (lets them tune your VFOs, change mission). Useful if you want to invite an analyst without giving them the keys to your radio.
+I'd suggest A for v1, with B as a follow-on if you want it. Either way the key goes over TLS so it's not sniffable on the VLAN.
+Topology — full mesh or hub & spoke?
+
+Mesh: every node both serves and connects to others. Any operator can pull from any peer. More flexible, slightly more bookkeeping.
+Hub & spoke: one operator console pulls from many sensor nodes. Simpler.
+You said "control other devices", plural, in either direction implied. I'd build mesh — every Predator RF instance runs both a tiny server and a client, and you decide per-instance whether to advertise.
+What does "tools currently being used" mean concretely?
+I read this as: when peer X is selected, the local app overlays their current VFO ranges, markers, mission mode, active scan band, and any decoder bridges they have wired up — drawn on top of your local spectrum/map in a distinct accent color so it's obvious "this is from peer X, not me." Want me to confirm or did you mean something more specific (like literal control surface mirroring)?
+
+Suggested staged build (same pattern as Decoder Bridges)
+Stage	Scope	What you can do after
+1 — Operator scaffold	Add Kujhad tab + Settings entries (own API key, listen port, peer roster persistence, allowlist). UI works against mock peers; no real network yet.	See the screen, add peers, persist them. Validates UX before we wire sockets.
+2 — Server side	Embed a small TLS server in each instance: identify, GPS publish, state publish (VFOs/markers/mission/bridges), event stream. API-key auth on every request.	Other peers can pull from you.
+3 — Client side	Connect to peers, render their GPS on the map, ingest their event stream into the unified bus tagged by peer.	Multi-node situational awareness without spectrum streaming.
+4 — Spectrum mirror	Wrap sdrpp_server with our auth/session layer, plumb remote FFT into the local spectrum view with peer-tinted overlay for their VFOs/markers.	Full live mirror of a selected peer's view.
+5 — Remote control	Send tune/scan/mission commands to selected peer; peer applies them locally.	True remote operation.
+Where I want to stop and ask you
+Three quick yes/no/pick:
+
+Safety boundary: confirmed RX-only — remote "control" means tuning, scanning, mission switching, never any TX initiation?
+Auth: single API key per node (Option A) for v1?
+Right now: do you want me to build Stage 1 today (the operator-facing scaffold + Settings entries — pure UI, no network), or just record the full plan on the roadmap and finish the other ingesters (ADS-B / AIS / POCSAG / P25) first?
