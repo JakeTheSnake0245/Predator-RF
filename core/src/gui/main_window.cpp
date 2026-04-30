@@ -33,6 +33,7 @@
 #include <map>
 #include <cctype>
 #include <sstream>
+#include <cstdlib>
 #include <signal_path/source.h>
 #include <gui/dialogs/loading_screen.h>
 #include <gui/colormaps.h>
@@ -732,6 +733,41 @@ void MainWindow::draw() {
         ImGui::OpenPopup("##pend_edit");
     };
 
+    auto drawEditButton = [&](const char* label, const std::string& value,
+                              std::function<void(std::string)> cb) {
+        ImGui::TextDisabled("%s", label);
+        std::string buttonText = value.empty() ? std::string(T("Tap to edit")) : value;
+        ImGui::PushID(label);
+        if (ImGui::Button(buttonText.c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            openPendEdit(label, value, std::move(cb));
+        }
+        ImGui::PopID();
+    };
+
+    auto drawEditDoubleButton = [&](const char* label, double value, const char* fmt,
+                                    std::function<void(double)> cb) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), fmt, value);
+        drawEditButton(label, std::string(buf), [cb = std::move(cb)](std::string text) {
+            char* end = nullptr;
+            double next = std::strtod(text.c_str(), &end);
+            if (end != text.c_str()) {
+                cb(next);
+            }
+        });
+    };
+
+    auto drawEditIntButton = [&](const char* label, int value,
+                                 std::function<void(int)> cb) {
+        drawEditButton(label, std::to_string(value), [cb = std::move(cb)](std::string text) {
+            char* end = nullptr;
+            long next = std::strtol(text.c_str(), &end, 10);
+            if (end != text.c_str()) {
+                cb((int)next);
+            }
+        });
+    };
+
     auto savePredatorState = [&]() {
         core::configManager.acquire();
         core::configManager.conf["showMenu"] = showMenu;
@@ -930,12 +966,6 @@ void MainWindow::draw() {
         core::configManager.release(true);
     };
 
-    auto saveNetworkAliases = [&](const json& newAliases) {
-        core::configManager.acquire();
-        core::configManager.conf["predatorNetworkAliases"] = newAliases;
-        core::configManager.release(true);
-    };
-
     auto saveDecoderBridges = [&](const json& newBridges) {
         core::configManager.acquire();
         core::configManager.conf["predatorDecoderBridges"] = newBridges;
@@ -959,12 +989,6 @@ void MainWindow::draw() {
             if (!decoderBridges[key].contains("mode")    || !decoderBridges[key]["mode"].is_string())     { decoderBridges[key]["mode"]    = defaultMode; }
             if (!decoderBridges[key].contains("notes")   || !decoderBridges[key]["notes"].is_string())    { decoderBridges[key]["notes"]   = defaultNotes; }
         }
-    };
-
-    auto saveSessionNote = [&](const std::string& note) {
-        core::configManager.acquire();
-        core::configManager.conf["predatorSessionNote"] = note;
-        core::configManager.release(true);
     };
 
     auto saveDsdFmeConfig = [&](bool enabled, const std::string& host, int port, const std::string& mode) {
@@ -3104,6 +3128,41 @@ void MainWindow::draw() {
         savePredatorState();
     }
 
+    ImGui::SameLine();
+    if (ImGui::Button(T("VIEW"), ImVec2(68.0f * style::uiScale, 0))) {
+        ImGui::OpenPopup("##predator_spectrum_view");
+    }
+    if (ImGui::BeginPopup("##predator_spectrum_view")) {
+        ImGui::TextUnformatted(T("Spectrum View"));
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(220.0f * style::uiScale);
+        if (ImGui::SliderFloat(T("Zoom"), &bw, 0.0f, 1.0f, "%.2f")) {
+            double factor = (double)bw * (double)bw;
+            double wfBw = gui::waterfall.getBandwidth();
+            double delta = wfBw - 1000.0;
+            double finalBw = std::min<double>(1000.0 + (factor * delta), wfBw);
+            gui::waterfall.setViewBandwidth(finalBw);
+            if (vfo != NULL) {
+                gui::waterfall.setViewOffset(vfo->centerOffset);
+            }
+        }
+        ImGui::SetNextItemWidth(220.0f * style::uiScale);
+        if (ImGui::SliderFloat(T("Max"), &fftMax, -160.0f, 0.0f, "%.0f dB")) {
+            fftMax = std::max<float>(fftMax, fftMin + 10.0f);
+            core::configManager.acquire();
+            core::configManager.conf["max"] = fftMax;
+            core::configManager.release(true);
+        }
+        ImGui::SetNextItemWidth(220.0f * style::uiScale);
+        if (ImGui::SliderFloat(T("Min"), &fftMin, -160.0f, 0.0f, "%.0f dB")) {
+            fftMin = std::min<float>(fftMax - 10.0f, fftMin);
+            core::configManager.acquire();
+            core::configManager.conf["min"] = fftMin;
+            core::configManager.release(true);
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::SetCursorPosX(ImGui::GetWindowSize().x - (44.0f * style::uiScale));
     ImGui::SetCursorPosY((ImGui::GetWindowSize().y - (32.0f * style::uiScale)) * 0.5f);
     if (ImGui::ImageButton(icons::LOGO, ImVec2(32 * style::uiScale, 32 * style::uiScale), ImVec2(0, 0), ImVec2(1, 1), 0)) {
@@ -3870,10 +3929,17 @@ void MainWindow::draw() {
                                 // hitNameBuf is static; the next draw() frame reloads it from config.
                             });
                     }
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    if (ImGui::InputTextMultiline("Note##selected_hit_note", hitNoteBuf, sizeof(hitNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 72.0f * style::uiScale))) {
-                        hit["note"] = std::string(hitNoteBuf);
-                        selectedChanged = true;
+                    if (ImGui::Button(T("Edit Note"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        int capturedIdx = selectedIndex;
+                        openPendEdit(T("Hit Note"), std::string(hitNoteBuf),
+                            [capturedIdx](std::string newNote) {
+                                core::configManager.acquire();
+                                auto& h = core::configManager.conf["predatorHits"];
+                                if (h.is_array() && capturedIdx >= 0 && capturedIdx < (int)h.size()) {
+                                    h[capturedIdx]["note"] = newNote;
+                                }
+                                core::configManager.release(true);
+                            });
                     }
 
                     float halfWidth = (ImGui::GetContentRegionAvail().x - (6.0f * style::uiScale)) * 0.5f;
@@ -4364,8 +4430,10 @@ void MainWindow::draw() {
                     pushUniqueString(nodes[match].radioIds, radioId);
                 }
 
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                ImGui::InputTextWithHint("##predator_network_filter", T("Filter protocol / network / TG / radio / alias"), networkSearchBuf, sizeof(networkSearchBuf));
+                drawEditButton(T("Filter protocol / network / TG / radio / alias"), std::string(networkSearchBuf),
+                    [&](std::string nextFilter) {
+                        snprintf(networkSearchBuf, sizeof(networkSearchBuf), "%s", nextFilter.c_str());
+                    });
                 std::string filter = networkSearchBuf;
                 std::string filterLower = filter;
                 std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), [](unsigned char c){ return std::tolower(c); });
@@ -4579,11 +4647,16 @@ void MainWindow::draw() {
 
                 if (!selectedNetworkKey.empty() && ImGui::CollapsingHeader(T("Network Node Actions"), ImGuiTreeNodeFlags_DefaultOpen)) {
                     ImGui::TextDisabled("Selected: %s", selectedNetworkKey.c_str());
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    if (ImGui::InputText(T("Alias"), selectedNetworkAlias, sizeof(selectedNetworkAlias))) {
-                        networkAliases[selectedNetworkKey] = std::string(selectedNetworkAlias);
-                        saveNetworkAliases(networkAliases);
-                    }
+                    std::string selectedKeyForEdit = selectedNetworkKey;
+                    drawEditButton(T("Alias"), std::string(selectedNetworkAlias),
+                        [selectedKeyForEdit](std::string nextAlias) {
+                            snprintf(selectedNetworkAlias, sizeof(selectedNetworkAlias), "%s", nextAlias.c_str());
+                            core::configManager.acquire();
+                            auto& aliases = core::configManager.conf["predatorNetworkAliases"];
+                            if (!aliases.is_object()) { aliases = json::object(); }
+                            aliases[selectedKeyForEdit] = nextAlias;
+                            core::configManager.release(true);
+                        });
                     float thirdWidth = (ImGui::GetContentRegionAvail().x - (12.0f * style::uiScale)) / 3.0f;
                     if (ImGui::Button(T("Target Node"), ImVec2(thirdWidth, 0))) {
                         int count = applyNetworkAction(selectedNetworkKey, "target", selectedNetworkAlias);
@@ -4616,9 +4689,6 @@ void MainWindow::draw() {
                 ensureDecoderBridge("adsb",    "127.0.0.1",  30003, "BaseStation 30003","dump1090 / readsb feed. networkId = ICAO hex, talkgroup = callsign, radioId = squawk. Aircraft positions can be forwarded to the tactical map.");
                 ensureDecoderBridge("ais",     "127.0.0.1",  10110, "UDP NMEA",         "AIS marine VHF (161.975 / 162.025 MHz) via rtl_ais or aisdec. networkId = MMSI, talkgroup = ship type, radioId = call sign.");
 
-                static char bridgeHostBuf[1024];
-                static char bridgeNotesBuf[2048];
-
                 auto renderBridge = [&](const std::string& key, const char* title, const char* protocolLabel, const char* const* modes, int modeCount) {
                     json& b = decoderBridges[key];
                     bool enabled = readJsonBool(b, "enabled", false);
@@ -4642,11 +4712,22 @@ void MainWindow::draw() {
                         bool changed = false;
                         if (ImGui::Checkbox(T("Enable"), &enabled)) { b["enabled"] = enabled; changed = true; }
 
-                        snprintf(bridgeHostBuf, sizeof(bridgeHostBuf), "%s", host.c_str());
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                        if (ImGui::InputText(T("Host"), bridgeHostBuf, sizeof(bridgeHostBuf))) { b["host"] = std::string(bridgeHostBuf); changed = true; }
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.4f);
-                        if (ImGui::InputInt(T("Port"), &port, 1, 100)) { port = std::clamp<int>(port, 1, 65535); b["port"] = port; changed = true; }
+                        drawEditButton(T("Host"), host,
+                            [key](std::string nextHost) {
+                                core::configManager.acquire();
+                                auto& bridges = core::configManager.conf["predatorDecoderBridges"];
+                                if (!bridges.is_object()) { bridges = json::object(); }
+                                bridges[key]["host"] = nextHost;
+                                core::configManager.release(true);
+                            });
+                        drawEditIntButton(T("Port"), port,
+                            [key](int nextPort) {
+                                core::configManager.acquire();
+                                auto& bridges = core::configManager.conf["predatorDecoderBridges"];
+                                if (!bridges.is_object()) { bridges = json::object(); }
+                                bridges[key]["port"] = std::clamp<int>(nextPort, 1, 65535);
+                                core::configManager.release(true);
+                            });
 
                         int modeIndex = 0;
                         for (int m = 0; m < modeCount; m++) { if (mode == modes[m]) { modeIndex = m; break; } }
@@ -4659,12 +4740,14 @@ void MainWindow::draw() {
                             changed = true;
                         }
 
-                        snprintf(bridgeNotesBuf, sizeof(bridgeNotesBuf), "%s", notes.c_str());
-                        ImGui::TextWrapped("%s", T("Notes / Endpoint Format"));
-                        if (ImGui::InputTextMultiline(("##" + key + "_notes").c_str(), bridgeNotesBuf, sizeof(bridgeNotesBuf), ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight() * 3.0f))) {
-                            b["notes"] = std::string(bridgeNotesBuf);
-                            changed = true;
-                        }
+                        drawEditButton(T("Notes / Endpoint Format"), notes,
+                            [key](std::string nextNotes) {
+                                core::configManager.acquire();
+                                auto& bridges = core::configManager.conf["predatorDecoderBridges"];
+                                if (!bridges.is_object()) { bridges = json::object(); }
+                                bridges[key]["notes"] = nextNotes;
+                                core::configManager.release(true);
+                            });
 
                         if (changed) { saveDecoderBridges(decoderBridges); }
                         ImGui::TreePop();
@@ -4737,20 +4820,28 @@ void MainWindow::draw() {
             if (ImGui::CollapsingHeader(T("DSD-FME Digital Voice"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 bool dsdChanged = false;
                 dsdChanged |= ImGui::Checkbox(T("Enable DSD-FME Bridge"), &dsdFmeEnabled);
-                static char dsdHostBuf[128] = "";
-                static bool dsdHostInit = false;
-                if (!dsdHostInit || strcmp(dsdHostBuf, dsdFmeHost.c_str()) == 0) {
-                    snprintf(dsdHostBuf, sizeof(dsdHostBuf), "%s", dsdFmeHost.c_str());
-                    dsdHostInit = true;
-                }
-                if (ImGui::InputText(T("Bridge Host"), dsdHostBuf, sizeof(dsdHostBuf))) {
-                    dsdFmeHost = dsdHostBuf;
-                    dsdChanged = true;
-                }
-                if (ImGui::InputInt(T("Bridge Port"), &dsdFmePort, 1, 100)) {
-                    dsdFmePort = std::clamp<int>(dsdFmePort, 1, 65535);
-                    dsdChanged = true;
-                }
+                drawEditButton(T("Bridge Host"), dsdFmeHost,
+                    [dsdFmeEnabled, dsdFmePort, dsdFmeMode, voiceOutputPath, dataOutputPath](std::string nextHost) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDsdFmeEnabled"] = dsdFmeEnabled;
+                        core::configManager.conf["predatorDsdFmeHost"] = nextHost;
+                        core::configManager.conf["predatorDsdFmePort"] = dsdFmePort;
+                        core::configManager.conf["predatorDsdFmeMode"] = dsdFmeMode;
+                        core::configManager.conf["predatorVoiceOutputPath"] = voiceOutputPath;
+                        core::configManager.conf["predatorDataOutputPath"] = dataOutputPath;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Bridge Port"), dsdFmePort,
+                    [dsdFmeEnabled, dsdFmeHost, dsdFmeMode, voiceOutputPath, dataOutputPath](int nextPort) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDsdFmeEnabled"] = dsdFmeEnabled;
+                        core::configManager.conf["predatorDsdFmeHost"] = dsdFmeHost;
+                        core::configManager.conf["predatorDsdFmePort"] = std::clamp<int>(nextPort, 1, 65535);
+                        core::configManager.conf["predatorDsdFmeMode"] = dsdFmeMode;
+                        core::configManager.conf["predatorVoiceOutputPath"] = voiceOutputPath;
+                        core::configManager.conf["predatorDataOutputPath"] = dataOutputPath;
+                        core::configManager.release(true);
+                    });
                 const char* dsdModes[] = { "TCP Direct Link Audio", "RIGCTL Metadata", "External Companion" };
                 int dsdModeIndex = (dsdFmeMode == dsdModes[1]) ? 1 : ((dsdFmeMode == dsdModes[2]) ? 2 : 0);
                 if (ImGui::Combo(T("Bridge Mode"), &dsdModeIndex, "TCP Direct Link Audio\0RIGCTL Metadata\0External Companion\0")) {
@@ -5067,30 +5158,16 @@ void MainWindow::draw() {
                 }
             }
 
-            // Scroll the panel to expose the focused input field when the keyboard opens.
-            // Called after every InputText/InputDouble so the tapped field stays visible.
-#ifdef __ANDROID__
-            auto scrollToActive = []() {
-                if (ImGui::IsItemActivated()) { ImGui::SetScrollHereY(0.0f); }
-            };
-#else
-            auto scrollToActive = []() {};
-#endif
-
             if (ImGui::CollapsingHeader(T("Search Bands"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 float fw = ImGui::GetContentRegionAvail().x;
-                float hw = (fw - 4.0f * style::uiScale) * 0.5f;
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputText("##BandName", newBandName, sizeof(newBandName))) {}
-                ImGui::SameLine(0, 0); ImGui::TextDisabled(" Band Name");
-                scrollToActive();
-                ImGui::SetNextItemWidth(hw);
-                if (ImGui::InputDouble("##BandStart", &newBandStart, 0, 0, "%.0f Hz")) {}
-                scrollToActive();
-                ImGui::SameLine(0, 4.0f * style::uiScale);
-                ImGui::SetNextItemWidth(hw);
-                if (ImGui::InputDouble("##BandStop", &newBandStop, 0, 0, "%.0f Hz")) {}
-                scrollToActive();
+                drawEditButton(T("Band Name"), std::string(newBandName),
+                    [&](std::string nextName) {
+                        snprintf(newBandName, sizeof(newBandName), "%s", nextName.c_str());
+                    });
+                drawEditDoubleButton(T("Band Start Hz"), newBandStart, "%.0f",
+                    [&](double nextStart) { newBandStart = nextStart; });
+                drawEditDoubleButton(T("Band Stop Hz"), newBandStop, "%.0f",
+                    [&](double nextStop) { newBandStop = nextStop; });
                 float stepBtnW = (fw - 4.0f * style::uiScale) * 0.5f;
                 if (ImGui::Button("- 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart -= 1e6; newBandStop -= 1e6; }
                 ImGui::SameLine(0, 4.0f * style::uiScale);
@@ -5150,14 +5227,10 @@ void MainWindow::draw() {
                     updated.push_back(row);
                     commitTargets(updated);
                 }
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##TargetHz", &newTargetFreq, 0, 0, "%.0f Hz")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Target Hz");
-                scrollToActive();
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##TargetBW", &newTargetBandwidth, 0, 0, "%.0f Hz BW")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Bandwidth");
-                scrollToActive();
+                drawEditDoubleButton(T("Target Hz"), newTargetFreq, "%.0f",
+                    [&](double nextFreq) { newTargetFreq = nextFreq; });
+                drawEditDoubleButton(T("Target Bandwidth Hz"), newTargetBandwidth, "%.0f",
+                    [&](double nextBw) { newTargetBandwidth = nextBw; });
                 if (ImGui::Button("From Current View##tgt", ImVec2(fw, 0))) {
                     newTargetFreq = gui::waterfall.getCenterFrequency();
                     newTargetBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
@@ -5209,14 +5282,10 @@ void MainWindow::draw() {
                     updated.push_back(row);
                     commitExcludes(updated);
                 }
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##ExclHz", &newExcludeFreq, 0, 0, "%.0f Hz")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Exclude Hz");
-                scrollToActive();
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##ExclBW", &newExcludeBandwidth, 0, 0, "%.0f Hz BW")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Bandwidth");
-                scrollToActive();
+                drawEditDoubleButton(T("Exclude Hz"), newExcludeFreq, "%.0f",
+                    [&](double nextFreq) { newExcludeFreq = nextFreq; });
+                drawEditDoubleButton(T("Exclude Bandwidth Hz"), newExcludeBandwidth, "%.0f",
+                    [&](double nextBw) { newExcludeBandwidth = nextBw; });
                 if (ImGui::Button("From Current View##excl", ImVec2(fw, 0))) {
                     newExcludeFreq = gui::waterfall.getCenterFrequency();
                     newExcludeBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
@@ -5267,18 +5336,36 @@ void MainWindow::draw() {
                 float thresholdEdit   = displayedThreshold;
                 bool  recordEdit      = displayedRecordAudio;
                 bool settingsChanged = false;
-                if (ImGui::InputInt("Dwell (ms)", &dwellEdit, 100, 500)) {
-                    dwellEdit = std::max<int>(100, dwellEdit);
-                    settingsChanged = true;
-                }
-                if (ImGui::InputInt("QuickScan Delay (ms)", &qsDelayEdit, 50, 250)) {
-                    qsDelayEdit = std::max<int>(50, qsDelayEdit);
-                    settingsChanged = true;
-                }
-                if (ImGui::InputInt("QuickScan Duration (ms)", &qsDurEdit, 100, 500)) {
-                    qsDurEdit = std::max<int>(100, qsDurEdit);
-                    settingsChanged = true;
-                }
+                drawEditIntButton(T("Dwell (ms)"), dwellEdit,
+                    [thresholdEdit, qsDelayEdit, qsDurEdit, recordEdit](int nextDwell) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = std::max<int>(100, nextDwell);
+                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
+                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("QuickScan Delay (ms)"), qsDelayEdit,
+                    [thresholdEdit, dwellEdit, qsDurEdit, recordEdit](int nextDelay) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
+                        core::configManager.conf["predatorQuickScanDelayMs"] = std::max<int>(50, nextDelay);
+                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("QuickScan Duration (ms)"), qsDurEdit,
+                    [thresholdEdit, dwellEdit, qsDelayEdit, recordEdit](int nextDuration) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
+                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
+                        core::configManager.conf["predatorQuickScanDurationMs"] = std::max<int>(100, nextDuration);
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
                 if (ImGui::SliderFloat("Threshold", &thresholdEdit, -120.0f, 0.0f, "%.1f dB")) {
                     settingsChanged = true;
                 }
@@ -5294,10 +5381,13 @@ void MainWindow::draw() {
                 bool scanUxChanged = false;
                 scanUxChanged |= ImGui::Checkbox(T("Hold on New Hit"), &predatorHoldOnNewHit);
                 scanUxChanged |= ImGui::Checkbox(T("Suppress Duplicate Hits"), &predatorSuppressDuplicateHits);
-                if (ImGui::InputInt(T("Duplicate Window (s)"), &predatorDuplicateHitWindowSec, 1, 5)) {
-                    predatorDuplicateHitWindowSec = std::clamp<int>(predatorDuplicateHitWindowSec, 1, 600);
-                    scanUxChanged = true;
-                }
+                drawEditIntButton(T("Duplicate Window (s)"), predatorDuplicateHitWindowSec,
+                    [this](int nextWindow) {
+                        predatorDuplicateHitWindowSec = std::clamp<int>(nextWindow, 1, 600);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDuplicateHitWindowSec"] = predatorDuplicateHitWindowSec;
+                        core::configManager.release(true);
+                    });
                 scanUxChanged |= ImGui::Checkbox(T("Extend Dwell on Strong Hit"), &predatorExtendDwellOnStrongHit);
                 if (ImGui::SliderFloat(T("Strong Hit SNR"), &predatorStrongHitSnrDb, 6.0f, 40.0f, "%.1f dB")) {
                     scanUxChanged = true;
@@ -5314,18 +5404,27 @@ void MainWindow::draw() {
                 if (ImGui::SliderFloat(T("Peak SNR"), &predatorPeakSnrDb, 3.0f, 30.0f, "%.1f dB")) {
                     peakChanged = true;
                 }
-                if (ImGui::InputDouble(T("Peak Spacing Hz"), &predatorPeakMinSpacingHz, 1000.0, 12500.0, "%.0f")) {
-                    predatorPeakMinSpacingHz = std::max<double>(1000.0, predatorPeakMinSpacingHz);
-                    peakChanged = true;
-                }
-                if (ImGui::InputInt(T("Max Peaks / Dwell"), &predatorPeakMaxPerDwell, 1, 5)) {
-                    predatorPeakMaxPerDwell = std::clamp<int>(predatorPeakMaxPerDwell, 1, 20);
-                    peakChanged = true;
-                }
-                if (ImGui::InputInt(T("Marker Slots"), &predatorMarkerSlots, 1, 1)) {
-                    predatorMarkerSlots = std::clamp<int>(predatorMarkerSlots, 1, 16);
-                    peakChanged = true;
-                }
+                drawEditDoubleButton(T("Peak Spacing Hz"), predatorPeakMinSpacingHz, "%.0f",
+                    [this](double nextSpacing) {
+                        predatorPeakMinSpacingHz = std::max<double>(1000.0, nextSpacing);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorPeakMinSpacingHz"] = predatorPeakMinSpacingHz;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Max Peaks / Dwell"), predatorPeakMaxPerDwell,
+                    [this](int nextMax) {
+                        predatorPeakMaxPerDwell = std::clamp<int>(nextMax, 1, 20);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorPeakMaxPerDwell"] = predatorPeakMaxPerDwell;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Marker Slots"), predatorMarkerSlots,
+                    [this](int nextSlots) {
+                        predatorMarkerSlots = std::clamp<int>(nextSlots, 1, 16);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorMarkerSlots"] = predatorMarkerSlots;
+                        core::configManager.release(true);
+                    });
                 ImGui::TextWrapped("%s", chineseUi ? "\u6383\u63cf\u505c\u7559\u6642\uff0cPredator RF \u6703\u5c07\u901a\u904e\u9580\u6abb\u8207 SNR \u689d\u4ef6\u7684\u5cf0\u503c\u8a18\u9304\u70ba\u96c6\u7fa4\u547d\u4e2d\uff0c\u4e26\u7531\u547d\u4e2d\u9801\u9762\u6307\u6d3e\u6a19\u8a18\u3001\u89e3\u78bc\u5668\u3001\u76ee\u6a19\u6216\u6392\u9664\u3002" : "During scan dwell, Predator RF records peaks that clear threshold and SNR checks as clustered hits. Markers, decoders, targets, and excludes are assigned from the Hits page.");
                 if (peakChanged) {
                     savePeakDetectionConfig();
@@ -5361,36 +5460,42 @@ void MainWindow::draw() {
                         savePredatorState();
                     }
                     int port = kujhadDeviceListenPort;
-                    if (ImGui::InputInt(T("Listen port"), &port)) {
-                        kujhadDeviceListenPort = std::clamp(port, 1, 65535);
-                        savePredatorState();
-                    }
-                    char nameBuf[64];
-                    std::snprintf(nameBuf, sizeof(nameBuf), "%s", kujhadDeviceName.c_str());
-                    if (ImGui::InputText(T("Device name"), nameBuf, sizeof(nameBuf))) {
-                        kujhadDeviceName = nameBuf;
-                        savePredatorState();
-                    }
+                    drawEditIntButton(T("Listen port"), port,
+                        [this](int nextPort) {
+                            kujhadDeviceListenPort = std::clamp(nextPort, 1, 65535);
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadDeviceListenPort"] = kujhadDeviceListenPort;
+                            core::configManager.release(true);
+                        });
+                    drawEditButton(T("Device name"), kujhadDeviceName,
+                        [this](std::string nextName) {
+                            kujhadDeviceName = nextName;
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadDeviceName"] = kujhadDeviceName;
+                            core::configManager.release(true);
+                        });
                     // Optional operator override for the address that will
                     // be advertised to controllers in the identify payload
                     // and shown in Reachable Addresses. Useful when the
                     // detected NICs aren't what the operator wants peers
                     // to dial — for example a NAT'd public IP, a DNS name,
                     // or the inside-VPN address when multi-homed.
-                    char advBuf[128];
-                    std::snprintf(advBuf, sizeof(advBuf), "%s", kujhadAdvertiseAddress.c_str());
-                    if (ImGui::InputText(T("Advertise address (override)"), advBuf, sizeof(advBuf))) {
-                        kujhadAdvertiseAddress = advBuf;
-                        savePredatorState();
-                    }
+                    drawEditButton(T("Advertise address (override)"), kujhadAdvertiseAddress,
+                        [this](std::string nextAddress) {
+                            kujhadAdvertiseAddress = nextAddress;
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadAdvertiseAddress"] = kujhadAdvertiseAddress;
+                            core::configManager.release(true);
+                        });
                     ImGui::TextDisabled("%s", T("Leave empty to publish only the auto-detected NICs below."));
-                    char keyBuf[96];
-                    std::snprintf(keyBuf, sizeof(keyBuf), "%s", kujhadApiKey.c_str());
-                    if (ImGui::InputText(T("API key"), keyBuf, sizeof(keyBuf))) {
-                        kujhadApiKey = keyBuf;
-                        kujhadServer.setApiKey(kujhadApiKey);
-                        savePredatorState();
-                    }
+                    drawEditButton(T("API key"), kujhadApiKey,
+                        [this](std::string nextKey) {
+                            kujhadApiKey = nextKey;
+                            kujhadServer.setApiKey(kujhadApiKey);
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadApiKey"] = kujhadApiKey;
+                            core::configManager.release(true);
+                        });
                     if (ImGui::Button(T("Regenerate API key"))) {
                         kujhadApiKey = predator::kujhadGenerateApiKey();
                         kujhadServer.setApiKey(kujhadApiKey);
@@ -5418,19 +5523,21 @@ void MainWindow::draw() {
                         savePredatorState();
                     }
                     if (!tlsAvailable) ImGui::EndDisabled();
-                    char certBuf[512];
-                    char keyBufTls[512];
-                    std::snprintf(certBuf, sizeof(certBuf), "%s", kujhadTlsCertPath.c_str());
-                    std::snprintf(keyBufTls, sizeof(keyBufTls), "%s", kujhadTlsKeyPath.c_str());
-                    if (ImGui::InputText(T("TLS cert (PEM)"), certBuf, sizeof(certBuf))) {
-                        kujhadTlsCertPath = certBuf;
-                        kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
-                        savePredatorState();
-                    }
-                    if (ImGui::InputText(T("TLS key (PEM)"), keyBufTls, sizeof(keyBufTls))) {
-                        kujhadTlsKeyPath = keyBufTls;
-                        savePredatorState();
-                    }
+                    drawEditButton(T("TLS cert (PEM)"), kujhadTlsCertPath,
+                        [this](std::string nextPath) {
+                            kujhadTlsCertPath = nextPath;
+                            kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadTlsCertPath"] = kujhadTlsCertPath;
+                            core::configManager.release(true);
+                        });
+                    drawEditButton(T("TLS key (PEM)"), kujhadTlsKeyPath,
+                        [this](std::string nextPath) {
+                            kujhadTlsKeyPath = nextPath;
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadTlsKeyPath"] = kujhadTlsKeyPath;
+                            core::configManager.release(true);
+                        });
                     if (!tlsAvailable) ImGui::BeginDisabled();
                     if (ImGui::Button(T("Regenerate self-signed cert"))) {
                         // CN follows the device name so peers see a
@@ -5580,12 +5687,16 @@ void MainWindow::draw() {
                             saveKujhadPeers(peers);
                         }
                         ImGui::SameLine();
-                        char pinBuf[128];
-                        std::snprintf(pinBuf, sizeof(pinBuf), "%s", peerPin.c_str());
-                        if (ImGui::InputText(T("Pinned fingerprint"), pinBuf, sizeof(pinBuf))) {
-                            peers[i]["pinnedFingerprint"] = std::string(pinBuf);
-                            saveKujhadPeers(peers);
-                        }
+                        int peerIndexForPin = (int)i;
+                        drawEditButton(T("Pinned fingerprint"), peerPin,
+                            [peerIndexForPin](std::string nextPin) {
+                                core::configManager.acquire();
+                                auto& peersConf = core::configManager.conf["kujhadPeers"];
+                                if (peersConf.is_array() && peerIndexForPin >= 0 && peerIndexForPin < (int)peersConf.size()) {
+                                    peersConf[peerIndexForPin]["pinnedFingerprint"] = nextPin;
+                                }
+                                core::configManager.release(true);
+                            });
                         // Trust-on-first-use helper: copy the peer's
                         // currently observed cert fingerprint into the
                         // pinned slot so subsequent connections refuse
@@ -5619,22 +5730,42 @@ void MainWindow::draw() {
                 }
 
                 if (ImGui::CollapsingHeader(T("Add Peer"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                    ImGui::InputText(T("Name"), kujhadAddPeerName, sizeof(kujhadAddPeerName));
-                    ImGui::InputText(T("Host"), kujhadAddPeerHost, sizeof(kujhadAddPeerHost));
-                    ImGui::InputInt(T("Port"), &kujhadAddPeerPort);
-                    ImGui::InputText(T("API Key"), kujhadAddPeerKey, sizeof(kujhadAddPeerKey));
+                    static char kujhadAddPeerName[64] = {0};
+                    static char kujhadAddPeerHost[128] = {0};
+                    static int  kujhadAddPeerPort = 8080;
+                    static char kujhadAddPeerKey[96] = {0};
+                    static bool kujhadAddPeerTls = false;
+                    static char kujhadAddPeerPin[128] = {0};
+
+                    drawEditButton(T("Name"), std::string(kujhadAddPeerName),
+                        [](std::string nextName) {
+                            snprintf(kujhadAddPeerName, sizeof(kujhadAddPeerName), "%s", nextName.c_str());
+                        });
+                    drawEditButton(T("Host"), std::string(kujhadAddPeerHost),
+                        [](std::string nextHost) {
+                            snprintf(kujhadAddPeerHost, sizeof(kujhadAddPeerHost), "%s", nextHost.c_str());
+                        });
+                    drawEditIntButton(T("Port"), kujhadAddPeerPort,
+                        [](int nextPort) {
+                            kujhadAddPeerPort = std::clamp<int>(nextPort, 1, 65535);
+                        });
+                    drawEditButton(T("API Key"), std::string(kujhadAddPeerKey),
+                        [](std::string nextKey) {
+                            snprintf(kujhadAddPeerKey, sizeof(kujhadAddPeerKey), "%s", nextKey.c_str());
+                        });
                     // New peers default to TLS-off so existing
                     // loopback/overlay setups keep working without
                     // surprise. The operator flips the per-row toggle
                     // (and pastes the fingerprint) once the device is
                     // verified.
-                    static bool kujhadAddPeerTls = false;
-                    static char kujhadAddPeerPin[128] = {0};
                     if (!predator::kujhadTlsAvailable()) ImGui::BeginDisabled();
                     ImGui::Checkbox(T("TLS (HTTPS)"), &kujhadAddPeerTls);
                     if (!predator::kujhadTlsAvailable()) ImGui::EndDisabled();
                     ImGui::SameLine();
-                    ImGui::InputText(T("Pinned fingerprint (optional)"), kujhadAddPeerPin, sizeof(kujhadAddPeerPin));
+                    drawEditButton(T("Pinned fingerprint (optional)"), std::string(kujhadAddPeerPin),
+                        [](std::string nextPin) {
+                            snprintf(kujhadAddPeerPin, sizeof(kujhadAddPeerPin), "%s", nextPin.c_str());
+                        });
                     if (ImGui::Button(T("Add peer"))) {
                         if (kujhadAddPeerName[0] && kujhadAddPeerHost[0]) {
                             json& peers = core::configManager.conf["kujhadPeers"];
@@ -5688,7 +5819,8 @@ void MainWindow::draw() {
                     else {
                         auto& client = kujhadClients[kujhadActivePeerIdx];
                         static double cmdFreq = 433920000.0;
-                        ImGui::InputDouble(T("Frequency Hz"), &cmdFreq, 1000.0, 1000000.0, "%.0f");
+                        drawEditDoubleButton(T("Frequency Hz"), cmdFreq, "%.0f",
+                            [](double nextFreq) { cmdFreq = nextFreq; });
                         if (ImGui::Button(T("Send tune.set"))) {
                             std::string err;
                             json args; args["frequencyHz"] = cmdFreq;
@@ -5732,7 +5864,7 @@ void MainWindow::draw() {
                     "mission, identify. The tx.* class is rejected at the wire (RX-only build)."));
             }
         }
-        else {
+        else if (predatorTab == PREDATOR_TAB_SYSTEM) {
             if (ImGui::CollapsingHeader(T("Language"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 int languageIndex = (predatorLanguage == "zh-Hant") ? 1 : 0;
                 if (ImGui::Combo(T("Language"), &languageIndex, "English\0Traditional Chinese\0")) {
@@ -5804,21 +5936,14 @@ void MainWindow::draw() {
 
                 // Host
                 {
-                    static char cotHostBuf[128] = "";
-                    static bool cotHostInit = false;
-                    if (!cotHostInit) {
-                        std::string h = readJsonString(core::configManager.conf, "cotHost", "239.2.3.1");
-                        snprintf(cotHostBuf, sizeof(cotHostBuf), "%s", h.c_str());
-                        cotHostInit = true;
-                    }
+                    std::string cotHost = readJsonString(core::configManager.conf, "cotHost", "239.2.3.1");
                     ImGui::LeftLabel(T("Host##cot"));
-                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
-                    if (ImGui::InputText("##cot_host", cotHostBuf, sizeof(cotHostBuf),
-                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        core::configManager.acquire();
-                        core::configManager.conf["cotHost"] = std::string(cotHostBuf);
-                        core::configManager.release(true);
-                    }
+                    drawEditButton(T("Host"), cotHost,
+                        [](std::string nextHost) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotHost"] = nextHost;
+                            core::configManager.release(true);
+                        });
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", T("239.2.3.1 = ATAK multicast (LAN)\n127.0.0.1 = same device\nIP of TAK Server = direct TCP"));
                     }
@@ -5828,13 +5953,12 @@ void MainWindow::draw() {
                 {
                     int cotPort = (int)readJsonDouble(core::configManager.conf, "cotPort", 6969.0);
                     ImGui::LeftLabel(T("Port##cot"));
-                    ImGui::SetNextItemWidth(w * 0.35f);
-                    if (ImGui::InputInt("##cot_port", &cotPort, 1, 100)) {
-                        cotPort = std::max(1, std::min(65535, cotPort));
-                        core::configManager.acquire();
-                        core::configManager.conf["cotPort"] = cotPort;
-                        core::configManager.release(true);
-                    }
+                    drawEditIntButton(T("Port"), cotPort,
+                        [](int nextPort) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotPort"] = std::max(1, std::min(65535, nextPort));
+                            core::configManager.release(true);
+                        });
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", T("6969 = ATAK SA multicast\n4242 = ATAK direct UDP\n8087 = TAK Server TLS\n8088 = TAK Server plain TCP"));
                     }
@@ -5859,41 +5983,27 @@ void MainWindow::draw() {
 
                 // Callsign
                 {
-                    static char cotCsBuf[64] = "";
-                    static bool cotCsInit = false;
-                    if (!cotCsInit) {
-                        std::string cs = readJsonString(core::configManager.conf, "cotCallsign", "Predator RF");
-                        snprintf(cotCsBuf, sizeof(cotCsBuf), "%s", cs.c_str());
-                        cotCsInit = true;
-                    }
+                    std::string cotCallsign = readJsonString(core::configManager.conf, "cotCallsign", "Predator RF");
                     ImGui::LeftLabel(T("Callsign##cot"));
-                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
-                    if (ImGui::InputText("##cot_callsign", cotCsBuf, sizeof(cotCsBuf),
-                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        core::configManager.acquire();
-                        core::configManager.conf["cotCallsign"] = std::string(cotCsBuf);
-                        core::configManager.conf["cotUid"] = "";  // force UID rederivation
-                        core::configManager.release(true);
-                    }
+                    drawEditButton(T("Callsign"), cotCallsign,
+                        [](std::string nextCallsign) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotCallsign"] = nextCallsign;
+                            core::configManager.conf["cotUid"] = "";  // force UID rederivation
+                            core::configManager.release(true);
+                        });
                 }
 
                 // Chat room
                 {
-                    static char cotRoomBuf[64] = "";
-                    static bool cotRoomInit = false;
-                    if (!cotRoomInit) {
-                        std::string r = readJsonString(core::configManager.conf, "cotChatRoom", "All Chat Rooms");
-                        snprintf(cotRoomBuf, sizeof(cotRoomBuf), "%s", r.c_str());
-                        cotRoomInit = true;
-                    }
+                    std::string cotRoom = readJsonString(core::configManager.conf, "cotChatRoom", "All Chat Rooms");
                     ImGui::LeftLabel(T("Chat Room##cot"));
-                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
-                    if (ImGui::InputText("##cot_room", cotRoomBuf, sizeof(cotRoomBuf),
-                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        core::configManager.acquire();
-                        core::configManager.conf["cotChatRoom"] = std::string(cotRoomBuf);
-                        core::configManager.release(true);
-                    }
+                    drawEditButton(T("Chat Room"), cotRoom,
+                        [](std::string nextRoom) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotChatRoom"] = nextRoom;
+                            core::configManager.release(true);
+                        });
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", T("'All Chat Rooms' = broadcast to everyone.\nType a team name (e.g. TeamBlue) for group chat."));
                     }
@@ -5934,10 +6044,13 @@ void MainWindow::draw() {
             }
 
             if (ImGui::CollapsingHeader(T("Session Export"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                if (ImGui::InputTextMultiline("Note##session_note", sessionNoteBuf, sizeof(sessionNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 96.0f * style::uiScale))) {
-                    saveSessionNote(std::string(sessionNoteBuf));
-                }
+                drawEditButton(T("Note"), std::string(sessionNoteBuf),
+                    [](std::string nextNote) {
+                        snprintf(sessionNoteBuf, sizeof(sessionNoteBuf), "%s", nextNote.c_str());
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorSessionNote"] = nextNote;
+                        core::configManager.release(true);
+                    });
                 if (ImGui::Button(T("Export Session JSON"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     exportPredatorSession();
                 }
@@ -6271,10 +6384,12 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
-    // Thin scrollbar so the rail content width isn't eaten at high uiScale.
-    // NoScrollWithMouse is intentionally absent so Android touch-drag scrolls the rail.
-    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.0f * style::uiScale);
-    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, 0);
+    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    float tabAvailH = ImGui::GetContentRegionAvail().y;
+    float tabSpacingY = ImGui::GetStyle().ItemSpacing.y;
+    float tabBtnH = std::floor((tabAvailH - (tabSpacingY * 7.0f)) / 8.0f);
+    tabBtnH = std::max(tabBtnH, 1.0f);
 
     for (int i = 0; i < 8; i++) {
         bool activeTab = (predatorTab == i);
@@ -6283,7 +6398,7 @@ void MainWindow::draw() {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.45f, 0.24f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.50f, 0.27f, 1.0f));
         }
-        if (ImGui::Button(tabLabels[i], ImVec2(ImGui::GetContentRegionAvail().x, 36.0f * style::uiScale))) {
+        if (ImGui::Button(tabLabels[i], ImVec2(ImGui::GetContentRegionAvail().x, tabBtnH))) {
             if (predatorTab == i && showMenu) {
                 showMenu = false;
             }
@@ -6301,60 +6416,7 @@ void MainWindow::draw() {
         }
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Fixed-height sliders so the 8 tab buttons + sliders can overflow and be
-    // touch-scrolled.  Adaptive heights would fill exactly the child height,
-    // leaving no overflow and making the scrollbar thumb invisible.
-    {
-        ImVec2 wfSliderSize(16.0f * style::uiScale, 80.0f * style::uiScale);
-
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Zoom").x) * 0.5f);
-        ImGui::TextUnformatted("Zoom");
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-        if (ImGui::VSliderFloat("##_7_", wfSliderSize, &bw, 1.0, 0.0, "")) {
-            double factor = (double)bw * (double)bw;
-            double wfBw = gui::waterfall.getBandwidth();
-            double delta = wfBw - 1000.0;
-            double finalBw = std::min<double>(1000.0 + (factor * delta), wfBw);
-            gui::waterfall.setViewBandwidth(finalBw);
-            if (vfo != NULL) {
-                gui::waterfall.setViewOffset(vfo->centerOffset);
-            }
-        }
-
-        ImGui::Spacing();
-
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Max").x) * 0.5f);
-        ImGui::TextUnformatted("Max");
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-        if (ImGui::VSliderFloat("##_8_", wfSliderSize, &fftMax, 0.0, -160.0f, "")) {
-            fftMax = std::max<float>(fftMax, fftMin + 10);
-            core::configManager.acquire();
-            core::configManager.conf["max"] = fftMax;
-            core::configManager.release(true);
-        }
-
-        ImGui::Spacing();
-
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Min").x) * 0.5f);
-        ImGui::TextUnformatted("Min");
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-        ImGui::SetItemUsingMouseWheel();
-        if (ImGui::VSliderFloat("##_9_", wfSliderSize, &fftMin, 0.0, -160.0f, "")) {
-            fftMin = std::min<float>(fftMax - 10, fftMin);
-            core::configManager.acquire();
-            core::configManager.conf["min"] = fftMin;
-            core::configManager.release(true);
-        }
-    }
-
-    applyTouchScroll(); // enable drag-to-scroll for the right rail on Android
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();   // ScrollbarSize
+    ImGui::EndChild();  // PredatorRightRail
     ImGui::PopStyleColor();
 
     gui::waterfall.setFFTMin(fftMin);
