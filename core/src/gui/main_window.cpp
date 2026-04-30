@@ -790,15 +790,23 @@ void MainWindow::draw() {
     auto applyTouchScroll = [&]() {
 #ifdef __ANDROID__
         ImGuiIO& io = ImGui::GetIO();
-        // Threshold of 8px distinguishes a swipe from a tap; ChildWindows flag lets
-        // hover detection work even when a nested item captured the active state.
-        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows) &&
-            ImGui::IsMouseDragging(ImGuiMouseButton_Left, 8.0f * style::uiScale)) {
-            float nextScrollY = std::clamp(ImGui::GetScrollY() - io.MouseDelta.y, 0.0f, ImGui::GetScrollMaxY());
-            ImGui::SetScrollY(nextScrollY);
-            if (ImGui::GetScrollMaxX() > 0.0f) {
-                float nextScrollX = std::clamp(ImGui::GetScrollX() - io.MouseDelta.x, 0.0f, ImGui::GetScrollMaxX());
-                ImGui::SetScrollX(nextScrollX);
+        // Direct position + button-state check.  IsWindowHovered/IsMouseDragging
+        // are unreliable inside child windows when widgets (sliders, buttons) have
+        // captured ActiveId — the hover check silently returns false even though
+        // the finger is clearly over the window.  Instead, compare io.MousePos
+        // against the actual window rect and apply the per-frame delta directly.
+        ImVec2 wpos  = ImGui::GetWindowPos();
+        ImVec2 wsize = ImGui::GetWindowSize();
+        if (io.MouseDown[0] &&
+            io.MousePos.x >= wpos.x && io.MousePos.x < wpos.x + wsize.x &&
+            io.MousePos.y >= wpos.y && io.MousePos.y < wpos.y + wsize.y) {
+            if (std::fabs(io.MouseDelta.y) > 0.5f && ImGui::GetScrollMaxY() > 0.0f) {
+                float next = ImGui::GetScrollY() - io.MouseDelta.y;
+                ImGui::SetScrollY(std::clamp(next, 0.0f, ImGui::GetScrollMaxY()));
+            }
+            if (std::fabs(io.MouseDelta.x) > 0.5f && ImGui::GetScrollMaxX() > 0.0f) {
+                float next = ImGui::GetScrollX() - io.MouseDelta.x;
+                ImGui::SetScrollX(std::clamp(next, 0.0f, ImGui::GetScrollMaxX()));
             }
         }
 #endif
