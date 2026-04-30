@@ -5712,13 +5712,19 @@ void MainWindow::draw() {
     //  LastItemData away, we still have the correct rect for as long
     //  as the same id stays active.
     //
-    //  Tier B (FALLBACK) — when no precise rect is available we
-    //  approximate by walking up ParentWindow from `ActiveIdWindow`
-    //  and shifting the first scrollable ancestor whose own bottom
-    //  edge dips below the IME line. This keeps inputs in long
-    //  scrollable menus visible without any per-call-site
-    //  instrumentation; precise per-widget tracking for the remaining
-    //  call sites is queued as follow-up #26.
+    //  Tier B (FALLBACK) — when no precise rect is available (e.g.
+    //  ActiveId set without nav focus) we approximate by walking up
+    //  ParentWindow from `ActiveIdWindow` and shifting the first
+    //  scrollable ancestor whose own bottom edge dips below the IME
+    //  line.
+    //
+    //  Tier C (LAST RESORT) — if the host window chain is
+    //  non-scrollable (popups, modals, fixed-size dialogs whose
+    //  ScrollMax.y == 0), no scroll can clear the IME. We translate
+    //  the active widget's host window UP by the overlap via
+    //  SetWindowPos, clamped so its top stays on screen. This
+    //  guarantees the field is visible even when scrolling isn't an
+    //  option.
     //
     // The compensation is edge-triggered (IME just opened, focused
     // widget changed, or IME grew). Re-running each frame would drift
@@ -5779,7 +5785,19 @@ void MainWindow::draw() {
                 overlap = s_imeActiveRect.Max.y - visBottom;
             }
 
-            ImGuiWindow* w = gctx->ActiveIdWindow;
+            ImGuiWindow* host         = gctx->ActiveIdWindow;
+            float        hostOverlap  = overlap;
+            if (hostOverlap <= 0.0f && host != nullptr) {
+                // Tier B preview at the host: how far the host
+                // window's own bottom dips into the IME strip. Used
+                // both for scroll attempts and (if no scroll possible)
+                // for Tier C translation.
+                float hb = host->Pos.y + host->Size.y;
+                if (hb > visBottom) hostOverlap = hb - visBottom;
+            }
+
+            bool scrolled = false;
+            ImGuiWindow* w = host;
             while (w != nullptr) {
                 float useOverlap = overlap;
                 if (useOverlap <= 0.0f) {
@@ -5795,10 +5813,24 @@ void MainWindow::draw() {
                     float targetY = std::min(curY + useOverlap, maxY);
                     if (targetY > curY + 0.5f) {
                         ImGui::SetScrollY(w, targetY);
+                        scrolled = true;
                         break;
                     }
                 }
                 w = w->ParentWindow;
+            }
+
+            // Tier C: if no ancestor could absorb the overlap via
+            // scroll (popup / modal / fixed dialog with ScrollMax.y
+            // == 0), translate the host window itself upward. Clamp
+            // so its top stays >= 0 — partial coverage is better
+            // than pushing the title off-screen.
+            if (!scrolled && host != nullptr && hostOverlap > 0.0f) {
+                float newY = host->Pos.y - hostOverlap;
+                if (newY < 0.0f) newY = 0.0f;
+                if (newY < host->Pos.y - 0.5f) {
+                    ImGui::SetWindowPos(host, ImVec2(host->Pos.x, newY), ImGuiCond_Always);
+                }
             }
         }
         s_imeLastBottom   = imeBottom;
