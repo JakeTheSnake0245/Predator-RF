@@ -243,6 +243,14 @@ namespace backend {
         return callIntActivityMethod("getDisplayWidthPx");
     }
 
+    int getImeBottomInsetPx() {
+        // The Kotlin side caches the inset from a global-layout
+        // listener so this JNI call is essentially a volatile field
+        // read on the Activity object — cheap enough to poll every
+        // frame.
+        return callIntActivityMethod("getImeBottomInsetPx");
+    }
+
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
         lat = 0.0;
         lon = 0.0;

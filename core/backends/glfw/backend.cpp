@@ -260,6 +260,12 @@ namespace backend {
         return _winWidth > 0 ? _winWidth : winWidth;
     }
 
+    int getImeBottomInsetPx() {
+        // Desktop has no on-screen keyboard, so there's never a
+        // bottom inset to compensate for.
+        return 0;
+    }
+
     int renderLoop() {
         // Main loop
         while (!glfwWindowShouldClose(window)) {
