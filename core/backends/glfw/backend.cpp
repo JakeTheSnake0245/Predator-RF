@@ -229,6 +229,13 @@ namespace backend {
         ImGui_ImplGlfw_CursorPosCallback(window, x, y);
     }
 
+    float getNativeUiScale() {
+        // Desktop has no native touch-friendly scale equivalent — let
+        // the user keep the 100% default and bump it manually from the
+        // Display menu if they want bigger UI on a 4K monitor.
+        return 1.0f;
+    }
+
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
         lat = 0.0;
         lon = 0.0;

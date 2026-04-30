@@ -7,8 +7,10 @@
 #include <gui/main_window.h>
 #include <signal_path/signal_path.h>
 #include <gui/style.h>
+#include <gui/menus/theme.h>
 #include <utils/optionlist.h>
 #include <algorithm>
+#include <cmath>
 
 namespace displaymenu {
     bool showWaterfall;
@@ -119,12 +121,39 @@ namespace displaymenu {
         gui::waterfall.setSNRSmoothing(snrSmoothing);
         updateFFTSpeeds();
 
-        // Define and load UI scales
-        uiScales.define(1.0f, "100%", 1.0f);
-        uiScales.define(2.0f, "200%", 2.0f);
-        uiScales.define(3.0f, "300%", 3.0f);
-        uiScales.define(4.0f, "400%", 4.0f);
-        uiScaleId = uiScales.valueId(style::uiScale);
+        // Define and load UI scales. The "Auto (device)" sentinel sits
+        // at the top so it's the first option a user sees; the rest of
+        // the list is the canonical SUPPORTED_SCALES from style.cpp,
+        // formatted as percentages. Finer granularity in the 1.5x–3.0x
+        // band matches the bulk of phone densities.
+        uiScales.define(style::AUTO_SCALE, "Auto (device)", style::AUTO_SCALE);
+        uiScales.define(1.00f, "100%", 1.00f);
+        uiScales.define(1.25f, "125%", 1.25f);
+        uiScales.define(1.50f, "150%", 1.50f);
+        uiScales.define(1.75f, "175%", 1.75f);
+        uiScales.define(2.00f, "200%", 2.00f);
+        uiScales.define(2.25f, "225%", 2.25f);
+        uiScales.define(2.50f, "250%", 2.50f);
+        uiScales.define(2.75f, "275%", 2.75f);
+        uiScales.define(3.00f, "300%", 3.00f);
+        uiScales.define(3.50f, "350%", 3.50f);
+        uiScales.define(4.00f, "400%", 4.00f);
+
+        // Pick the combo entry from the *stored* config preference,
+        // not from style::uiScale. style::uiScale is the resolved float,
+        // so a user who picked Auto and got 3.0x would otherwise see
+        // "300%" highlighted instead of "Auto (device)" the next time
+        // they open the Display menu.
+        const auto& v = core::configManager.conf["uiScale"];
+        if (v.is_string() && v.get<std::string>() == "auto") {
+            uiScaleId = uiScales.valueId(style::AUTO_SCALE);
+        }
+        else if (v.is_number()) {
+            uiScaleId = uiScales.valueId(style::snapToSupportedScale((float)v));
+        }
+        else {
+            uiScaleId = uiScales.valueId(style::AUTO_SCALE);
+        }
     }
 
     void draw(void* ctx) {
@@ -201,10 +230,38 @@ namespace displaymenu {
         ImGui::LeftLabel("High-DPI Scaling");
         ImGui::FillWidth();
         if (ImGui::Combo("##sdrpp_ui_scale", &uiScaleId, uiScales.txt)) {
+            float chosen = uiScales[uiScaleId];
+
+            // Persist as the "auto" string sentinel when the user picks
+            // Auto (device); otherwise persist the raw float so older
+            // builds and external tools can still read the value.
             core::configManager.acquire();
-            core::configManager.conf["uiScale"] = uiScales[uiScaleId];
+            if (chosen == style::AUTO_SCALE) {
+                core::configManager.conf["uiScale"] = "auto";
+                style::uiScale = style::computeAutoScale();
+            }
+            else {
+                core::configManager.conf["uiScale"] = chosen;
+                style::uiScale = chosen;
+            }
             core::configManager.release(true);
-            restartRequired = true;
+
+            // Live-apply: thememenu::applyTheme() resets the ImGuiStyle
+            // (StyleColorsDark + theme overrides), then re-runs
+            // ScaleAllSizes(uiScale) and applyTouchFriendlyTweaks(), so
+            // scrollbars, grabs, indents, frame heights, borders and
+            // rounding all update on the next frame without a restart.
+            // Only the rasterized font atlas can't be rebuilt live —
+            // that's what triggers the "Restart required." hint below.
+            thememenu::applyTheme();
+
+            // Show the restart hint ONLY when the new scale would
+            // change rasterized font sizes meaningfully (>= ~5%).
+            // Sub-5% deltas are imperceptible — making the hint depend
+            // on the cached atlas keeps the UI honest about when the
+            // user actually needs to relaunch the app vs. when they
+            // can just keep tweaking.
+            restartRequired = std::fabs(style::uiScale - style::loadedFontScale) > 0.05f;
         }
 
         ImGui::LeftLabel("FFT Framerate");

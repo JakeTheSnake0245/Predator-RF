@@ -227,7 +227,12 @@ int sdrpp_main(int argc, char* argv[]) {
     // Themes
     defConfig["theme"] = "Predator RF";
 #ifdef __ANDROID__
-    defConfig["uiScale"] = 3.0f;
+    // "auto" sentinel: on Android the default is now device-derived
+    // from DisplayMetrics.density via backend::getNativeUiScale(),
+    // snapped to the supported step list. Old user configs that stored
+    // a raw float (e.g. 3.0) still load correctly thanks to the
+    // is_string()/is_number() handling further down.
+    defConfig["uiScale"] = "auto";
 #else
     defConfig["uiScale"] = 1.0f;
 #endif
@@ -419,8 +424,24 @@ int sdrpp_main(int argc, char* argv[]) {
         core::configManager.conf["moduleInstances"][_name] = newMod;
     }
 
-    // Load UI scaling
-    style::uiScale = core::configManager.conf["uiScale"];
+    // Load UI scaling. The config value is either:
+    //   * the string "auto" — resolve via backend::getNativeUiScale()
+    //     and snap to the supported step list; or
+    //   * a raw float (legacy and manual override) — snap so an old
+    //     value like 3.0 from upstream SDR++ still lands on a valid
+    //     OptionList entry without throwing.
+    {
+        const auto& v = core::configManager.conf["uiScale"];
+        if (v.is_string() && v.get<std::string>() == "auto") {
+            style::uiScale = style::computeAutoScale();
+        }
+        else if (v.is_number()) {
+            style::uiScale = style::snapToSupportedScale((float)v);
+        }
+        else {
+            style::uiScale = style::computeAutoScale();
+        }
+    }
 
     core::configManager.release(true);
 

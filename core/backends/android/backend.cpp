@@ -177,6 +177,47 @@ namespace backend {
     void getMouseScreenPos(double& x, double& y) { x = 0; y = 0; }
     void setMouseScreenPos(double x, double y) {}
 
+    float getNativeUiScale() {
+        // Native UI scale = android.util.DisplayMetrics.density. This is
+        // the platform's own "1 dp = N px" multiplier and is the most
+        // device-agnostic way to pick a touch-friendly default — the
+        // OEM has already chosen it to match the physical pixel pitch.
+        // Returns 1.0f on any JNI failure so the caller never gets a
+        // bogus scale that could blow up ImGui.
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return 1.0f; }
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return 1.0f; }
+
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz == NULL) {
+            java_vm->DetachCurrentThread();
+            return 1.0f;
+        }
+
+        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "getDisplayDensity", "()F");
+        if (method_id == NULL) {
+            java_vm->DetachCurrentThread();
+            return 1.0f;
+        }
+
+        jfloat density = java_env->CallFloatMethod(app->activity->clazz, method_id);
+
+        jni_return = java_vm->DetachCurrentThread();
+        if (jni_return != JNI_OK) { return 1.0f; }
+
+        // Belt-and-suspenders sanity: never return something nonsensical
+        // (negative, zero, NaN, or absurdly large). Snap/clamp happens
+        // in style::computeAutoScale(), so just return the raw value
+        // here when it's plausible.
+        if (!(density > 0.1f) || density > 10.0f) { return 1.0f; }
+        return (float)density;
+    }
+
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
         lat = 0.0;
         lon = 0.0;
