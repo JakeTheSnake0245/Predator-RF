@@ -166,6 +166,10 @@ private:
     nlohmann::json kujhadSearchBandsSnapshot = nlohmann::json::array();
     nlohmann::json kujhadTargetsSnapshot = nlohmann::json::array();
     nlohmann::json kujhadExcludesSnapshot = nlohmann::json::array();
+    // Hits snapshot — shipped with every spectrum frame so a mirroring
+    // controller can render the same vertical hit/target markers the
+    // operator sees locally on this device. Refreshed once per draw().
+    nlohmann::json kujhadHitsSnapshot = nlohmann::json::array();
     float kujhadThresholdSnapshot = -55.0f;
     int kujhadDwellMsSnapshot = 1000;
     int kujhadQuickScanDelayMsSnapshot = 250;
@@ -229,6 +233,16 @@ private:
     // local snapshot fields above; FFT thread reads it every tick.
     std::vector<float> kujhadPeerCachedBins;
     uint64_t kujhadPeerCachedSerial = 0;
+    // Peer overlay arrays cached from the most recent mirrored spectrum
+    // frame. Read by the UI thread to paint hit/target markers and
+    // search-band shading on top of the mirrored waterfall in a peer
+    // colour. UI-thread only — no concurrent FFT-thread access — but
+    // protected by kujhadSpectrumMtx so we can swap them in atomically
+    // alongside the bin payload.
+    nlohmann::json kujhadPeerCachedHits        = nlohmann::json::array();
+    nlohmann::json kujhadPeerCachedSearchBands = nlohmann::json::array();
+    nlohmann::json kujhadPeerCachedTargets     = nlohmann::json::array();
+    nlohmann::json kujhadPeerCachedExcludes    = nlohmann::json::array();
     // Monotonic event serial for the /v1/events?since=<id> cursor.
     // Every event row inserted into `events` (locally generated, decoder
     // bridge, or mirrored from a peer) is tagged with row["serial"] =
