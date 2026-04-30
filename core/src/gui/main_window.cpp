@@ -5699,26 +5699,53 @@ void MainWindow::draw() {
 
     // === Soft-keyboard inset compensation ====================================
     // When the Android IME is up, treat the bottom strip of DisplaySize
-    // covered by the keyboard as unusable. If ImGui has an active text
-    // widget whose host window extends INTO that strip, scroll the
-    // closest scrollable ancestor up by the overlap so the input lands
-    // back in the visible region. Walks up ParentWindow because the
-    // operator might be editing a field inside a BeginChild that is
-    // itself non-scrollable (the parent menu does the scrolling).
+    // covered by the keyboard as unusable, then ensure the active text
+    // widget remains in the visible region above the IME edge.
     //
-    // The compensation MUST only fire on a true edge — IME just opened
-    // or the focused widget just changed. The window's screen rect
-    // (Pos / Size) does NOT change when SetScrollY scrolls its content,
-    // so re-running the calc every frame would add `overlap` to scroll
-    // each frame and silently drag the focused field all the way down
-    // to ScrollMax. The state below detects the edge once per
-    // open / focus transition and locks out subsequent re-applications.
+    // Two-tier approach:
+    //
+    //  Tier A (PRECISE) — when ImGui's per-frame `LastItemData.ID`
+    //  matches the active id (typical for popups / dialogs whose
+    //  edited input is the last submitted item), we use the actual
+    //  widget rect captured here as `s_imeActiveRect`. The cache
+    //  survives across frames so even if a later submission shifts
+    //  LastItemData away, we still have the correct rect for as long
+    //  as the same id stays active.
+    //
+    //  Tier B (FALLBACK) — when no precise rect is available we
+    //  approximate by walking up ParentWindow from `ActiveIdWindow`
+    //  and shifting the first scrollable ancestor whose own bottom
+    //  edge dips below the IME line. This keeps inputs in long
+    //  scrollable menus visible without any per-call-site
+    //  instrumentation; precise per-widget tracking for the remaining
+    //  call sites is queued as follow-up #26.
+    //
+    // The compensation is edge-triggered (IME just opened, focused
+    // widget changed, or IME grew). Re-running each frame would drift
+    // because window Pos/Size don't move when SetScrollY scrolls
+    // content, and scroll would compound to ScrollMax over time.
     {
         int imeBottom = backend::getImeBottomInsetPx();
         ImGuiContext* gctx = ImGui::GetCurrentContext();
-        static int       s_imeLastBottom    = 0;
-        static ImGuiID   s_imeLastActiveId  = 0;
+        static int     s_imeLastBottom   = 0;
+        static ImGuiID s_imeLastActiveId = 0;
+        static ImRect  s_imeActiveRect;
+        static ImGuiID s_imeActiveRectId = 0;
         ImGuiID curActiveId = (gctx != nullptr) ? gctx->ActiveId : 0;
+
+        // Tier A capture: any frame where the very last submitted item
+        // happens to be the active one, snapshot its screen rect for
+        // future precise compensation.
+        if (gctx != nullptr && curActiveId != 0
+            && gctx->LastItemData.ID == curActiveId) {
+            s_imeActiveRect   = gctx->LastItemData.Rect;
+            s_imeActiveRectId = curActiveId;
+        }
+        if (curActiveId == 0 || curActiveId != s_imeActiveRectId) {
+            // Active id went away or moved on — discard stale rect.
+            s_imeActiveRectId = 0;
+        }
+
         // Retrigger when:
         //  • IME just appeared (last == 0, now > 0), OR
         //  • the focused widget changed while the IME stayed up, OR
@@ -5727,22 +5754,36 @@ void MainWindow::draw() {
         //    was visible a frame ago is now covered. Shrinking the IME
         //    or closing it is intentionally NOT a retrigger — we don't
         //    want to snap content back and surprise the operator.
-        bool    edge        = (imeBottom > 0)
-                           && (curActiveId != 0)
-                           && (s_imeLastBottom == 0
-                                || s_imeLastActiveId != curActiveId
-                                || imeBottom > s_imeLastBottom);
+        bool edge = (imeBottom > 0)
+                 && (curActiveId != 0)
+                 && (s_imeLastBottom == 0
+                      || s_imeLastActiveId != curActiveId
+                      || imeBottom > s_imeLastBottom);
         if (edge && gctx != nullptr && gctx->ActiveIdWindow != nullptr) {
             float dispH     = ImGui::GetIO().DisplaySize.y;
             float visBottom = dispH - (float)imeBottom;
+            float overlap   = 0.0f;
+
+            // Tier A: precise — use the cached active widget rect.
+            if (s_imeActiveRectId == curActiveId
+                && s_imeActiveRect.Max.y > visBottom) {
+                overlap = s_imeActiveRect.Max.y - visBottom;
+            }
+
             ImGuiWindow* w = gctx->ActiveIdWindow;
             while (w != nullptr) {
-                float winBottomScreen = w->Pos.y + w->Size.y;
-                if (winBottomScreen > visBottom) {
-                    float overlap = winBottomScreen - visBottom;
+                float useOverlap = overlap;
+                if (useOverlap <= 0.0f) {
+                    // Tier B: window-bottom approximation.
+                    float winBottomScreen = w->Pos.y + w->Size.y;
+                    if (winBottomScreen > visBottom) {
+                        useOverlap = winBottomScreen - visBottom;
+                    }
+                }
+                if (useOverlap > 0.0f) {
                     float curY    = w->Scroll.y;
                     float maxY    = w->ScrollMax.y;
-                    float targetY = std::min(curY + overlap, maxY);
+                    float targetY = std::min(curY + useOverlap, maxY);
                     if (targetY > curY + 0.5f) {
                         ImGui::SetScrollY(w, targetY);
                         break;
