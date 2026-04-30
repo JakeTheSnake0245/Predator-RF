@@ -107,6 +107,50 @@ class MainActivity : NativeActivity() {
         decorView.setSystemUiVisibility(uiOptions);
     }
 
+    // Cached IME bottom inset in pixels. Polled every frame from the
+    // native side via JNI (getImeBottomInsetPx). We update it from the
+    // global layout listener installed in onCreate so we don't pay an
+    // androidx call per native frame.
+    @Volatile private var imeBottomInsetPx: Int = 0
+    @Volatile private var imeWasOpen: Boolean = false
+
+    fun getImeBottomInsetPx(): Int {
+        return imeBottomInsetPx
+    }
+
+    private fun installImeInsetListener() {
+        val rootView = window.decorView
+        rootView.viewTreeObserver.addOnGlobalLayoutListener {
+            // Visible-display-frame difference works on every API level
+            // we care about (minSdk 28) and is robust to fullscreen +
+            // adjustResize quirks on NativeActivity, which doesn't lay
+            // out child Views and so doesn't get reliable WindowInsets
+            // dispatches. We treat anything below 15 % of the screen
+            // height as noise (status/nav bars under immersive sticky).
+            try {
+                val r = android.graphics.Rect()
+                rootView.getWindowVisibleDisplayFrame(r)
+                val screenH = rootView.height
+                val keypadH = screenH - r.bottom
+                val newInset = if (keypadH > screenH * 0.15) keypadH else 0
+                if (newInset != imeBottomInsetPx) {
+                    imeBottomInsetPx = newInset
+                }
+                // Re-apply immersive flags after the IME closes so the
+                // status / navigation bars stay hidden on every device,
+                // even those where adjustResize fights the fullscreen
+                // theme on hide.
+                val nowOpen = newInset > 0
+                if (imeWasOpen && !nowOpen) {
+                    hideSystemBars()
+                }
+                imeWasOpen = nowOpen
+            } catch (t: Throwable) {
+                imeBottomInsetPx = 0
+            }
+        }
+    }
+
     public override fun onCreate(savedInstanceState: Bundle?) {
         // Hide bars
         hideSystemBars();
@@ -140,6 +184,7 @@ class MainActivity : NativeActivity() {
         }
 
         super.onCreate(savedInstanceState)
+        installImeInsetListener();
         startLocationUpdates();
     }
 

@@ -14,6 +14,9 @@ namespace backend {
     bool isTouchPrimary();
     int getDisplayHeightPx();
     int getDisplayWidthPx();
+    // Bottom-edge inset in pixels covered by the on-screen keyboard
+    // (Android IME). 0 when no keyboard is showing or on desktop.
+    int getImeBottomInsetPx();
     int renderLoop();
     int end();
 }

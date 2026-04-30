@@ -1,6 +1,7 @@
 #include <gui/main_window.h>
 #include <gui/gui.h>
 #include "imgui.h"
+#include "imgui_internal.h"
 #include <stdio.h>
 #include <thread>
 #include <complex>
@@ -5695,6 +5696,54 @@ void MainWindow::draw() {
     gui::waterfall.setFFTMax(fftMax);
     gui::waterfall.setWaterfallMin(fftMin);
     gui::waterfall.setWaterfallMax(fftMax);
+
+    // === Soft-keyboard inset compensation ====================================
+    // When the Android IME is up, treat the bottom strip of DisplaySize
+    // covered by the keyboard as unusable. If ImGui has an active text
+    // widget whose host window extends INTO that strip, scroll the
+    // closest scrollable ancestor up by the overlap so the input lands
+    // back in the visible region. Walks up ParentWindow because the
+    // operator might be editing a field inside a BeginChild that is
+    // itself non-scrollable (the parent menu does the scrolling).
+    //
+    // The compensation MUST only fire on a true edge — IME just opened
+    // or the focused widget just changed. The window's screen rect
+    // (Pos / Size) does NOT change when SetScrollY scrolls its content,
+    // so re-running the calc every frame would add `overlap` to scroll
+    // each frame and silently drag the focused field all the way down
+    // to ScrollMax. The state below detects the edge once per
+    // open / focus transition and locks out subsequent re-applications.
+    {
+        int imeBottom = backend::getImeBottomInsetPx();
+        ImGuiContext* gctx = ImGui::GetCurrentContext();
+        static int       s_imeLastBottom    = 0;
+        static ImGuiID   s_imeLastActiveId  = 0;
+        ImGuiID curActiveId = (gctx != nullptr) ? gctx->ActiveId : 0;
+        bool    edge        = (imeBottom > 0)
+                           && (curActiveId != 0)
+                           && (s_imeLastBottom == 0 || s_imeLastActiveId != curActiveId);
+        if (edge && gctx != nullptr && gctx->ActiveIdWindow != nullptr) {
+            float dispH     = ImGui::GetIO().DisplaySize.y;
+            float visBottom = dispH - (float)imeBottom;
+            ImGuiWindow* w = gctx->ActiveIdWindow;
+            while (w != nullptr) {
+                float winBottomScreen = w->Pos.y + w->Size.y;
+                if (winBottomScreen > visBottom) {
+                    float overlap = winBottomScreen - visBottom;
+                    float curY    = w->Scroll.y;
+                    float maxY    = w->ScrollMax.y;
+                    float targetY = std::min(curY + overlap, maxY);
+                    if (targetY > curY + 0.5f) {
+                        ImGui::SetScrollY(w, targetY);
+                        break;
+                    }
+                }
+                w = w->ParentWindow;
+            }
+        }
+        s_imeLastBottom   = imeBottom;
+        s_imeLastActiveId = curActiveId;
+    }
 
     ImGui::End();
 
