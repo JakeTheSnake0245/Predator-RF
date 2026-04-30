@@ -320,3 +320,110 @@ const char *sf_strerror(SNDFILE *s) { (void)s; return "no sndfile in Predator bu
 #ifndef SFM_READ
 #  define SFM_READ            0x10
 #endif
+
+/* ============================================================
+ * Stubs for symbols defined in EXCLUDED dsd_rigctl.c.
+ * Trunking handlers (dmr_csbk.c, p25 trunking, noCarrier) reference these
+ * but only inside `if (opts->use_rigctl == 1) { ... }` branches that we
+ * never enter (initOpts sets use_rigctl=0 and there's no UI to flip it).
+ * They exist purely to satisfy the linker.
+ * ============================================================ */
+void SetModulation(int sockfd, int bw)        { (void)sockfd; (void)bw;        }
+void SetFreq      (int sockfd, long freq_hz)  { (void)sockfd; (void)freq_hz;   }
+
+/* ============================================================
+ * Stub for the symbol defined in EXCLUDED dsd_ncurses_printer.c.
+ * liveScanner()'s `if (use_ncurses_terminal == 1) ncursesOpen(...)` is
+ * additionally gated by `#ifndef PREDATOR_BUILD` in dsd_main.c, but a
+ * couple of other TUs (dsd_audio.c diagnostic paths) still reference it.
+ * ============================================================ */
+void ncursesOpen (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+
+/* ============================================================
+ * Predator decoder worker (Phase 3b runtime hookup).
+ *
+ * Wires the SDRPP module wrapper to the vendored DSD-FME decoder loop:
+ *
+ *   predator_dsd_init_decoder()
+ *     -> initOpts()  / initState()  / init_audio_filters()
+ *     -> init_rrc_filter_memory()   / InitAllFecFunction()
+ *     -> override audio_in_type = PREDATOR_AUDIO_IN_TYPE so getSymbol()
+ *        reads from our 48 kHz int16 input ring (see dsd_symbol.c patch).
+ *     -> override audio_out_type = 0 so the writeSynthesizedVoice() path
+ *        in dsd_audio.c falls into the pulse branch — and our pa_simple_*
+ *        stubs above push synthesized PCM into the voice ring.
+ *
+ *   predator_dsd_run_decoder_loop()
+ *     -> blocking call to the vendored liveScanner() (still defined in
+ *        the un-gated portion of dsd_main.c). Returns when exitflag flips,
+ *        which the wrapper does on disable() via predator_dsd_set_running(0).
+ * ============================================================ */
+
+extern void initOpts             (dsd_opts  *opts);
+extern void initState            (dsd_state *state);
+extern void init_audio_filters   (dsd_state *state);
+extern void init_rrc_filter_memory (void);
+extern void InitAllFecFunction   (void);
+extern void liveScanner          (dsd_opts *opts, dsd_state *state);
+
+static dsd_opts        g_dsd_opts;
+static dsd_state       g_dsd_state;
+static int             g_decoder_initialized = 0;
+static pthread_mutex_t g_init_decoder_lock   = PTHREAD_MUTEX_INITIALIZER;
+
+void predator_dsd_init_decoder(void) {
+    pthread_mutex_lock(&g_init_decoder_lock);
+    if (!g_decoder_initialized) {
+        /* Heavy zero+default. initState() mallocs ~6 MB of working buffers
+         * (dibit_buf, dmr_payload_buf, audio_out_buf*, mbe parm structs,
+         * event history) so we run it exactly once and reuse. */
+        initOpts (&g_dsd_opts);
+        initState(&g_dsd_state);
+        init_audio_filters(&g_dsd_state);
+        init_rrc_filter_memory();
+        InitAllFecFunction();
+
+        /* Predator overrides on top of the desktop defaults. */
+        g_dsd_opts.audio_in_type        = PREDATOR_AUDIO_IN_TYPE;  /* 9 -> our ring */
+        g_dsd_opts.audio_out_type       = 0;                       /* pulse path -> our pa_simple_write stub */
+        g_dsd_opts.use_ncurses_terminal = 0;
+        g_dsd_opts.use_rigctl           = 0;
+
+        /* Bring up the protocols Predator cares about. The desktop defaults
+         * already enable these but make it explicit so behaviour can't drift
+         * with future upstream merges. P25 P1+P2 + DMR + NXDN + YSF stay on,
+         * D-STAR and X2-TDMA off (rare in our threat model). */
+        g_dsd_opts.frame_p25p1   = 1;
+        g_dsd_opts.frame_p25p2   = 1;
+        g_dsd_opts.frame_dmr     = 1;
+        g_dsd_opts.frame_nxdn48  = 1;
+        g_dsd_opts.frame_nxdn96  = 1;
+        g_dsd_opts.frame_ysf     = 1;
+        g_dsd_opts.frame_dstar   = 0;
+        g_dsd_opts.frame_x2tdma  = 0;
+        g_dsd_opts.frame_dpmr    = 0;
+        g_dsd_opts.frame_provoice = 0;
+        g_dsd_opts.frame_m17     = 0;
+
+        /* Sentinel non-NULL pulse handle so writeSynthesizedVoice's
+         * `if (opts->pulse_digi_dev_out != NULL)` branch fires. The stub
+         * pa_simple_new() returns its own internal sentinel for any
+         * subsequent re-open call — we just need a non-NULL placeholder
+         * here in case downstream code checks before any pa_simple_new(). */
+        static struct pa_simple sentinel = { 0 };
+        g_dsd_opts.pulse_digi_dev_out = &sentinel;
+        g_dsd_opts.pulse_raw_dev_out  = &sentinel;
+
+        g_decoder_initialized = 1;
+    }
+    pthread_mutex_unlock(&g_init_decoder_lock);
+}
+
+void predator_dsd_run_decoder_loop(void) {
+    predator_dsd_init_decoder();
+    /* Reset exit flag in case a prior session left it set. */
+    exitflag = 0;
+    /* Blocks until exitflag != 0 (set by predator_dsd_set_running(0) or
+     * the stubbed cleanupAndExit above). */
+    liveScanner(&g_dsd_opts, &g_dsd_state);
+}

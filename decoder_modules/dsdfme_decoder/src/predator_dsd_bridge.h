@@ -61,6 +61,23 @@ void   predator_dsd_emit_event(const char *protocol,
 void   predator_dsd_set_running(int running);
 int    predator_dsd_is_running(void);
 
+/* === Decoder worker entry points (Phase 3b) ===
+ *
+ * predator_dsd_init_decoder():
+ *   One-shot: zero+default the global dsd_opts/dsd_state via the vendored
+ *   initOpts()+initState(), wire init_audio_filters(), init_rrc_filter_memory(),
+ *   InitAllFecFunction(), then mark audio_in_type=PREDATOR_AUDIO_IN_TYPE so
+ *   getSymbol() reads from our input ring instead of pulse/oss/rtl. Safe to
+ *   call multiple times; subsequent calls are no-ops.
+ *
+ * predator_dsd_run_decoder_loop():
+ *   BLOCKING. Runs the upstream liveScanner() body until exitflag flips.
+ *   The SDRPP wrapper spawns a std::thread for this and signals stop via
+ *   predator_dsd_set_running(0) on shutdown.
+ */
+void   predator_dsd_init_decoder(void);
+void   predator_dsd_run_decoder_loop(void);
+
 #ifdef __cplusplus
 }
 #endif

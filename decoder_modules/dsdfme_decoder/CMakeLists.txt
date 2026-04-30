@@ -11,7 +11,6 @@ project(dsdfme_decoder)
 # ncurses / portaudio / hamlib / direct rtl-sdr — none of which exist on
 # Android, and all of which we replace via predator_dsdfme_stubs.c):
 #
-#   dsd_main.c              — vendored main(), rtl-sdr direct
 #   dsd_ncurses_handler.c   — terminal UI input
 #   dsd_ncurses_menu.c      — terminal UI menu
 #   dsd_ncurses_printer.c   — terminal UI render
@@ -20,7 +19,17 @@ project(dsdfme_decoder)
 #   pulse_devices.c         — PulseAudio device enum
 #   dsd_serial.c            — termios GPS serial
 #   dsd_import.c            — file-based import path
-#   dsd_file.c              — WAV file I/O (we never read/write WAV)
+#
+# Files we KEEP that are gated/stubbed at the source level:
+#
+#   dsd_main.c              — vendored main()/usage()/cleanupAndExit()/handler()
+#                             gated out via #ifndef PREDATOR_BUILD; we still need
+#                             initOpts(), initState(), noCarrier(), liveScanner()
+#                             from this file to drive the decoder loop.
+#   dsd_file.c              — WAV file I/O; never invoked at runtime in the
+#                             Predator build (mbe_out_f / wav_out_f stay NULL),
+#                             but its sf_*/sndfile calls resolve to the stubs in
+#                             predator_dsdfme_stubs.c so it links cleanly.
 # ============================================================
 
 set(VENDOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
@@ -35,7 +44,7 @@ set_property(TARGET predator_mbe PROPERTY POSITION_INDEPENDENT_CODE ON)
 # --- DSD-FME core sources, with surgical exclusions ---
 file(GLOB DSD_ALL_SRC ${VENDOR_DIR}/dsd-fme/src/*.c)
 list(FILTER DSD_ALL_SRC EXCLUDE REGEX
-    "/(dsd_main|dsd_ncurses_handler|dsd_ncurses_menu|dsd_ncurses_printer|dsd_rigctl|pa_devs|pulse_devices|dsd_serial|dsd_import|dsd_file)\\.c$")
+    "/(dsd_ncurses_handler|dsd_ncurses_menu|dsd_ncurses_printer|dsd_rigctl|pa_devs|pulse_devices|dsd_serial|dsd_import)\\.c$")
 
 # --- ezpwd Reed-Solomon ---
 # NOTE: ezpwd is a header-only C++ library; the vendored directory contains

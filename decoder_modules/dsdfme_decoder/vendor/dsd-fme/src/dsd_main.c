@@ -32,6 +32,7 @@
  #include <rtl-sdr.h>
  #endif
  
+#ifndef PREDATOR_BUILD
  volatile uint8_t exitflag; //fix for issue #136
 
  void handler(int sgnl)
@@ -40,6 +41,12 @@
  
    exitflag = 1;
  }
+#else
+ /* Predator: exitflag is owned by predator_dsdfme_stubs.c so the SDRPP
+  * wrapper can flip it from C++ when the operator stops the decoder.
+  * The desktop POSIX signal handler is not used on Android. */
+ extern volatile uint8_t exitflag;
+#endif
  
  int pretty_colors()
  {
@@ -1366,6 +1373,14 @@
  
  } //init_state
  
+#ifndef PREDATOR_BUILD
+ /* === Predator: gate A — usage() + atofs() ===
+  * Excluded for the Android in-APK build because:
+  *   - usage()         : prints CLI help to stderr (we have no terminal)
+  *   - atofs()         : freq-suffix parser used only by main() arg loop
+  * NOTE: liveScanner() (below) stays compiled — the Predator runtime
+  * driver predator_dsd_run_decoder_loop() blocks on it.
+  * cleanupAndExit() and main() are excluded by gate B further down. */
  void
  usage ()
  {
@@ -1618,6 +1633,7 @@
    printf ("\n");
    exit (0);
  }
+#endif /* !PREDATOR_BUILD — closes gate A (usage + atofs); liveScanner stays compiled */
  
  void
  liveScanner (dsd_opts * opts, dsd_state * state)
@@ -1651,7 +1667,9 @@
  
  if (opts->use_ncurses_terminal == 1)
  {
+#ifndef PREDATOR_BUILD
    ncursesOpen(opts, state);
+#endif
  }
  
  if (opts->audio_in_type == 0)
@@ -1746,6 +1764,11 @@
      }
  }
  
+#ifndef PREDATOR_BUILD
+ /* === Predator: gate B — cleanupAndExit() + main() ===
+  * cleanupAndExit() is replaced by predator_dsdfme_stubs.c (no exit(0) on
+  * the Android host process); main() is replaced by the SDRPP module
+  * wrapper + predator_dsd_run_decoder_loop(). Closing #endif at EOF. */
  void
  cleanupAndExit (dsd_opts * opts, dsd_state * state)
  {
@@ -3558,4 +3581,5 @@
  }
  
  //Tag: 2026
+#endif /* !PREDATOR_BUILD — closes the gate that started above usage() */
  
