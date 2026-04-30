@@ -10,16 +10,15 @@ namespace backend {
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix);
     bool openMapView();
 
-    // Returns the platform's native UI scale factor:
-    // - On Android, this is android.util.DisplayMetrics.density (1.0 on
-    //   ~160-dpi mdpi devices, 2.0 on xhdpi, 3.0 on xxhdpi, ~4.0 on a
-    //   Samsung S22 portrait, etc.). Returns 1.0 if the JNI call fails.
-    // - On desktop (GLFW), there's no comparable per-display density
-    //   that maps cleanly to a touch-friendly scale, so it always
-    //   returns 1.0 — desktop builds keep their current 100 % default.
-    // The returned value is unsnapped; callers (style::computeAutoScale)
-    // are responsible for clamping/snapping to the supported step list.
+    // Native UI scale factor. Android: DisplayMetrics.density
+    // (1.0 fallback on JNI failure). Desktop GLFW: 1.0.
+    // Unsnapped; callers snap via style::snapToSupportedScale.
     float getNativeUiScale();
+
+    // True when the primary input is a touchscreen (Android).
+    // Used to gate touch-friendly style tweaks so desktop builds
+    // keep their slim default look at uiScale == 1.0.
+    bool isTouchPrimary();
     int renderLoop();
     int end();
 }

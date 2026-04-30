@@ -248,6 +248,10 @@ namespace backend {
         return false;
     }
 
+    bool isTouchPrimary() {
+        return false;
+    }
+
     int renderLoop() {
         // Main loop
         while (!glfwWindowShouldClose(window)) {

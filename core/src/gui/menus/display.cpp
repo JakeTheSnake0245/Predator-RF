@@ -121,11 +121,6 @@ namespace displaymenu {
         gui::waterfall.setSNRSmoothing(snrSmoothing);
         updateFFTSpeeds();
 
-        // Define and load UI scales. The "Auto (device)" sentinel sits
-        // at the top so it's the first option a user sees; the rest of
-        // the list is the canonical SUPPORTED_SCALES from style.cpp,
-        // formatted as percentages. Finer granularity in the 1.5x–3.0x
-        // band matches the bulk of phone densities.
         uiScales.define(style::AUTO_SCALE, "Auto (device)", style::AUTO_SCALE);
         uiScales.define(1.00f, "100%", 1.00f);
         uiScales.define(1.25f, "125%", 1.25f);
@@ -139,11 +134,9 @@ namespace displaymenu {
         uiScales.define(3.50f, "350%", 3.50f);
         uiScales.define(4.00f, "400%", 4.00f);
 
-        // Pick the combo entry from the *stored* config preference,
-        // not from style::uiScale. style::uiScale is the resolved float,
-        // so a user who picked Auto and got 3.0x would otherwise see
-        // "300%" highlighted instead of "Auto (device)" the next time
-        // they open the Display menu.
+        // Pick the combo entry from the stored config so "Auto (device)"
+        // stays highlighted across launches even when it resolves to
+        // a concrete scale like 3.0.
         const auto& v = core::configManager.conf["uiScale"];
         if (v.is_string() && v.get<std::string>() == "auto") {
             uiScaleId = uiScales.valueId(style::AUTO_SCALE);
@@ -232,9 +225,6 @@ namespace displaymenu {
         if (ImGui::Combo("##sdrpp_ui_scale", &uiScaleId, uiScales.txt)) {
             float chosen = uiScales[uiScaleId];
 
-            // Persist as the "auto" string sentinel when the user picks
-            // Auto (device); otherwise persist the raw float so older
-            // builds and external tools can still read the value.
             core::configManager.acquire();
             if (chosen == style::AUTO_SCALE) {
                 core::configManager.conf["uiScale"] = "auto";
@@ -246,21 +236,9 @@ namespace displaymenu {
             }
             core::configManager.release(true);
 
-            // Live-apply: thememenu::applyTheme() resets the ImGuiStyle
-            // (StyleColorsDark + theme overrides), then re-runs
-            // ScaleAllSizes(uiScale) and applyTouchFriendlyTweaks(), so
-            // scrollbars, grabs, indents, frame heights, borders and
-            // rounding all update on the next frame without a restart.
-            // Only the rasterized font atlas can't be rebuilt live —
-            // that's what triggers the "Restart required." hint below.
+            // Live re-apply: theme reset + ScaleAllSizes + touch tweaks.
+            // The font atlas is the only thing that needs a restart.
             thememenu::applyTheme();
-
-            // Show the restart hint ONLY when the new scale would
-            // change rasterized font sizes meaningfully (>= ~5%).
-            // Sub-5% deltas are imperceptible — making the hint depend
-            // on the cached atlas keeps the UI honest about when the
-            // user actually needs to relaunch the app vs. when they
-            // can just keep tweaking.
             restartRequired = std::fabs(style::uiScale - style::loadedFontScale) > 0.05f;
         }
 

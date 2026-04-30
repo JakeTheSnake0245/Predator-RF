@@ -178,12 +178,6 @@ namespace backend {
     void setMouseScreenPos(double x, double y) {}
 
     float getNativeUiScale() {
-        // Native UI scale = android.util.DisplayMetrics.density. This is
-        // the platform's own "1 dp = N px" multiplier and is the most
-        // device-agnostic way to pick a touch-friendly default — the
-        // OEM has already chosen it to match the physical pixel pitch.
-        // Returns 1.0f on any JNI failure so the caller never gets a
-        // bogus scale that could blow up ImGui.
         JavaVM* java_vm = app->activity->vm;
         JNIEnv* java_env = NULL;
 
@@ -210,12 +204,12 @@ namespace backend {
         jni_return = java_vm->DetachCurrentThread();
         if (jni_return != JNI_OK) { return 1.0f; }
 
-        // Belt-and-suspenders sanity: never return something nonsensical
-        // (negative, zero, NaN, or absurdly large). Snap/clamp happens
-        // in style::computeAutoScale(), so just return the raw value
-        // here when it's plausible.
         if (!(density > 0.1f) || density > 10.0f) { return 1.0f; }
         return (float)density;
+    }
+
+    bool isTouchPrimary() {
+        return true;
     }
 
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
