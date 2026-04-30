@@ -249,6 +249,9 @@ void MainWindow::init() {
         kujhadSpectrumIntervalMs.store(std::clamp<int>(cfg.value("kujhadSpectrumIntervalMs", 200), 50, 5000), std::memory_order_relaxed);
         kujhadSpectrumBins.store(std::clamp<int>(cfg.value("kujhadSpectrumBins", 256), 32, 1024), std::memory_order_relaxed);
         kujhadMirrorPeerSpectrum = cfg.value("kujhadMirrorPeerSpectrum", false);
+        kujhadTlsEnabled = cfg.value("kujhadTlsEnabled", false);
+        kujhadTlsCertPath = cfg.value("kujhadTlsCertPath", std::string(""));
+        kujhadTlsKeyPath = cfg.value("kujhadTlsKeyPath", std::string(""));
         if (kujhadApiKey.empty()) {
             kujhadApiKey = predator::kujhadGenerateApiKey();
             cfg["kujhadApiKey"] = kujhadApiKey;
@@ -257,6 +260,24 @@ void MainWindow::init() {
             kujhadDeviceName = std::string("predator-") + std::to_string((int)(std::time(nullptr) % 100000));
             cfg["kujhadDeviceName"] = kujhadDeviceName;
         }
+        // Default cert/key live next to the user config so a fresh
+        // install can flip TLS on without first picking paths. Files
+        // aren't created until the operator clicks "Regenerate".
+        if (kujhadTlsCertPath.empty() || kujhadTlsKeyPath.empty()) {
+            std::string root = (std::string)core::args["root"];
+            if (kujhadTlsCertPath.empty()) {
+                kujhadTlsCertPath = (std::filesystem::path(root) / "kujhad_tls_cert.pem").string();
+                cfg["kujhadTlsCertPath"] = kujhadTlsCertPath;
+            }
+            if (kujhadTlsKeyPath.empty()) {
+                kujhadTlsKeyPath = (std::filesystem::path(root) / "kujhad_tls_key.pem").string();
+                cfg["kujhadTlsKeyPath"] = kujhadTlsKeyPath;
+            }
+        }
+        // Pre-populate the displayed fingerprint if a cert already
+        // exists on disk, so the operator sees it before starting the
+        // server. Empty when there's no usable cert yet.
+        kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
     }
 
     tuningMode = core::configManager.conf["centerTuning"] ? tuner::TUNER_MODE_CENTER : tuner::TUNER_MODE_NORMAL;
@@ -667,6 +688,9 @@ void MainWindow::draw() {
         core::configManager.conf["kujhadSpectrumIntervalMs"] = kujhadSpectrumIntervalMs.load(std::memory_order_relaxed);
         core::configManager.conf["kujhadSpectrumBins"] = kujhadSpectrumBins.load(std::memory_order_relaxed);
         core::configManager.conf["kujhadMirrorPeerSpectrum"] = kujhadMirrorPeerSpectrum;
+        core::configManager.conf["kujhadTlsEnabled"] = kujhadTlsEnabled;
+        core::configManager.conf["kujhadTlsCertPath"] = kujhadTlsCertPath;
+        core::configManager.conf["kujhadTlsKeyPath"] = kujhadTlsKeyPath;
         core::configManager.release(true);
     };
 
@@ -1667,6 +1691,21 @@ void MainWindow::draw() {
     {
         bool wantRun = (predatorRole == PREDATOR_ROLE_DEVICE) && kujhadDeviceServerEnabled;
         if (wantRun && !kujhadServer.isRunning()) {
+            // Apply current TLS settings before binding. setTlsConfig
+            // returns false (and clears tlsEnabled internally) when
+            // cert/key fail to load — we still call start() so the
+            // listener comes up in plain-loopback mode and the UI can
+            // surface the error rather than silently dropping the
+            // server. tlsEnabled() reflects what's actually active.
+            std::string tlsErr;
+            kujhadServer.setTlsConfig(kujhadTlsEnabled, kujhadTlsCertPath, kujhadTlsKeyPath, tlsErr);
+            kujhadTlsConfigError = tlsErr;
+            kujhadTlsFingerprint = kujhadServer.tlsFingerprint();
+            if (kujhadTlsFingerprint.empty()) {
+                // Fall back to whatever's on disk so the operator at
+                // least sees a hint when TLS is off.
+                kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
+            }
             kujhadServer.start(kujhadDeviceListenPort, kujhadApiKey);
             kujhadDeviceServerRunning = kujhadServer.isListening();
         }
@@ -1709,9 +1748,17 @@ void MainWindow::draw() {
                     auto client = std::make_unique<predator::KujhadControllerClient>();
                     bool enabled = readJsonBool(p, "enabled", true);
                     if (enabled) {
+                        // Per-peer TLS toggle + pinned fingerprint. An
+                        // empty pin means "trust on first use" — the
+                        // first observed cert is surfaced in the UI so
+                        // the operator can copy it back into the peer
+                        // config to lock the pin in.
+                        bool tls = readJsonBool(p, "tls", false);
+                        std::string pin = readJsonString(p, "pinnedFingerprint", "");
                         client->start(readJsonString(p, "host", "127.0.0.1"),
                                       (int)readJsonDouble(p, "port", 41947.0),
-                                      readJsonString(p, "apiKey", kujhadApiKey));
+                                      readJsonString(p, "apiKey", kujhadApiKey),
+                                      tls, pin);
                     }
                     kujhadClients.push_back(std::move(client));
                     kujhadActivePeers.push_back(p);
@@ -4438,7 +4485,79 @@ void MainWindow::draw() {
                                 T("Requests"), kujhadServer.inboundRequests(),
                                 T("Commands"), kujhadServer.inboundCommands(),
                                 T("Rejected"), kujhadServer.rejectedCommands());
-                    ImGui::TextWrapped("%s", T("Plain HTTP over a private overlay (Tailscale/ZeroTier) or loopback for v1. TLS is on the v1.x roadmap; the wire protocol is unchanged."));
+
+                    // TLS toggle. The change only takes effect on the
+                    // next start() — we surface that explicitly so the
+                    // operator isn't surprised when the running server
+                    // keeps its current mode after the click.
+                    bool tlsAvailable = predator::kujhadTlsAvailable();
+                    if (!tlsAvailable) {
+                        ImGui::TextDisabled("%s", T("TLS not available in this build (OpenSSL not linked)."));
+                    }
+                    bool tlsToggle = kujhadTlsEnabled;
+                    if (!tlsAvailable) ImGui::BeginDisabled();
+                    if (ImGui::Checkbox(T("Enable TLS (HTTPS)"), &tlsToggle)) {
+                        kujhadTlsEnabled = tlsToggle;
+                        savePredatorState();
+                    }
+                    if (!tlsAvailable) ImGui::EndDisabled();
+                    char certBuf[512];
+                    char keyBufTls[512];
+                    std::snprintf(certBuf, sizeof(certBuf), "%s", kujhadTlsCertPath.c_str());
+                    std::snprintf(keyBufTls, sizeof(keyBufTls), "%s", kujhadTlsKeyPath.c_str());
+                    if (ImGui::InputText(T("TLS cert (PEM)"), certBuf, sizeof(certBuf))) {
+                        kujhadTlsCertPath = certBuf;
+                        kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
+                        savePredatorState();
+                    }
+                    if (ImGui::InputText(T("TLS key (PEM)"), keyBufTls, sizeof(keyBufTls))) {
+                        kujhadTlsKeyPath = keyBufTls;
+                        savePredatorState();
+                    }
+                    if (!tlsAvailable) ImGui::BeginDisabled();
+                    if (ImGui::Button(T("Regenerate self-signed cert"))) {
+                        // CN follows the device name so peers see a
+                        // consistent identity in the cert as well as in
+                        // /v1/identify; harmless for fingerprint pinning.
+                        std::string cn = kujhadDeviceName.empty() ? std::string("kujhad-device") : kujhadDeviceName;
+                        std::string fp = predator::kujhadGenerateSelfSignedCert(kujhadTlsCertPath, kujhadTlsKeyPath, cn);
+                        if (!fp.empty()) {
+                            kujhadTlsConfigError.clear();
+                            kujhadTlsFingerprint = fp;
+                            // If the server is running, push the new
+                            // cert into the live SSL_CTX so the next
+                            // accept uses it. The current connection
+                            // count is small so the brief gap is fine.
+                            std::string applyErr;
+                            kujhadServer.setTlsConfig(kujhadTlsEnabled, kujhadTlsCertPath, kujhadTlsKeyPath, applyErr);
+                            if (!applyErr.empty()) kujhadTlsConfigError = applyErr;
+                        } else {
+                            kujhadTlsConfigError = "cert generation failed (check write perms on cert/key paths)";
+                        }
+                    }
+                    if (!tlsAvailable) ImGui::EndDisabled();
+                    if (!kujhadTlsConfigError.empty()) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.30f, 0.30f, 1.0f));
+                        ImGui::TextWrapped("TLS error: %s", kujhadTlsConfigError.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    if (!kujhadTlsFingerprint.empty()) {
+                        ImGui::TextWrapped("%s (SHA-256): %s",
+                                           T("Cert fingerprint"), kujhadTlsFingerprint.c_str());
+                        ImGui::TextDisabled("%s", T("Paste this fingerprint into a controller's peer config to pin trust."));
+                    } else if (kujhadTlsEnabled) {
+                        ImGui::TextDisabled("%s", T("No cert on disk yet — click Regenerate above."));
+                    }
+                    if (kujhadServer.tlsEnabled()) {
+                        ImGui::TextWrapped("%s", T("HTTPS active. Controllers must use https:// and pin the fingerprint above."));
+                    } else {
+                        // Plain HTTP is a hard loopback-only path —
+                        // the listener refuses non-127.0.0.0/8 peers
+                        // at accept time regardless of how the build
+                        // was configured. To accept a remote peer the
+                        // operator MUST enable TLS above.
+                        ImGui::TextWrapped("%s", T("Plain HTTP — listener accepts loopback (127.0.0.0/8) connections only. Remote controllers will be refused at accept until TLS is enabled above."));
+                    }
                 }
 
                 if (ImGui::CollapsingHeader(T("Spectrum Stream"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -4533,6 +4652,45 @@ void MainWindow::draw() {
                         if (!snap.lastError.empty() && !snap.reachable) {
                             ImGui::TextDisabled("err: %s", snap.lastError.c_str());
                         }
+                        // Per-peer TLS controls. Toggle changes are
+                        // persisted immediately; the diff loop above
+                        // tears the worker down and reconnects with the
+                        // new mode on the next frame.
+                        bool peerTls = readJsonBool(peers[i], "tls", false);
+                        std::string peerPin = readJsonString(peers[i], "pinnedFingerprint", "");
+                        if (ImGui::Checkbox(T("TLS"), &peerTls)) {
+                            peers[i]["tls"] = peerTls;
+                            saveKujhadPeers(peers);
+                        }
+                        ImGui::SameLine();
+                        char pinBuf[128];
+                        std::snprintf(pinBuf, sizeof(pinBuf), "%s", peerPin.c_str());
+                        if (ImGui::InputText(T("Pinned fingerprint"), pinBuf, sizeof(pinBuf))) {
+                            peers[i]["pinnedFingerprint"] = std::string(pinBuf);
+                            saveKujhadPeers(peers);
+                        }
+                        // Trust-on-first-use helper: copy the peer's
+                        // currently observed cert fingerprint into the
+                        // pinned slot so subsequent connections refuse
+                        // any cert change. Only meaningful when TLS is
+                        // on AND a handshake has succeeded.
+                        std::string seen = (i < kujhadClients.size() && kujhadClients[i])
+                                           ? kujhadClients[i]->lastSeenFingerprint() : std::string();
+                        if (!seen.empty()) {
+                            ImGui::TextDisabled("seen: %s", seen.c_str());
+                            ImGui::SameLine();
+                            if (ImGui::Button(T("Trust now"))) {
+                                peers[i]["pinnedFingerprint"] = seen;
+                                saveKujhadPeers(peers);
+                            }
+                        } else if (peerTls) {
+                            ImGui::TextDisabled("%s", T("(no cert observed yet)"));
+                        }
+                        if (i < kujhadClients.size() && kujhadClients[i] && kujhadClients[i]->fingerprintMismatch()) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.30f, 0.30f, 1.0f));
+                            ImGui::TextWrapped("%s", T("Peer cert fingerprint does NOT match the pin. Refusing to send the API key. Investigate before clicking Trust now."));
+                            ImGui::PopStyleColor();
+                        }
                         ImGui::Separator();
                         ImGui::PopID();
                     }
@@ -4548,6 +4706,18 @@ void MainWindow::draw() {
                     ImGui::InputText(T("Host"), kujhadAddPeerHost, sizeof(kujhadAddPeerHost));
                     ImGui::InputInt(T("Port"), &kujhadAddPeerPort);
                     ImGui::InputText(T("API Key"), kujhadAddPeerKey, sizeof(kujhadAddPeerKey));
+                    // New peers default to TLS-off so existing
+                    // loopback/overlay setups keep working without
+                    // surprise. The operator flips the per-row toggle
+                    // (and pastes the fingerprint) once the device is
+                    // verified.
+                    static bool kujhadAddPeerTls = false;
+                    static char kujhadAddPeerPin[128] = {0};
+                    if (!predator::kujhadTlsAvailable()) ImGui::BeginDisabled();
+                    ImGui::Checkbox(T("TLS (HTTPS)"), &kujhadAddPeerTls);
+                    if (!predator::kujhadTlsAvailable()) ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::InputText(T("Pinned fingerprint (optional)"), kujhadAddPeerPin, sizeof(kujhadAddPeerPin));
                     if (ImGui::Button(T("Add peer"))) {
                         if (kujhadAddPeerName[0] && kujhadAddPeerHost[0]) {
                             json& peers = core::configManager.conf["kujhadPeers"];
@@ -4558,11 +4728,15 @@ void MainWindow::draw() {
                             p["port"]    = std::clamp(kujhadAddPeerPort, 1, 65535);
                             p["apiKey"]  = std::string(kujhadAddPeerKey);
                             p["enabled"] = true;
+                            p["tls"]     = kujhadAddPeerTls;
+                            p["pinnedFingerprint"] = std::string(kujhadAddPeerPin);
                             peers.push_back(p);
                             saveKujhadPeers(peers);
                             kujhadAddPeerName[0] = 0;
                             kujhadAddPeerHost[0] = 0;
                             kujhadAddPeerKey[0]  = 0;
+                            kujhadAddPeerPin[0]  = 0;
+                            kujhadAddPeerTls     = false;
                         }
                     }
                 }

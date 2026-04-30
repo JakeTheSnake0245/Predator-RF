@@ -127,6 +127,17 @@ private:
     std::string kujhadAdvertiseAddress;
     std::string kujhadDeviceServerStatus = "Idle";
     bool kujhadDeviceServerRunning = false;
+    // TLS for the device-side fleet console. When disabled the listener
+    // binds to plain HTTP and refuses every non-loopback peer at accept
+    // time so the API key never crosses the wire in the clear. When
+    // enabled the listener serves HTTPS using the cert/key on disk and
+    // the SHA-256 fingerprint is exposed in the Kujhad tab so an
+    // operator can pin it on a controller.
+    bool kujhadTlsEnabled = false;
+    std::string kujhadTlsCertPath;
+    std::string kujhadTlsKeyPath;
+    std::string kujhadTlsFingerprint;
+    std::string kujhadTlsConfigError;
     int kujhadActivePeerIdx = -1;
     char kujhadAddPeerName[64] = {0};
     char kujhadAddPeerHost[128] = {0};

@@ -162,6 +162,32 @@ else()
 
 endif ()
 
+# OpenSSL — optional. When present, the Kujhad fleet console exposes a
+# TLS toggle (with self-signed cert + per-peer pinned fingerprint
+# trust). The plain-HTTP path is *always* loopback-only at runtime —
+# whether the build has OpenSSL or not, and whether the TLS toggle is
+# on or off. The OpenSSL build flag only controls whether HTTPS is
+# available; it does not relax the loopback policy on the plain-HTTP
+# path. When OpenSSL is missing the TLS UI degrades to a "not built
+# with TLS" message and the operator's only option is the plain-HTTP-
+# loopback fallback (suitable for local dev or running behind an
+# overlay like Tailscale/ZeroTier on the same host). Android skips
+# this: the in-repo SDR kit doesn't ship OpenSSL and we don't want to
+# enlarge the APK just for the fleet console.
+option(OPT_KUJHAD_TLS "Build Kujhad fleet console with TLS (requires OpenSSL)" ON)
+if (OPT_KUJHAD_TLS AND NOT ANDROID)
+    find_package(OpenSSL)
+    if (OpenSSL_FOUND)
+        target_compile_definitions(sdrpp_core PUBLIC KUJHAD_HAVE_OPENSSL)
+        target_link_libraries(sdrpp_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+        message(STATUS "Predator: Kujhad TLS enabled (OpenSSL ${OPENSSL_VERSION})")
+    else()
+        message(STATUS "Predator: Kujhad TLS disabled (OpenSSL not found)")
+    endif()
+elseif (ANDROID)
+    message(STATUS "Predator: Kujhad TLS disabled on Android (no OpenSSL in SDR kit)")
+endif()
+
 set(CORE_FILES ${RUNTIME_OUTPUT_DIRECTORY} PARENT_SCOPE)
 
 # cmake .. "-DCMAKE_TOOLCHAIN_FILE=C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
