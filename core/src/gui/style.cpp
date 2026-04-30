@@ -46,17 +46,54 @@ namespace style {
         return best;
     }
 
-    float computeAutoScale() {
-        float raw = backend::getNativeUiScale();
-        if (backend::isTouchPrimary()) {
-            int h = backend::getDisplayHeightPx();
-            if (h > 0) {
-                float fit = (float)h / 1100.0f;
-                if (fit < raw) raw = fit;
-            }
-            if (raw < 1.5f) raw = 1.5f;
+    float snapDownToSupportedScale(float raw) {
+        if (!(raw > 0.0f)) raw = SUPPORTED_SCALES.front();
+        if (raw <= SUPPORTED_SCALES.front()) return SUPPORTED_SCALES.front();
+        if (raw >= SUPPORTED_SCALES.back())  return SUPPORTED_SCALES.back();
+        float best = SUPPORTED_SCALES.front();
+        for (float s : SUPPORTED_SCALES) {
+            if (s <= raw + 1e-4f) best = s;
+            else break;
         }
-        return snapToSupportedScale(raw);
+        return best;
+    }
+
+    float computeAutoScale() {
+        float density = backend::getNativeUiScale();
+        if (!backend::isTouchPrimary()) {
+            return snapDownToSupportedScale(density);
+        }
+
+        const float MAIN_CHROME_PER_UNIT = 8.0f + 42.0f + 8.0f + 46.0f + 8.0f + 8.0f;
+
+        const float TAB_HEIGHT       = 36.0f;
+        const float TAB_COUNT        = 7.0f;
+        const float ITEM_SPACING_Y   = 6.0f;
+        const float SEPARATOR_BLOCK  = 2.0f * ITEM_SPACING_Y + 2.0f;
+        const float SLIDER_HEIGHT    = 120.0f;
+        const float SLIDER_LABEL     = 16.0f;
+        const float SLIDER_NEWLINE   = 16.0f;
+        const float SLIDER_COUNT     = 3.0f;
+        const float CHILD_PADDING    = 2.0f * 8.0f + 2.0f;
+
+        const float RAIL_PER_UNIT =
+            TAB_COUNT * TAB_HEIGHT
+            + (TAB_COUNT - 1.0f) * ITEM_SPACING_Y
+            + SEPARATOR_BLOCK
+            + SLIDER_COUNT * (SLIDER_LABEL + SLIDER_HEIGHT + SLIDER_NEWLINE + ITEM_SPACING_Y)
+            + CHILD_PADDING;
+
+        const float TOTAL_PER_UNIT = MAIN_CHROME_PER_UNIT + RAIL_PER_UNIT;
+
+        float raw = density;
+        int h = backend::getDisplayHeightPx();
+        if (h > 0 && TOTAL_PER_UNIT > 0.0f) {
+            float fit = (float)h / TOTAL_PER_UNIT;
+            if (fit < raw) raw = fit;
+        }
+
+        if (raw < 1.5f) raw = 1.5f;
+        return snapDownToSupportedScale(raw);
     }
 
     bool loadFonts(std::string resDir) {
