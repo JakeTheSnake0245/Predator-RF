@@ -208,10 +208,6 @@ class MainActivity : NativeActivity() {
         return resources.displayMetrics.density;
     }
 
-    fun getDisplayDensityDpi(): Int {
-        return resources.displayMetrics.densityDpi;
-    }
-
     fun startLocationUpdates() {
         val fine = PermissionChecker.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION);
         val coarse = PermissionChecker.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION);
