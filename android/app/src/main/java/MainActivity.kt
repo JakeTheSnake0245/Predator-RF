@@ -113,6 +113,7 @@ class MainActivity : NativeActivity() {
     // androidx call per native frame.
     @Volatile private var imeBottomInsetPx: Int = 0
     @Volatile private var imeWasOpen: Boolean = false
+    private var imeLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
 
     fun getImeBottomInsetPx(): Int {
         return imeBottomInsetPx
@@ -121,7 +122,7 @@ class MainActivity : NativeActivity() {
     private fun installImeInsetListener() {
         val rootView = window.decorView
         val r = android.graphics.Rect()
-        rootView.viewTreeObserver.addOnGlobalLayoutListener {
+        val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
             // Visible-display-frame difference works on every API level
             // we care about (minSdk 28) and is robust to fullscreen +
             // adjustResize quirks on NativeActivity, which doesn't lay
@@ -146,6 +147,19 @@ class MainActivity : NativeActivity() {
             }
             imeWasOpen = nowOpen
         }
+        rootView.viewTreeObserver.addOnGlobalLayoutListener(listener)
+        imeLayoutListener = listener
+    }
+
+    public override fun onDestroy() {
+        // Detach the global-layout listener so the decor view's
+        // ViewTreeObserver doesn't keep a reference to this Activity
+        // across configuration / process recreation cycles.
+        imeLayoutListener?.let {
+            window.decorView.viewTreeObserver.removeOnGlobalLayoutListener(it)
+            imeLayoutListener = null
+        }
+        super.onDestroy()
     }
 
     public override fun onCreate(savedInstanceState: Bundle?) {
