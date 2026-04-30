@@ -5733,13 +5733,22 @@ void MainWindow::draw() {
         static ImGuiID s_imeActiveRectId = 0;
         ImGuiID curActiveId = (gctx != nullptr) ? gctx->ActiveId : 0;
 
-        // Tier A capture: any frame where the very last submitted item
-        // happens to be the active one, snapshot its screen rect for
-        // future precise compensation.
-        if (gctx != nullptr && curActiveId != 0
-            && gctx->LastItemData.ID == curActiveId) {
-            s_imeActiveRect   = gctx->LastItemData.Rect;
-            s_imeActiveRectId = curActiveId;
+        // Tier A capture: prefer ImGui's nav-tracked rect for the
+        // focused widget (window->NavRectRel is maintained for every
+        // submitted item, so this works for ALL InputText call sites,
+        // not just those that happen to be the very last submission).
+        // Fall back to LastItemData when the active id wasn't set via
+        // nav (rare for text inputs, but kept for completeness).
+        if (gctx != nullptr && curActiveId != 0) {
+            ImGuiWindow* nw = gctx->NavWindow;
+            if (nw != nullptr && gctx->NavId == curActiveId) {
+                s_imeActiveRect   = ImGui::WindowRectRelToAbs(nw, nw->NavRectRel[gctx->NavLayer]);
+                s_imeActiveRectId = curActiveId;
+            }
+            else if (gctx->LastItemData.ID == curActiveId) {
+                s_imeActiveRect   = gctx->LastItemData.Rect;
+                s_imeActiveRectId = curActiveId;
+            }
         }
         if (curActiveId == 0 || curActiveId != s_imeActiveRectId) {
             // Active id went away or moved on — discard stale rect.
