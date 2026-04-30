@@ -1052,10 +1052,17 @@ void MainWindow::draw() {
 
     auto buildScanCandidates = [&]() {
         std::vector<PredatorScanCandidate> candidates;
+        // Whether any search band is enabled — used to filter targets by band.
+        bool anyBandEnabled = false;
+        for (int bi = 0; bi < (int)searchBands.size(); bi++) {
+            if (readJsonBool(searchBands[bi], "enabled", true)) { anyBandEnabled = true; break; }
+        }
         for (int i = 0; i < targets.size(); i++) {
             if (!readJsonBool(targets[i], "enabled", true)) { continue; }
             double frequency = readJsonDouble(targets[i], "frequency", 0.0);
             if (frequency <= 0.0 || isExcludedFrequency(frequency)) { continue; }
+            // Skip targets outside any enabled search band (respects deselected bands).
+            if (anyBandEnabled && !isInEnabledSearchBand(frequency)) { continue; }
             PredatorScanCandidate cand;
             cand.name = readJsonString(targets[i], "name", "Target");
             cand.frequency = frequency;
@@ -5965,14 +5972,46 @@ void MainWindow::draw() {
 
             // ── Frequency Ranges ─────────────────────────────────────────────
             if (ImGui::CollapsingHeader(T("Frequency Ranges"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::SetNextItemWidth(fw);
-                ImGui::InputText("##blRangeName", blNewRangeName, sizeof(blNewRangeName));
-                ImGui::SameLine(0, 0); ImGui::TextDisabled(" Range Name");
-                ImGui::SetNextItemWidth(hw);
-                ImGui::InputDouble("##blRangeStart", &blNewRangeStart, 0, 0, "%.0f Hz");
+                // Range name — tap to open keyboard-safe popup above the soft keyboard
+                ImGui::TextDisabled("%s", T("Range Name"));
+                {
+                    char* nameDst = blNewRangeName; int nameSz = (int)sizeof(blNewRangeName);
+                    const char* namePreview = strlen(blNewRangeName) > 0 ? blNewRangeName : T("(tap to set name)");
+                    if (ImGui::Button(namePreview, ImVec2(fw, 0))) {
+                        openPendEdit(T("Range Name"), std::string(blNewRangeName),
+                            [nameDst, nameSz](std::string s) {
+                                snprintf(nameDst, nameSz, "%s", s.c_str());
+                            });
+                    }
+                }
+                // Start / Stop Hz — use popup so the keyboard doesn't cover the field
+                ImGui::TextDisabled("%s", T("Start Hz"));
+                {
+                    double* startDst = &blNewRangeStart;
+                    char startPreview[48];
+                    snprintf(startPreview, sizeof(startPreview), "%.0f Hz", blNewRangeStart);
+                    if (ImGui::Button(startPreview, ImVec2(hw, 0))) {
+                        char initStr[48]; snprintf(initStr, sizeof(initStr), "%.0f", blNewRangeStart);
+                        openPendEdit(T("Start Frequency (Hz)"), std::string(initStr),
+                            [startDst](std::string s) {
+                                try { *startDst = std::stod(s); } catch (...) {}
+                            });
+                    }
+                }
                 ImGui::SameLine(0, 4.0f * style::uiScale);
-                ImGui::SetNextItemWidth(hw);
-                ImGui::InputDouble("##blRangeStop",  &blNewRangeStop,  0, 0, "%.0f Hz");
+                ImGui::TextDisabled("%s", T("Stop Hz"));
+                {
+                    double* stopDst = &blNewRangeStop;
+                    char stopPreview[48];
+                    snprintf(stopPreview, sizeof(stopPreview), "%.0f Hz", blNewRangeStop);
+                    if (ImGui::Button(stopPreview, ImVec2(hw, 0))) {
+                        char initStr[48]; snprintf(initStr, sizeof(initStr), "%.0f", blNewRangeStop);
+                        openPendEdit(T("Stop Frequency (Hz)"), std::string(initStr),
+                            [stopDst](std::string s) {
+                                try { *stopDst = std::stod(s); } catch (...) {}
+                            });
+                    }
+                }
                 if (ImGui::Button(T("From Current View##bl"), ImVec2(fw, 0))) {
                     double ctr = gui::waterfall.getCenterFrequency();
                     double bw2 = gui::waterfall.getViewBandwidth();
@@ -5988,6 +6027,7 @@ void MainWindow::draw() {
                         r["enabled"] = true;
                         blRanges.push_back(r);
                         snprintf(blNewRangeName, sizeof(blNewRangeName), "%s", "");
+                        blNewRangeStart = 0.0; blNewRangeStop = 0.0;
                     }
                 }
                 ImGui::Spacing();
@@ -6029,9 +6069,16 @@ void MainWindow::draw() {
 
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", T("Output filename (leave blank for auto)"));
-                ImGui::SetNextItemWidth(fw);
-                ImGui::InputText("##blName", blCustomName, sizeof(blCustomName));
-                // Show auto name hint
+                {
+                    char* cnameDst = blCustomName; int cnameSz = (int)sizeof(blCustomName);
+                    const char* cnamePreview = strlen(blCustomName) > 0 ? blCustomName : T("(tap to set custom filename)");
+                    if (ImGui::Button(cnamePreview, ImVec2(fw, 0))) {
+                        openPendEdit(T("Output Filename (.csv)"), std::string(blCustomName),
+                            [cnameDst, cnameSz](std::string s) {
+                                snprintf(cnameDst, cnameSz, "%s", s.c_str());
+                            });
+                    }
+                }
                 if (strlen(blCustomName) == 0) {
                     std::string hint = "  " + blDefaultFilename();
                     ImGui::TextDisabled("%s", hint.c_str());
@@ -6250,14 +6297,11 @@ void MainWindow::draw() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Divide all remaining vertical space evenly across the 3 sliders so
-    // they ideally fit without scrolling (rail is touch-scrollable if needed).
+    // Fixed-height sliders so the 8 tab buttons + sliders can overflow and be
+    // touch-scrolled.  Adaptive heights would fill exactly the child height,
+    // leaving no overflow and making the scrollbar thumb invisible.
     {
-        float labelH = ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y;
-        float avail   = ImGui::GetContentRegionAvail().y;
-        float perH    = (avail - 3.0f * labelH - 2.0f * ImGui::GetStyle().ItemSpacing.y) / 3.0f;
-        float slH     = std::max(perH, 28.0f * style::uiScale);
-        ImVec2 wfSliderSize(16.0f * style::uiScale, slH);
+        ImVec2 wfSliderSize(16.0f * style::uiScale, 80.0f * style::uiScale);
 
         ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Zoom").x) * 0.5f);
         ImGui::TextUnformatted("Zoom");
@@ -6298,6 +6342,8 @@ void MainWindow::draw() {
             core::configManager.release(true);
         }
     }
+
+    applyTouchScroll(); // enable drag-to-scroll for the right rail on Android
 
     ImGui::EndChild();
     ImGui::PopStyleVar();   // ScrollbarSize
