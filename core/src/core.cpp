@@ -238,6 +238,7 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["offset"] = 0.0;
     defConfig["predatorMissionMode"] = 1;
     defConfig["predatorTab"] = 0;
+    defConfig["predatorWfControlsOpen"] = false;
     defConfig["predatorQuickFilter"] = 0;
     defConfig["predatorHitSortMode"] = 0;
     defConfig["predatorEventFilter"] = 0;

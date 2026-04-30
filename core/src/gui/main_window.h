@@ -88,6 +88,7 @@ private:
     int selectedWindow = 0;
     int predatorMissionMode = PREDATOR_MODE_CLASSIFY;
     int predatorTab = PREDATOR_TAB_SPECTRUM;
+    bool predatorWfControlsOpen = false;
     int predatorQuickFilter = 0;
     int predatorHitSortMode = 0;
     int predatorEventFilter = 0;

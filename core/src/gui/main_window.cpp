@@ -219,6 +219,9 @@ void MainWindow::init() {
 
     predatorMissionMode = std::clamp<int>((int)core::configManager.conf["predatorMissionMode"], PREDATOR_MODE_MANUAL, PREDATOR_MODE_QUICKSCAN);
     predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_SYSTEM);
+    if (core::configManager.conf.contains("predatorWfControlsOpen")) {
+        predatorWfControlsOpen = (bool)core::configManager.conf["predatorWfControlsOpen"];
+    }
     predatorQuickFilter = std::clamp<int>((int)core::configManager.conf["predatorQuickFilter"], 0, 3);
     predatorHitSortMode = std::clamp<int>((int)core::configManager.conf["predatorHitSortMode"], 0, 5);
     predatorEventFilter = std::clamp<int>((int)core::configManager.conf["predatorEventFilter"], 0, 5);
@@ -675,6 +678,7 @@ void MainWindow::draw() {
         core::configManager.conf["showMenu"] = showMenu;
         core::configManager.conf["predatorMissionMode"] = predatorMissionMode;
         core::configManager.conf["predatorTab"] = predatorTab;
+        core::configManager.conf["predatorWfControlsOpen"] = predatorWfControlsOpen;
         core::configManager.conf["predatorQuickFilter"] = predatorQuickFilter;
         core::configManager.conf["predatorHitSortMode"] = predatorHitSortMode;
         core::configManager.conf["predatorEventFilter"] = predatorEventFilter;
@@ -2853,9 +2857,35 @@ void MainWindow::draw() {
     ImGui::EndChild();
     ImGui::PopStyleColor();
 
-    lockWaterfallControls = showMenu;
-
+    // Overlay rect for the Zoom/Max/Min dropdown that lives in the
+    // top-right of the waterfall. Computed BEFORE the waterfall is
+    // drawn so we can lock waterfall input under our overlay (the
+    // waterfall uses raw IsMouseClicked / IsMouseHoveringRect for
+    // tuning and would otherwise also fire when the operator taps
+    // our toggle button or the slider panel).
+    const float wfOvPad   = 8.0f  * style::uiScale;
+    const float wfOvBtnW  = 60.0f * style::uiScale;
+    const float wfOvBtnH  = 30.0f * style::uiScale;
+    const float wfOvPanelW = std::min(180.0f * style::uiScale,
+                                      std::max(120.0f * style::uiScale,
+                                               (float)waterfallWidth * 0.24f));
+    const float wfOvPanelH = 200.0f * style::uiScale;
     ImGui::SetCursorPos(ImVec2(pad, contentTop));
+    ImVec2 wfChildScreen = ImGui::GetCursorScreenPos();
+    float wfBtnX = wfChildScreen.x + (float)waterfallWidth - wfOvBtnW - wfOvPad;
+    float wfBtnY = wfChildScreen.y + wfOvPad;
+    ImVec2 wfOvBtnMin(wfBtnX, wfBtnY);
+    ImVec2 wfOvBtnMax(wfBtnX + wfOvBtnW, wfBtnY + wfOvBtnH);
+    float wfPanelX = wfChildScreen.x + (float)waterfallWidth - wfOvPanelW - wfOvPad;
+    float wfPanelY = wfBtnY + wfOvBtnH + (4.0f * style::uiScale);
+    ImVec2 wfOvPanelMin(wfPanelX, wfPanelY);
+    ImVec2 wfOvPanelMax(wfPanelX + wfOvPanelW, wfPanelY + wfOvPanelH);
+    bool mouseOverWfBtn   = ImGui::IsMouseHoveringRect(wfOvBtnMin, wfOvBtnMax, false);
+    bool mouseOverWfPanel = predatorWfControlsOpen
+                            && ImGui::IsMouseHoveringRect(wfOvPanelMin, wfOvPanelMax, false);
+
+    lockWaterfallControls = showMenu || mouseOverWfBtn || mouseOverWfPanel;
+
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.04f, 0.98f));
     ImGui::BeginChild("Waterfall", ImVec2(waterfallWidth, contentHeight), true);
 
@@ -3144,6 +3174,102 @@ void MainWindow::draw() {
                     dl->AddRectFilled(ImVec2(tx - 2, labelY - 1), ImVec2(tx + tsz.x + 2, labelY + labelH + 1), IM_COL32(0, 0, 0, 160));
                     dl->AddText(ImVec2(tx, labelY), lineCol, label);
                 }
+            }
+        }
+    }
+
+    // ----- Top-right Zoom/Max/Min dropdown -----
+    // Toggle button is anchored to the top-right of the waterfall child.
+    // The slider panel opens just below it. Slider values write through
+    // the same configManager keys ("min", "max") as the legacy rail
+    // controls so they survive restart.
+    {
+        const float btnLocalX = (float)waterfallWidth - wfOvBtnW - wfOvPad
+                                - ImGui::GetStyle().WindowPadding.x;
+        const float btnLocalY = wfOvPad - ImGui::GetStyle().WindowPadding.y;
+        ImGui::SetCursorPos(ImVec2(btnLocalX, btnLocalY));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.10f, 0.13f, 0.10f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.22f, 0.16f, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.22f, 0.28f, 0.20f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.30f, 0.45f, 0.20f, 0.85f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushID("predator_wfctl_toggle");
+        if (ImGui::Button(predatorWfControlsOpen ? "View*" : "View",
+                          ImVec2(wfOvBtnW, wfOvBtnH))) {
+            predatorWfControlsOpen = !predatorWfControlsOpen;
+            savePredatorState();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Zoom / Max / Min");
+        }
+        ImGui::PopID();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+
+        if (predatorWfControlsOpen) {
+            const float panelLocalX = (float)waterfallWidth - wfOvPanelW - wfOvPad
+                                      - ImGui::GetStyle().WindowPadding.x;
+            const float panelLocalY = btnLocalY + wfOvBtnH + (4.0f * style::uiScale);
+            ImGui::SetCursorPos(ImVec2(panelLocalX, panelLocalY));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.07f, 0.10f, 0.07f, 0.96f));
+            ImGui::PushStyleColor(ImGuiCol_Border,  ImVec4(0.30f, 0.45f, 0.20f, 0.85f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+            ImGui::BeginChild("PredatorWfControls", ImVec2(wfOvPanelW, wfOvPanelH), true);
+
+            ImVec2 wfSliderSize(18.0f * style::uiScale, 120.0f * style::uiScale);
+            float colW = ImGui::GetContentRegionAvail().x / 3.0f;
+            float colY = ImGui::GetCursorPosY();
+
+            // Zoom column
+            ImGui::SetCursorPos(ImVec2((colW - ImGui::CalcTextSize("Zoom").x) * 0.5f, colY));
+            ImGui::TextUnformatted("Zoom");
+            ImGui::SetCursorPosX((colW - wfSliderSize.x) * 0.5f);
+            if (ImGui::VSliderFloat("##wfctl_zoom", wfSliderSize, &bw, 1.0, 0.0, "")) {
+                double factor = (double)bw * (double)bw;
+                double wfBw = gui::waterfall.getBandwidth();
+                double delta = wfBw - 1000.0;
+                double finalBw = std::min<double>(1000.0 + (factor * delta), wfBw);
+                gui::waterfall.setViewBandwidth(finalBw);
+                if (vfo != NULL) {
+                    gui::waterfall.setViewOffset(vfo->centerOffset);
+                }
+            }
+
+            // Max column
+            ImGui::SetCursorPos(ImVec2(colW + (colW - ImGui::CalcTextSize("Max").x) * 0.5f, colY));
+            ImGui::TextUnformatted("Max");
+            ImGui::SetCursorPosX(colW + (colW - wfSliderSize.x) * 0.5f);
+            if (ImGui::VSliderFloat("##wfctl_max", wfSliderSize, &fftMax, 0.0, -160.0f, "")) {
+                fftMax = std::max<float>(fftMax, fftMin + 10);
+                core::configManager.acquire();
+                core::configManager.conf["max"] = fftMax;
+                core::configManager.release(true);
+            }
+
+            // Min column
+            ImGui::SetCursorPos(ImVec2(2.0f * colW + (colW - ImGui::CalcTextSize("Min").x) * 0.5f, colY));
+            ImGui::TextUnformatted("Min");
+            ImGui::SetCursorPosX(2.0f * colW + (colW - wfSliderSize.x) * 0.5f);
+            ImGui::SetItemUsingMouseWheel();
+            if (ImGui::VSliderFloat("##wfctl_min", wfSliderSize, &fftMin, 0.0, -160.0f, "")) {
+                fftMin = std::min<float>(fftMax - 10, fftMin);
+                core::configManager.acquire();
+                core::configManager.conf["min"] = fftMin;
+                core::configManager.release(true);
+            }
+
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(2);
+
+            // Outside-tap close: tap landed neither in the panel rect
+            // nor in the toggle button rect. Use IsMouseHoveringRect
+            // with clip=false so child clipping doesn't filter the test.
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+                && !ImGui::IsMouseHoveringRect(wfOvPanelMin, wfOvPanelMax, false)
+                && !ImGui::IsMouseHoveringRect(wfOvBtnMin,   wfOvBtnMax,   false)) {
+                predatorWfControlsOpen = false;
+                savePredatorState();
             }
         }
     }
@@ -5515,50 +5641,9 @@ void MainWindow::draw() {
         }
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImVec2 wfSliderSize(18.0f * style::uiScale, 120.0f * style::uiScale);
-
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Zoom").x) * 0.5f);
-    ImGui::TextUnformatted("Zoom");
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-    if (ImGui::VSliderFloat("##_7_", wfSliderSize, &bw, 1.0, 0.0, "")) {
-        double factor = (double)bw * (double)bw;
-        double wfBw = gui::waterfall.getBandwidth();
-        double delta = wfBw - 1000.0;
-        double finalBw = std::min<double>(1000.0 + (factor * delta), wfBw);
-        gui::waterfall.setViewBandwidth(finalBw);
-        if (vfo != NULL) {
-            gui::waterfall.setViewOffset(vfo->centerOffset);
-        }
-    }
-
-    ImGui::NewLine();
-
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Max").x) * 0.5f);
-    ImGui::TextUnformatted("Max");
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-    if (ImGui::VSliderFloat("##_8_", wfSliderSize, &fftMax, 0.0, -160.0f, "")) {
-        fftMax = std::max<float>(fftMax, fftMin + 10);
-        core::configManager.acquire();
-        core::configManager.conf["max"] = fftMax;
-        core::configManager.release(true);
-    }
-
-    ImGui::NewLine();
-
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Min").x) * 0.5f);
-    ImGui::TextUnformatted("Min");
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-    ImGui::SetItemUsingMouseWheel();
-    if (ImGui::VSliderFloat("##_9_", wfSliderSize, &fftMin, 0.0, -160.0f, "")) {
-        fftMin = std::min<float>(fftMax - 10, fftMin);
-        core::configManager.acquire();
-        core::configManager.conf["min"] = fftMin;
-        core::configManager.release(true);
-    }
+    // Zoom / Max / Min sliders moved out of the rail and into the
+    // top-right dropdown overlay above the waterfall (see the
+    // "Top-right Zoom/Max/Min dropdown" block earlier in draw()).
 
     if (backend::isTouchPrimary() && ImGui::GetScrollMaxY() > 0.0f) {
         static bool  s_dragArmed   = false;
