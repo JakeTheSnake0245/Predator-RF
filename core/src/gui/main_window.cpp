@@ -1,7 +1,6 @@
 #include <gui/main_window.h>
 #include <gui/gui.h>
 #include "imgui.h"
-#include <imgui_internal.h>
 #include <stdio.h>
 #include <thread>
 #include <complex>
@@ -5491,28 +5490,37 @@ void MainWindow::draw() {
         : ImGuiWindowFlags_None;
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, railFlags);
 
-    if (backend::isTouchPrimary()) {
-        static bool s_railDragging = false;
-        static float s_railScrollStart = 0.0f;
+    if (backend::isTouchPrimary() && ImGui::GetScrollMaxY() > 0.0f) {
+        static bool  s_dragArmed   = false;
+        static bool  s_dragActive  = false;
+        static float s_scrollStart = 0.0f;
         const float dragThreshold = 12.0f * style::uiScale;
-        bool inside = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-        if (inside && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            float totalDrag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
-            if (!s_railDragging && std::fabs(totalDrag) > dragThreshold) {
-                s_railDragging = true;
-                s_railScrollStart = ImGui::GetScrollY();
-                ImGui::ClearActiveID();
+
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            bool justPressed = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+            if (justPressed) {
+                bool insideRail = ImGui::IsWindowHovered();
+                bool noActiveItem = (ImGui::GetActiveID() == 0);
+                s_dragArmed   = insideRail && noActiveItem;
+                s_dragActive  = false;
+                s_scrollStart = ImGui::GetScrollY();
             }
-            if (s_railDragging) {
-                float target = s_railScrollStart - totalDrag;
-                if (target < 0.0f) target = 0.0f;
+            if (s_dragArmed && !s_dragActive) {
+                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
+                if (std::fabs(dy) > dragThreshold) s_dragActive = true;
+            }
+            if (s_dragActive) {
+                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
+                float target = s_scrollStart - dy;
                 float maxY = ImGui::GetScrollMaxY();
+                if (target < 0.0f) target = 0.0f;
                 if (target > maxY) target = maxY;
                 ImGui::SetScrollY(target);
             }
         }
         else {
-            s_railDragging = false;
+            s_dragArmed  = false;
+            s_dragActive = false;
         }
     }
 
