@@ -1597,15 +1597,32 @@ void MainWindow::draw() {
                 fftMin     = kujhadFFTMinSnapshot;
                 fftMax     = kujhadFFTMaxSnapshot;
             }
+            // Overlay arrays (hits / search bands / targets / excludes)
+            // travel alongside the bins so a mirroring controller can
+            // paint the same vertical hit markers and band shading the
+            // operator sees locally on this device. Snapshot copies are
+            // refreshed once per draw() and small in size.
+            json hitsCopy, bandsCopy, targetsCopy, excludesCopy;
+            {
+                std::lock_guard<std::mutex> lk(kujhadSnapshotMtx);
+                hitsCopy     = kujhadHitsSnapshot;
+                bandsCopy    = kujhadSearchBandsSnapshot;
+                targetsCopy  = kujhadTargetsSnapshot;
+                excludesCopy = kujhadExcludesSnapshot;
+            }
             out = json::object();
-            out["serial"]     = serial;
-            out["tsMs"]       = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch()).count();
-            out["centerFreq"] = centerFreq;
-            out["bandwidth"]  = bandwidth;
-            out["fftMinDb"]   = fftMin;
-            out["fftMaxDb"]   = fftMax;
-            out["bins"]       = bins;
+            out["serial"]      = serial;
+            out["tsMs"]        = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch()).count();
+            out["centerFreq"]  = centerFreq;
+            out["bandwidth"]   = bandwidth;
+            out["fftMinDb"]    = fftMin;
+            out["fftMaxDb"]    = fftMax;
+            out["bins"]        = bins;
+            out["hits"]        = hitsCopy;
+            out["searchBands"] = bandsCopy;
+            out["targets"]     = targetsCopy;
+            out["excludes"]    = excludesCopy;
             return true;
         });
         kujhadServer.setCommandHandler([this](const predator::KujhadDeviceCommand& cmd, std::string& errOut) {
@@ -1696,6 +1713,9 @@ void MainWindow::draw() {
         kujhadSearchBandsSnapshot         = searchBands;
         kujhadTargetsSnapshot             = targets;
         kujhadExcludesSnapshot            = excludes;
+        // Hits ride along on /v1/spectrum frames so a controller can
+        // paint peer hit markers without an extra round-trip.
+        kujhadHitsSnapshot                = hits;
         kujhadThresholdSnapshot           = missionThreshold;
         kujhadDwellMsSnapshot             = dwellMs;
         kujhadQuickScanDelayMsSnapshot    = quickScanDelayMs;
@@ -1924,6 +1944,12 @@ void MainWindow::draw() {
             kujhadPeerCachedSerial = 0;
             kujhadLastPeerSpectrumSerial = 0;
             kujhadMirroredFromPeerIdx = -1;
+            // Drop the peer overlay caches as well so an old hit/band
+            // set can't bleed onto the next mirror session.
+            kujhadPeerCachedHits        = json::array();
+            kujhadPeerCachedSearchBands = json::array();
+            kujhadPeerCachedTargets     = json::array();
+            kujhadPeerCachedExcludes    = json::array();
         }
     }
 
@@ -2873,10 +2899,19 @@ void MainWindow::draw() {
             // this on every releaseFFTBuffer to substitute over the local
             // row before pushFFT(), so peer data is the ONLY thing the
             // user sees while the mirror is on.
+            //
+            // The overlay arrays (peer hits + bands + targets + excludes)
+            // are cached under the same lock so the marker-drawing block
+            // below picks up a consistent set: bins and overlays from
+            // the same frame, never split across two updates.
             {
                 std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
-                kujhadPeerCachedBins   = frame.bins;
-                kujhadPeerCachedSerial = frame.serial;
+                kujhadPeerCachedBins        = frame.bins;
+                kujhadPeerCachedSerial      = frame.serial;
+                kujhadPeerCachedHits        = frame.hits;
+                kujhadPeerCachedSearchBands = frame.searchBands;
+                kujhadPeerCachedTargets     = frame.targets;
+                kujhadPeerCachedExcludes    = frame.excludes;
             }
             kujhadMirrorActive.store(true, std::memory_order_release);
 
@@ -2936,8 +2971,37 @@ void MainWindow::draw() {
         }
     }
 
-    // Draw Predator hit markers on live spectrum (labeled vertical lines for all tracked hits)
-    if (hits.is_array() && !hits.empty()) {
+    // Draw hit / target / search-band overlays on the live spectrum.
+    //
+    // Two source modes share the same render path:
+    //   * Local: pulls from `hits` / `searchBands` / `targets` /
+    //     `excludes` and uses the original yellow/green palette.
+    //   * Peer (mirror active): pulls from the cached peer overlay
+    //     arrays attached to the most recent /v1/spectrum frame and
+    //     paints in a peer cyan palette with dashed vertical lines so
+    //     the operator can never confuse a peer's marker with their
+    //     own. Hits/targets/bands are tagged with a "P" prefix on
+    //     labels so an unlabelled local marker can't be mistaken for a
+    //     peer marker (and vice versa).
+    {
+        bool peerMirror = kujhadMirrorBannerActive;
+        json overlayHits, overlayBands, overlayTargets, overlayExcludes;
+        if (peerMirror) {
+            std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+            overlayHits     = kujhadPeerCachedHits;
+            overlayBands    = kujhadPeerCachedSearchBands;
+            overlayTargets  = kujhadPeerCachedTargets;
+            overlayExcludes = kujhadPeerCachedExcludes;
+        } else {
+            overlayHits     = hits;
+            overlayBands    = searchBands;
+            overlayTargets  = targets;
+            overlayExcludes = excludes;
+        }
+        bool haveAny = (overlayHits.is_array()     && !overlayHits.empty()) ||
+                       (overlayBands.is_array()    && !overlayBands.empty()) ||
+                       (overlayTargets.is_array()  && !overlayTargets.empty()) ||
+                       (overlayExcludes.is_array() && !overlayExcludes.empty());
         double viewBW  = gui::waterfall.getViewBandwidth();
         double viewOff = gui::waterfall.getViewOffset();
         double cFreq   = gui::waterfall.getCenterFrequency();
@@ -2948,42 +3012,138 @@ void MainWindow::draw() {
         ImVec2 wMin    = gui::waterfall.wfMin;
         ImVec2 wMax    = gui::waterfall.wfMax;
         float  fftW    = fMax.x - fMin.x;
-        if (fftW > 1.0f && highF > lowF) {
+        if (haveAny && fftW > 1.0f && highF > lowF) {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             float labelY   = fMin.y + 4.0f * style::uiScale;
             float labelH   = ImGui::GetTextLineHeight();
-            for (int hi = 0; hi < (int)hits.size(); hi++) {
-                double hf = readJsonDouble(hits[hi], "frequency", 0.0);
-                if (hf <= 0.0 || hf < lowF || hf > highF) continue;
-                float x = fMin.x + (float)((hf - lowF) / (highF - lowF)) * fftW;
-                std::string state = readJsonString(hits[hi], "state", "unknown");
-                bool isTarget = (state == "target");
-                ImU32 lineCol = isTarget ? IM_COL32(80, 255, 120, 220) : IM_COL32(255, 200, 40, 220);
-                ImU32 wfCol   = isTarget ? IM_COL32(80, 255, 120, 80)  : IM_COL32(255, 200, 40, 80);
-                // Vertical marker on FFT area
-                dl->AddLine(ImVec2(x, fMin.y), ImVec2(x, fMax.y), lineCol, 1.5f * style::uiScale);
-                // Faint marker continuing down the waterfall
-                if (wMax.y > wMin.y) {
-                    dl->AddLine(ImVec2(x, wMin.y), ImVec2(x, wMax.y), wfCol, 1.0f * style::uiScale);
+            // Peer overlays use a cyan palette with dashed vertical
+            // lines; local overlays keep the original solid yellow /
+            // green palette so an operator's eyes can tell at a glance
+            // whether a marker is theirs or a peer's.
+            ImU32 hitCol     = peerMirror ? IM_COL32( 80, 220, 255, 230) : IM_COL32(255, 200,  40, 220);
+            ImU32 hitWfCol   = peerMirror ? IM_COL32( 80, 220, 255,  80) : IM_COL32(255, 200,  40,  80);
+            ImU32 targetCol  = peerMirror ? IM_COL32(120, 255, 220, 230) : IM_COL32( 80, 255, 120, 220);
+            ImU32 targetWfCol= peerMirror ? IM_COL32(120, 255, 220,  80) : IM_COL32( 80, 255, 120,  80);
+            ImU32 bandCol    = peerMirror ? IM_COL32( 80, 220, 255,  28) : IM_COL32( 80, 200, 255,  18);
+            ImU32 bandEdgeCol= peerMirror ? IM_COL32( 80, 220, 255, 120) : IM_COL32( 80, 200, 255,  90);
+            // Exclude bands: faint red wash so the operator can see
+            // "do-not-scan" zones at a glance. Same peer/local hue
+            // discipline as the rest of the overlays.
+            ImU32 excludeCol     = peerMirror ? IM_COL32(255, 120, 160,  32) : IM_COL32(255, 100, 100,  22);
+            ImU32 excludeEdgeCol = peerMirror ? IM_COL32(255, 120, 160, 130) : IM_COL32(255, 100, 100, 100);
+            const char* labelPrefix = peerMirror ? "P" : "";
+            // Helper: dashed vertical line. ImGui has no native dashed
+            // primitive so we tile fixed-length on/off segments. dashLen
+            // / gapLen are in pixels (post-uiScale) so the cadence
+            // looks consistent across DPI.
+            auto dashedVLine = [&](float x, float y0, float y1, ImU32 col, float thickness) {
+                if (y1 <= y0) return;
+                float dashLen = 6.0f * style::uiScale;
+                float gapLen  = 4.0f * style::uiScale;
+                for (float y = y0; y < y1; y += dashLen + gapLen) {
+                    float ye = y + dashLen;
+                    if (ye > y1) ye = y1;
+                    dl->AddLine(ImVec2(x, y), ImVec2(x, ye), col, thickness);
                 }
-                // Label: "M#" for assigned markers, frequency for unassigned peaks
-                char label[32];
-                bool assigned = readJsonBool(hits[hi], "markerAssigned", false);
-                if (assigned) {
-                    int slot = (int)readJsonDouble(hits[hi], "markerSlot", 0.0);
-                    snprintf(label, sizeof(label), "M%d", slot > 0 ? slot : (hi + 1));
-                } else {
-                    double mhz = hf / 1e6;
-                    if (mhz >= 1000.0) snprintf(label, sizeof(label), "%.2f GHz", mhz / 1000.0);
-                    else if (mhz >= 1.0)  snprintf(label, sizeof(label), "%.3f MHz", mhz);
-                    else                  snprintf(label, sizeof(label), "%.1f kHz", mhz * 1000.0);
+            };
+            auto vLine = [&](float x, float y0, float y1, ImU32 col, float thickness) {
+                if (peerMirror) dashedVLine(x, y0, y1, col, thickness);
+                else            dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), col, thickness);
+            };
+            // 1) Search-band shading. Draw first so vertical markers
+            //    sit on top of the band tint instead of being washed
+            //    out by it. Only enabled bands paint.
+            if (overlayBands.is_array()) {
+                for (int bi = 0; bi < (int)overlayBands.size(); bi++) {
+                    if (!readJsonBool(overlayBands[bi], "enabled", true)) continue;
+                    double bs = readJsonDouble(overlayBands[bi], "start", 0.0);
+                    double be = readJsonDouble(overlayBands[bi], "stop",  0.0);
+                    if (bs <= 0.0 || be <= 0.0 || bs == be) continue;
+                    if (bs > be) std::swap(bs, be);
+                    if (be < lowF || bs > highF) continue;
+                    double cs = std::max(bs, lowF);
+                    double ce = std::min(be, highF);
+                    float xs = fMin.x + (float)((cs - lowF) / (highF - lowF)) * fftW;
+                    float xe = fMin.x + (float)((ce - lowF) / (highF - lowF)) * fftW;
+                    if (xe < xs + 1.0f) xe = xs + 1.0f;
+                    dl->AddRectFilled(ImVec2(xs, fMin.y), ImVec2(xe, fMax.y), bandCol);
+                    // Edge ticks at band boundaries when they fall in view.
+                    if (bs >= lowF) vLine(xs, fMin.y, fMax.y, bandEdgeCol, 1.0f * style::uiScale);
+                    if (be <= highF) vLine(xe, fMin.y, fMax.y, bandEdgeCol, 1.0f * style::uiScale);
                 }
-                ImVec2 tsz = ImGui::CalcTextSize(label);
-                float tx = x - tsz.x * 0.5f;
-                if (tx < fMin.x) tx = fMin.x;
-                if (tx + tsz.x > fMax.x) tx = fMax.x - tsz.x;
-                dl->AddRectFilled(ImVec2(tx - 2, labelY - 1), ImVec2(tx + tsz.x + 2, labelY + labelH + 1), IM_COL32(0, 0, 0, 160));
-                dl->AddText(ImVec2(tx, labelY), lineCol, label);
+            }
+            // 1b) Exclude bands — paint after search bands so the
+            //     red "do-not-scan" tint sits on top of any green
+            //     band tint underneath, making the exclusion obvious.
+            if (overlayExcludes.is_array()) {
+                for (int ei = 0; ei < (int)overlayExcludes.size(); ei++) {
+                    double ef = readJsonDouble(overlayExcludes[ei], "frequency", 0.0);
+                    double ew = readJsonDouble(overlayExcludes[ei], "bandwidth", 0.0);
+                    if (ef <= 0.0) continue;
+                    // Default to a narrow 25 kHz half-width when no
+                    // bandwidth is specified — same convention used
+                    // by the local exclude editor.
+                    if (ew <= 0.0) ew = 50000.0;
+                    double es = ef - ew * 0.5;
+                    double ee = ef + ew * 0.5;
+                    if (ee < lowF || es > highF) continue;
+                    double cs = std::max(es, lowF);
+                    double ce = std::min(ee, highF);
+                    float xs = fMin.x + (float)((cs - lowF) / (highF - lowF)) * fftW;
+                    float xe = fMin.x + (float)((ce - lowF) / (highF - lowF)) * fftW;
+                    if (xe < xs + 1.0f) xe = xs + 1.0f;
+                    dl->AddRectFilled(ImVec2(xs, fMin.y), ImVec2(xe, fMax.y), excludeCol);
+                    if (es >= lowF) vLine(xs, fMin.y, fMax.y, excludeEdgeCol, 1.0f * style::uiScale);
+                    if (ee <= highF) vLine(xe, fMin.y, fMax.y, excludeEdgeCol, 1.0f * style::uiScale);
+                }
+            }
+            // 2) Target ticks — short marks at the top of the FFT area
+            //    so the operator can see configured target slots even
+            //    before they produce a hit. Drawn before hits so a
+            //    target-promoted hit's full-height line lands on top.
+            if (overlayTargets.is_array()) {
+                float tickH = 10.0f * style::uiScale;
+                for (int ti = 0; ti < (int)overlayTargets.size(); ti++) {
+                    double tf = readJsonDouble(overlayTargets[ti], "frequency", 0.0);
+                    if (tf <= 0.0 || tf < lowF || tf > highF) continue;
+                    if (overlayTargets[ti].contains("enabled")
+                        && !readJsonBool(overlayTargets[ti], "enabled", true)) continue;
+                    float x = fMin.x + (float)((tf - lowF) / (highF - lowF)) * fftW;
+                    vLine(x, fMin.y, fMin.y + tickH, targetCol, 1.0f * style::uiScale);
+                }
+            }
+            // 3) Hits — full-height labelled vertical markers.
+            if (overlayHits.is_array()) {
+                for (int hi = 0; hi < (int)overlayHits.size(); hi++) {
+                    double hf = readJsonDouble(overlayHits[hi], "frequency", 0.0);
+                    if (hf <= 0.0 || hf < lowF || hf > highF) continue;
+                    float x = fMin.x + (float)((hf - lowF) / (highF - lowF)) * fftW;
+                    std::string state = readJsonString(overlayHits[hi], "state", "unknown");
+                    bool isTarget = (state == "target");
+                    ImU32 lineCol = isTarget ? targetCol   : hitCol;
+                    ImU32 wfCol   = isTarget ? targetWfCol : hitWfCol;
+                    vLine(x, fMin.y, fMax.y, lineCol, 1.5f * style::uiScale);
+                    if (wMax.y > wMin.y) {
+                        vLine(x, wMin.y, wMax.y, wfCol, 1.0f * style::uiScale);
+                    }
+                    char label[40];
+                    bool assigned = readJsonBool(overlayHits[hi], "markerAssigned", false);
+                    if (assigned) {
+                        int slot = (int)readJsonDouble(overlayHits[hi], "markerSlot", 0.0);
+                        snprintf(label, sizeof(label), "%sM%d", labelPrefix, slot > 0 ? slot : (hi + 1));
+                    } else {
+                        double mhz = hf / 1e6;
+                        if (mhz >= 1000.0) snprintf(label, sizeof(label), "%s%.2f GHz", labelPrefix, mhz / 1000.0);
+                        else if (mhz >= 1.0)  snprintf(label, sizeof(label), "%s%.3f MHz", labelPrefix, mhz);
+                        else                  snprintf(label, sizeof(label), "%s%.1f kHz", labelPrefix, mhz * 1000.0);
+                    }
+                    ImVec2 tsz = ImGui::CalcTextSize(label);
+                    float tx = x - tsz.x * 0.5f;
+                    if (tx < fMin.x) tx = fMin.x;
+                    if (tx + tsz.x > fMax.x) tx = fMax.x - tsz.x;
+                    dl->AddRectFilled(ImVec2(tx - 2, labelY - 1), ImVec2(tx + tsz.x + 2, labelY + labelH + 1), IM_COL32(0, 0, 0, 160));
+                    dl->AddText(ImVec2(tx, labelY), lineCol, label);
+                }
             }
         }
     }

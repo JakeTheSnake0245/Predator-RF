@@ -754,6 +754,19 @@ struct KujhadDeviceCommand {
 // `serial` increments per published frame so a controller can detect a
 // stalled stream. `tsMs` is a steady-clock millisecond stamp from the
 // device for client-side latency estimates.
+//
+// `hits` / `searchBands` / `targets` / `excludes` carry the peer's
+// current overlay state alongside the FFT bins so a mirroring
+// controller can paint the same vertical hit markers, target ticks,
+// and search-band shading the operator sees locally on the device.
+// Each is a thin JSON array of objects matching the on-device schema:
+//   hits:        {frequency, state, markerAssigned, markerSlot, name?}
+//   searchBands: {start, stop, enabled, name?}
+//   targets:     {frequency, bandwidth?, enabled?, name?}
+//   excludes:    {frequency, bandwidth?, name?}
+// The arrays are reshipped on every frame; per-frame cost is small
+// because the lists are bounded (a few dozen entries) and the bins
+// payload dominates the wire size anyway.
 struct KujhadSpectrumFrame {
     uint64_t serial = 0;
     uint64_t tsMs = 0;
@@ -762,6 +775,10 @@ struct KujhadSpectrumFrame {
     float fftMinDb = -120.0f;
     float fftMaxDb = 0.0f;
     std::vector<float> bins;
+    kujhad_json hits        = kujhad_json::array();
+    kujhad_json searchBands = kujhad_json::array();
+    kujhad_json targets     = kujhad_json::array();
+    kujhad_json excludes    = kujhad_json::array();
 };
 
 class KujhadDeviceServer {
@@ -1688,6 +1705,24 @@ private:
                         for (auto& v : j["bins"]) {
                             if (v.is_number()) f.bins.push_back((float)v.get<double>());
                         }
+                    }
+                    // Overlay arrays travel with each frame so a
+                    // controller can paint the peer's hits / target
+                    // ticks / search bands over the mirrored waterfall.
+                    // Missing or wrong-typed entries fall back to an
+                    // empty array so an old peer that doesn't ship
+                    // them still produces a usable bin-only frame.
+                    if (j.contains("hits") && j["hits"].is_array()) {
+                        f.hits = j["hits"];
+                    }
+                    if (j.contains("searchBands") && j["searchBands"].is_array()) {
+                        f.searchBands = j["searchBands"];
+                    }
+                    if (j.contains("targets") && j["targets"].is_array()) {
+                        f.targets = j["targets"];
+                    }
+                    if (j.contains("excludes") && j["excludes"].is_array()) {
+                        f.excludes = j["excludes"];
                     }
                     {
                         std::lock_guard<std::mutex> lk(spectrumMtx_);
