@@ -29,6 +29,7 @@
 #include <ctime>
 #include <chrono>
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <cctype>
 #include <signal_path/source.h>
@@ -40,6 +41,7 @@
 #include "../predator/decoder_ingest.h"
 #include "../predator/kujhad_fleet.h"
 #include "../predator/native_decoder_registry.h"
+#include "../predator/cot_reporter.h"
 #include <ctime>
 
 void MainWindow::init() {
@@ -670,6 +672,28 @@ void MainWindow::draw() {
         T("Unknown")
     };
 
+    // ── Text-edit popup ─────────────────────────────────────────────────────
+    // Android keyboards cover inline InputText widgets.  openPendEdit() opens
+    // a full-width modal anchored at the top of the content area, well above
+    // the keyboard, so the user can see what they are typing.
+    static struct {
+        bool                              open     = false;
+        bool                              setFocus = false;
+        char                              buf[256] = {};
+        char                              label[128] = {};
+        std::function<void(std::string)>  onAccept;
+    } pendEdit;
+
+    auto openPendEdit = [&](const char* label, const std::string& initial,
+                             std::function<void(std::string)> cb) {
+        snprintf(pendEdit.label, sizeof(pendEdit.label), "%s", label);
+        snprintf(pendEdit.buf,   sizeof(pendEdit.buf),   "%s", initial.c_str());
+        pendEdit.onAccept = std::move(cb);
+        pendEdit.open     = true;
+        pendEdit.setFocus = true;
+        ImGui::OpenPopup("##pend_edit");
+    };
+
     auto savePredatorState = [&]() {
         core::configManager.acquire();
         core::configManager.conf["showMenu"] = showMenu;
@@ -839,6 +863,19 @@ void MainWindow::draw() {
         core::configManager.acquire();
         core::configManager.conf["predatorEvents"] = newEvents;
         core::configManager.release(true);
+    };
+
+    // Debounced variant: at most one disk write per 500 ms for high-frequency
+    // decoder ingestion paths so the UI thread isn't blocked by JSON I/O on
+    // every frame during active scanning. Manual events and hit recording use
+    // savePredatorEvents() directly to stay immediate.
+    auto scheduleEventSave = [&]() {
+        static double lastSaveTime = -9999.0;
+        double now = ImGui::GetTime();
+        if (now - lastSaveTime >= 0.5) {
+            savePredatorEvents(events);
+            lastSaveTime = now;
+        }
     };
 
     auto savePredatorHits = [&](const json& newHits) {
@@ -1153,6 +1190,43 @@ void MainWindow::draw() {
     // Ensure RTL433 bridge config is normalized every frame, even if the user
     // never opened the Decoder Bridges section. This lets the ingester start
     // automatically on app launch when enabled was persisted as true.
+    // -------- ATAK CoT reporter --------
+    // Declared at this scope so the lambda closures below (recordPeakHit etc.)
+    // can capture cotReporter by reference.  Config is re-applied only when
+    // the user changes a setting (guarded by lastCotCfg diff check).
+    static predator::CotReporter cotReporter;
+    {
+        static predator::CotReporter::Config lastCotCfg;
+
+        predator::CotReporter::Config cfg;
+        cfg.enabled       = readJsonBool  (core::configManager.conf, "cotEnabled",       false);
+        cfg.useUdp        = readJsonBool  (core::configManager.conf, "cotUseUdp",        true);
+        cfg.host          = readJsonString(core::configManager.conf, "cotHost",           "239.2.3.1");
+        cfg.port          = (int)readJsonDouble(core::configManager.conf, "cotPort",     6969.0);
+        cfg.uid           = readJsonString(core::configManager.conf, "cotUid",            "");
+        cfg.callsign      = readJsonString(core::configManager.conf, "cotCallsign",       "Predator RF");
+        cfg.chatRoom      = readJsonString(core::configManager.conf, "cotChatRoom",       "All Chat Rooms");
+        cfg.sensorMode    = readJsonBool  (core::configManager.conf, "cotSensorMode",    true);
+        cfg.saIntervalSec = (float)readJsonDouble(core::configManager.conf, "cotSaIntervalSec", 30.0);
+
+        // Only reconfigure when something actually changed to avoid restarting
+        // the SA thread every draw() frame.
+        if (cfg.enabled       != lastCotCfg.enabled       ||
+            cfg.useUdp        != lastCotCfg.useUdp        ||
+            cfg.host          != lastCotCfg.host          ||
+            cfg.port          != lastCotCfg.port          ||
+            cfg.callsign      != lastCotCfg.callsign      ||
+            cfg.chatRoom      != lastCotCfg.chatRoom      ||
+            cfg.sensorMode    != lastCotCfg.sensorMode    ||
+            cfg.saIntervalSec != lastCotCfg.saIntervalSec) {
+            cotReporter.configure(cfg);
+            lastCotCfg = cfg;
+        }
+
+        cotReporter.updateGps(phoneLat, phoneLon, phoneAccuracy, phoneHasFix);
+    }
+
+
     ensureDecoderBridge("rtl433", "127.0.0.1", 1433, "TCP JSON Lines",
         "rtl_433 ISM device telemetry (315/433/868/915 MHz). Each JSON line becomes one Network event; protocol = device model, networkId = device id, talkgroup = channel.");
 
@@ -2319,7 +2393,10 @@ void MainWindow::draw() {
         }
         savePredatorHits(hits);
         if (!suppressEvent) {
-            savePredatorEvents(events);
+            scheduleEventSave();
+            // Fire CoT GeoChat report to configured ATAK endpoint.
+            cotReporter.reportHit(frequency, strengthDb, (float)readJsonDouble(hit, "snrDb", 0.0),
+                                  hitCount, state, readJsonString(hit, "name", ""));
         }
         predatorScanStatus = "Hit " + formatFrequency(frequency);
         if (newHit && state == "unknown") { return 2; }
@@ -2739,11 +2816,11 @@ void MainWindow::draw() {
     float pad = 8.0f * style::uiScale;
     float statusBarHeight = 42.0f * style::uiScale;
     float controlBarHeight = 46.0f * style::uiScale;
-    float railWidth = 64.0f * style::uiScale;
+    float railWidth = 72.0f * style::uiScale;
     float contentTop = pad + statusBarHeight + pad + controlBarHeight + pad;
     float contentHeight = std::max<float>(winSize.y - contentTop - pad, 120.0f * style::uiScale);
     float waterfallWidth = std::max<float>(winSize.x - railWidth - (3.0f * pad), 120.0f * style::uiScale);
-    float railX = pad + waterfallWidth + pad;
+    float railX = winSize.x - railWidth - pad;  // anchor to right edge; immune to any waterfallWidth clamping
     float overlayMinWidth = std::min<float>(320.0f * style::uiScale, waterfallWidth);
     float overlayMaxWidth = std::max<float>(overlayMinWidth, waterfallWidth - (28.0f * style::uiScale));
 #ifdef __ANDROID__
@@ -3257,11 +3334,27 @@ void MainWindow::draw() {
                     }
                     ImGui::SameLine(0, 4.0f * style::uiScale);
                     if (ImGui::Button(T("Clear All Hits"), ImVec2(bw, 0))) {
-                        for (int i = (int)hits.size() - 1; i >= 0; i--) {
-                            releaseHitRoute(i);
+                        ImGui::OpenPopup("##confirm_clear_hits");
+                    }
+                    if (ImGui::BeginPopupModal("##confirm_clear_hits", nullptr,
+                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+                        ImGui::TextUnformatted(T("Clear all hits?"));
+                        ImGui::TextDisabled("%s", T("This cannot be undone."));
+                        ImGui::Spacing();
+                        float cbw = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
+                        if (ImGui::Button(T("Clear##hits_yes"), ImVec2(cbw, 0))) {
+                            for (int i = (int)hits.size() - 1; i >= 0; i--) {
+                                releaseHitRoute(i);
+                            }
+                            hits = json::array();
+                            savePredatorHits(hits);
+                            ImGui::CloseCurrentPopup();
                         }
-                        hits = json::array();
-                        savePredatorHits(hits);
+                        ImGui::SameLine(0, 8.0f * style::uiScale);
+                        if (ImGui::Button(T("Cancel##hits_no"), ImVec2(cbw, 0))) {
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndPopup();
                     }
                     ImGui::Separator();
                 }
@@ -3537,17 +3630,27 @@ void MainWindow::draw() {
                             readJsonString(hit, "routeVfo", "—").c_str());
                     }
 
-                    if (ImGui::CollapsingHeader(T("Rename / Notes"))) {
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                        if (ImGui::InputText("Name##selected_hit_name", hitNameBuf, sizeof(hitNameBuf))) {
-                            hit["name"] = std::string(hitNameBuf);
-                            selectedChanged = true;
-                        }
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                        if (ImGui::InputTextMultiline("Note##selected_hit_note", hitNoteBuf, sizeof(hitNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 88.0f * style::uiScale))) {
-                            hit["note"] = std::string(hitNoteBuf);
-                            selectedChanged = true;
-                        }
+                    // Rename button opens a keyboard-safe popup positioned above
+                    // the Android soft keyboard so the user can see what they type.
+                    if (ImGui::Button(T("Rename / Notes"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        int capturedIdx = selectedIndex;
+                        openPendEdit(T("Hit Name"), std::string(hitNameBuf),
+                            [capturedIdx](std::string newName) {
+                                // Write through config manager (safe across frames —
+                                // pendEdit.onAccept is static; `hits` is frame-local).
+                                core::configManager.acquire();
+                                auto& h = core::configManager.conf["predatorHits"];
+                                if (h.is_array() && capturedIdx >= 0 && capturedIdx < (int)h.size()) {
+                                    h[capturedIdx]["name"] = newName;
+                                }
+                                core::configManager.release(true);
+                                // hitNameBuf is static; the next draw() frame reloads it from config.
+                            });
+                    }
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    if (ImGui::InputTextMultiline("Note##selected_hit_note", hitNoteBuf, sizeof(hitNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 72.0f * style::uiScale))) {
+                        hit["note"] = std::string(hitNoteBuf);
+                        selectedChanged = true;
                     }
 
                     float halfWidth = (ImGui::GetContentRegionAvail().x - (6.0f * style::uiScale)) * 0.5f;
@@ -3775,8 +3878,24 @@ void MainWindow::draw() {
                 ImGui::EndChild();
 
                 if (ImGui::Button(T("Clear Events"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                    events = json::array();
-                    savePredatorEvents(events);
+                    ImGui::OpenPopup("##confirm_clear_events");
+                }
+                if (ImGui::BeginPopupModal("##confirm_clear_events", nullptr,
+                        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+                    ImGui::TextUnformatted(T("Clear all events?"));
+                    ImGui::TextDisabled("%s", T("This cannot be undone."));
+                    ImGui::Spacing();
+                    float bw = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
+                    if (ImGui::Button(T("Clear##events_yes"), ImVec2(bw, 0))) {
+                        events = json::array();
+                        savePredatorEvents(events);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine(0, 8.0f * style::uiScale);
+                    if (ImGui::Button(T("Cancel##events_no"), ImVec2(bw, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
                 }
             }
             if (predatorQuickFilter == 0 || predatorQuickFilter == 1) {
@@ -5376,6 +5495,170 @@ void MainWindow::draw() {
                 }
                 ImGui::TextWrapped("Maps are now wired through the phone GPS path. DF remains intentionally excluded.");
             }
+            // ---- TAK / ATAK CoT integration ----
+            if (ImGui::CollapsingHeader(T("TAK Integration"), ImGuiTreeNodeFlags_None)) {
+                float w = ImGui::GetContentRegionAvail().x;
+                ImGui::TextWrapped("%s", T("Send CoT GeoChat to an ATAK endpoint whenever a frequency hit is recorded. "
+                    "Sensor SA beacons broadcast the GPS fix as a friendly unit on the ATAK map."));
+                ImGui::Separator();
+
+                // Enabled toggle
+                bool cotEnabled = readJsonBool(core::configManager.conf, "cotEnabled", false);
+                if (ImGui::Checkbox(T("Enable TAK CoT reporting##cot"), &cotEnabled)) {
+                    core::configManager.acquire();
+                    core::configManager.conf["cotEnabled"] = cotEnabled;
+                    core::configManager.release(true);
+                }
+
+                ImGui::Spacing();
+
+                // Protocol (UDP / TCP)
+                {
+                    bool useUdp = readJsonBool(core::configManager.conf, "cotUseUdp", true);
+                    int proto = useUdp ? 0 : 1;
+                    ImGui::LeftLabel(T("Protocol##cot"));
+                    ImGui::SetNextItemWidth(w * 0.5f);
+                    if (ImGui::Combo("##cot_proto", &proto, "UDP\0TCP\0")) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotUseUdp"] = (proto == 0);
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("UDP: multicast/unicast (fire-and-forget).\nTCP: direct TAK Server connection."));
+                    }
+                }
+
+                // Host
+                {
+                    static char cotHostBuf[128] = "";
+                    static bool cotHostInit = false;
+                    if (!cotHostInit) {
+                        std::string h = readJsonString(core::configManager.conf, "cotHost", "239.2.3.1");
+                        snprintf(cotHostBuf, sizeof(cotHostBuf), "%s", h.c_str());
+                        cotHostInit = true;
+                    }
+                    ImGui::LeftLabel(T("Host##cot"));
+                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
+                    if (ImGui::InputText("##cot_host", cotHostBuf, sizeof(cotHostBuf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotHost"] = std::string(cotHostBuf);
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("239.2.3.1 = ATAK multicast (LAN)\n127.0.0.1 = same device\nIP of TAK Server = direct TCP"));
+                    }
+                }
+
+                // Port
+                {
+                    int cotPort = (int)readJsonDouble(core::configManager.conf, "cotPort", 6969.0);
+                    ImGui::LeftLabel(T("Port##cot"));
+                    ImGui::SetNextItemWidth(w * 0.35f);
+                    if (ImGui::InputInt("##cot_port", &cotPort, 1, 100)) {
+                        cotPort = std::max(1, std::min(65535, cotPort));
+                        core::configManager.acquire();
+                        core::configManager.conf["cotPort"] = cotPort;
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("6969 = ATAK SA multicast\n4242 = ATAK direct UDP\n8087 = TAK Server TLS\n8088 = TAK Server plain TCP"));
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", T("Identity"));
+                ImGui::Separator();
+
+                // Sensor mode toggle
+                {
+                    bool sensorMode = readJsonBool(core::configManager.conf, "cotSensorMode", true);
+                    if (ImGui::Checkbox(T("Sensor mode (separate entity)##cot"), &sensorMode)) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotSensorMode"] = sensorMode;
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("On: messages appear from a dedicated 'Predator RF' sensor entity.\nOff: messages use the callsign below but no separate SA beacon is sent."));
+                    }
+                }
+
+                // Callsign
+                {
+                    static char cotCsBuf[64] = "";
+                    static bool cotCsInit = false;
+                    if (!cotCsInit) {
+                        std::string cs = readJsonString(core::configManager.conf, "cotCallsign", "Predator RF");
+                        snprintf(cotCsBuf, sizeof(cotCsBuf), "%s", cs.c_str());
+                        cotCsInit = true;
+                    }
+                    ImGui::LeftLabel(T("Callsign##cot"));
+                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
+                    if (ImGui::InputText("##cot_callsign", cotCsBuf, sizeof(cotCsBuf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotCallsign"] = std::string(cotCsBuf);
+                        core::configManager.conf["cotUid"] = "";  // force UID rederivation
+                        core::configManager.release(true);
+                    }
+                }
+
+                // Chat room
+                {
+                    static char cotRoomBuf[64] = "";
+                    static bool cotRoomInit = false;
+                    if (!cotRoomInit) {
+                        std::string r = readJsonString(core::configManager.conf, "cotChatRoom", "All Chat Rooms");
+                        snprintf(cotRoomBuf, sizeof(cotRoomBuf), "%s", r.c_str());
+                        cotRoomInit = true;
+                    }
+                    ImGui::LeftLabel(T("Chat Room##cot"));
+                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
+                    if (ImGui::InputText("##cot_room", cotRoomBuf, sizeof(cotRoomBuf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotChatRoom"] = std::string(cotRoomBuf);
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("'All Chat Rooms' = broadcast to everyone.\nType a team name (e.g. TeamBlue) for group chat."));
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", T("SA Beacon (sensor mode)"));
+                ImGui::Separator();
+
+                // SA interval
+                {
+                    float saInterval = (float)readJsonDouble(core::configManager.conf, "cotSaIntervalSec", 30.0);
+                    ImGui::LeftLabel(T("SA interval (s)##cot"));
+                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
+                    if (ImGui::SliderFloat("##cot_sa_interval", &saInterval, 5.0f, 300.0f, "%.0f s")) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotSaIntervalSec"] = saInterval;
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("How often the sensor SA beacon is sent.\nLower = more frequent map presence updates."));
+                    }
+                    ImGui::TextDisabled("GPS: %s  |  SA running: %s",
+                        phoneHasFix ? "fixed" : "none",
+                        (readJsonBool(core::configManager.conf, "cotEnabled", false) &&
+                         readJsonBool(core::configManager.conf, "cotSensorMode", true))
+                            ? "yes" : "no");
+                }
+
+                ImGui::Spacing();
+                // Test button
+                if (ImGui::Button(T("Send Test Message##cot"), ImVec2(w, 0))) {
+                    cotReporter.reportHit(154575000.0, -55.0f, 12.0f, 1, "test", "Predator RF Test");
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", T("Sends a synthetic 154.575 MHz hit to verify endpoint connectivity."));
+                }
+            }
+
             if (ImGui::CollapsingHeader(T("Session Export"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                 if (ImGui::InputTextMultiline("Note##session_note", sessionNoteBuf, sizeof(sessionNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 96.0f * style::uiScale))) {
@@ -5485,7 +5768,8 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
-    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true);
+    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     for (int i = 0; i < 7; i++) {
         bool activeTab = (predatorTab == i);
@@ -5516,45 +5800,53 @@ void MainWindow::draw() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImVec2 wfSliderSize(18.0f * style::uiScale, 120.0f * style::uiScale);
+    // Divide all remaining vertical space evenly across the 3 sliders so
+    // they never overflow and never trigger a scrollbar (rail has NoScrollbar).
+    {
+        float labelH = ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y;
+        float avail   = ImGui::GetContentRegionAvail().y;
+        float perH    = (avail - 3.0f * labelH - 2.0f * ImGui::GetStyle().ItemSpacing.y) / 3.0f;
+        float slH     = std::max(perH, 28.0f * style::uiScale);
+        ImVec2 wfSliderSize(16.0f * style::uiScale, slH);
 
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Zoom").x) * 0.5f);
-    ImGui::TextUnformatted("Zoom");
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-    if (ImGui::VSliderFloat("##_7_", wfSliderSize, &bw, 1.0, 0.0, "")) {
-        double factor = (double)bw * (double)bw;
-        double wfBw = gui::waterfall.getBandwidth();
-        double delta = wfBw - 1000.0;
-        double finalBw = std::min<double>(1000.0 + (factor * delta), wfBw);
-        gui::waterfall.setViewBandwidth(finalBw);
-        if (vfo != NULL) {
-            gui::waterfall.setViewOffset(vfo->centerOffset);
+        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Zoom").x) * 0.5f);
+        ImGui::TextUnformatted("Zoom");
+        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
+        if (ImGui::VSliderFloat("##_7_", wfSliderSize, &bw, 1.0, 0.0, "")) {
+            double factor = (double)bw * (double)bw;
+            double wfBw = gui::waterfall.getBandwidth();
+            double delta = wfBw - 1000.0;
+            double finalBw = std::min<double>(1000.0 + (factor * delta), wfBw);
+            gui::waterfall.setViewBandwidth(finalBw);
+            if (vfo != NULL) {
+                gui::waterfall.setViewOffset(vfo->centerOffset);
+            }
         }
-    }
 
-    ImGui::NewLine();
+        ImGui::Spacing();
 
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Max").x) * 0.5f);
-    ImGui::TextUnformatted("Max");
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-    if (ImGui::VSliderFloat("##_8_", wfSliderSize, &fftMax, 0.0, -160.0f, "")) {
-        fftMax = std::max<float>(fftMax, fftMin + 10);
-        core::configManager.acquire();
-        core::configManager.conf["max"] = fftMax;
-        core::configManager.release(true);
-    }
+        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Max").x) * 0.5f);
+        ImGui::TextUnformatted("Max");
+        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
+        if (ImGui::VSliderFloat("##_8_", wfSliderSize, &fftMax, 0.0, -160.0f, "")) {
+            fftMax = std::max<float>(fftMax, fftMin + 10);
+            core::configManager.acquire();
+            core::configManager.conf["max"] = fftMax;
+            core::configManager.release(true);
+        }
 
-    ImGui::NewLine();
+        ImGui::Spacing();
 
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Min").x) * 0.5f);
-    ImGui::TextUnformatted("Min");
-    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
-    ImGui::SetItemUsingMouseWheel();
-    if (ImGui::VSliderFloat("##_9_", wfSliderSize, &fftMin, 0.0, -160.0f, "")) {
-        fftMin = std::min<float>(fftMax - 10, fftMin);
-        core::configManager.acquire();
-        core::configManager.conf["min"] = fftMin;
-        core::configManager.release(true);
+        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize("Min").x) * 0.5f);
+        ImGui::TextUnformatted("Min");
+        ImGui::SetCursorPosX((ImGui::GetWindowSize().x - wfSliderSize.x) * 0.5f);
+        ImGui::SetItemUsingMouseWheel();
+        if (ImGui::VSliderFloat("##_9_", wfSliderSize, &fftMin, 0.0, -160.0f, "")) {
+            fftMin = std::min<float>(fftMax - 10, fftMin);
+            core::configManager.acquire();
+            core::configManager.conf["min"] = fftMin;
+            core::configManager.release(true);
+        }
     }
 
     ImGui::EndChild();
@@ -5564,6 +5856,41 @@ void MainWindow::draw() {
     gui::waterfall.setFFTMax(fftMax);
     gui::waterfall.setWaterfallMin(fftMin);
     gui::waterfall.setWaterfallMax(fftMax);
+
+    // ── Text-edit popup ──────────────────────────────────────────────────────
+    // Rendered last so it appears on top of everything.  Positioned in the
+    // upper portion of the content area so the Android software keyboard
+    // (which appears at the bottom) never obscures the input field.
+    if (ImGui::IsPopupOpen("##pend_edit")) {
+        float popW = winSize.x - 4.0f * pad;
+        ImGui::SetNextWindowPos(ImVec2(2.0f * pad, contentTop + pad), ImGuiCond_Always);
+        // Force the width; height auto-sizes around the label + input + buttons.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(popW, 0.0f), ImVec2(popW, winSize.y * 0.45f));
+    }
+    if (ImGui::BeginPopupModal("##pend_edit", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize)) {
+        ImGui::TextUnformatted(pendEdit.label);
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if (pendEdit.setFocus) {
+            ImGui::SetKeyboardFocusHere();
+            pendEdit.setFocus = false;
+        }
+        bool submitted = ImGui::InputText("##pend_edit_text", pendEdit.buf, sizeof(pendEdit.buf),
+            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::Spacing();
+        float bw2 = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
+        if (submitted || ImGui::Button(T("OK##pend_edit_ok"), ImVec2(bw2, 0))) {
+            if (pendEdit.onAccept) { pendEdit.onAccept(std::string(pendEdit.buf)); }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine(0, 8.0f * style::uiScale);
+        if (ImGui::Button(T("Cancel##pend_edit_cancel"), ImVec2(bw2, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     ImGui::End();
 
