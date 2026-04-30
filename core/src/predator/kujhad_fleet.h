@@ -25,12 +25,16 @@
 // reshaping the protocol. v1 honours: `tune`, `scan`, `mission`,
 // `identify`. Anything in the `tx` class is rejected.
 //
-// TLS note: v1 ships plaintext over loopback / VPN (ZeroTier or
-// Tailscale). The socket layer below is connection-typed so a future
-// release can swap the raw socket read/write for an OpenSSL BIO pair
-// without touching the protocol or auth code. Operators who need
-// transport encryption today should run the listener behind stunnel /
-// nginx / a VPN.
+// TLS: when the build links against OpenSSL (KUJHAD_HAVE_OPENSSL) the
+// device server can wrap its listener in TLS using a self-signed cert
+// and the controller client can connect over TLS with a pinned-cert
+// fingerprint as the trust anchor (no CA chain — operators verify the
+// cert SHA-256 fingerprint out-of-band, the same way SSH host keys are
+// pinned). When TLS is on, the plain HTTP path is locked to loopback
+// only; non-loopback peers are rejected at the listener so the API key
+// never crosses the network in the clear. When OpenSSL isn't available
+// the TLS toggle is hidden and behaviour falls back to plain HTTP over
+// a private overlay (ZeroTier / Tailscale) like before.
 //
 // Safety boundary: receive, observe, command (RX-only). Any inbound
 // command in the `tx` class is rejected. The whole module never opens
@@ -81,6 +85,24 @@
   #define KUJHAD_CLOSESOCK ::close
   #define KUJHAD_LAST_ERR errno
 #endif
+
+#ifdef KUJHAD_HAVE_OPENSSL
+  #include <openssl/ssl.h>
+  #include <openssl/err.h>
+  #include <openssl/pem.h>
+  #include <openssl/x509.h>
+  #include <openssl/x509v3.h>
+  #include <openssl/rsa.h>
+  #include <openssl/bn.h>
+  #include <openssl/sha.h>
+  #include <openssl/evp.h>
+  #include <openssl/rand.h>
+  #include <mutex>
+#endif
+
+#include <ctime>
+#include <fstream>
+#include <sstream>
 
 namespace predator {
 
@@ -158,6 +180,365 @@ inline std::string kujhadGenerateApiKey() {
 }
 
 // ---------------------------------------------------------------------------
+// Connection wrapper. Either holds a raw socket (plain HTTP) or a socket
+// + SSL handle (TLS). All the HTTP helpers below take a KujhadConnection&
+// so the protocol code never has to care which transport it's on. The
+// destructor closes both layers in the right order.
+// ---------------------------------------------------------------------------
+
+struct KujhadConnection {
+    kujhad_socket_t sock = KUJHAD_INVALID_SOCK;
+#ifdef KUJHAD_HAVE_OPENSSL
+    SSL* ssl = nullptr;
+#endif
+    KujhadConnection() = default;
+    KujhadConnection(KujhadConnection&& o) noexcept { *this = std::move(o); }
+    KujhadConnection& operator=(KujhadConnection&& o) noexcept {
+        close();
+        sock = o.sock; o.sock = KUJHAD_INVALID_SOCK;
+#ifdef KUJHAD_HAVE_OPENSSL
+        ssl  = o.ssl;  o.ssl  = nullptr;
+#endif
+        return *this;
+    }
+    KujhadConnection(const KujhadConnection&) = delete;
+    KujhadConnection& operator=(const KujhadConnection&) = delete;
+    ~KujhadConnection() { close(); }
+
+    void close() {
+#ifdef KUJHAD_HAVE_OPENSSL
+        if (ssl) {
+            // Best-effort shutdown — peer may already be gone, swallow errors.
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+            ssl = nullptr;
+        }
+#endif
+        if (sock != KUJHAD_INVALID_SOCK) { KUJHAD_CLOSESOCK(sock); sock = KUJHAD_INVALID_SOCK; }
+    }
+
+    bool valid() const { return sock != KUJHAD_INVALID_SOCK; }
+
+    int recvOnce(char* buf, int n) {
+#ifdef KUJHAD_HAVE_OPENSSL
+        if (ssl) return SSL_read(ssl, buf, n);
+#endif
+        return (int)::recv(sock, buf, n, 0);
+    }
+
+    int sendOnce(const char* buf, int n) {
+#ifdef KUJHAD_HAVE_OPENSSL
+        if (ssl) return SSL_write(ssl, buf, n);
+#endif
+        return (int)::send(sock, buf, n, 0);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// TLS plumbing. All of this is no-op when the build is missing OpenSSL.
+// ---------------------------------------------------------------------------
+
+#ifdef KUJHAD_HAVE_OPENSSL
+inline void kujhadEnsureOpenSsl() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        SSL_library_init();
+        SSL_load_error_strings();
+        OpenSSL_add_all_algorithms();
+    });
+}
+#else
+inline void kujhadEnsureOpenSsl() {}
+#endif
+
+// True at runtime when this build links against OpenSSL.
+inline bool kujhadTlsAvailable() {
+#ifdef KUJHAD_HAVE_OPENSSL
+    return true;
+#else
+    return false;
+#endif
+}
+
+// Format raw bytes as colon-separated upper-case hex (e.g. "AB:CD:..."),
+// the canonical layout for cert fingerprints in browsers / openssl tools.
+inline std::string kujhadHexFingerprint(const unsigned char* data, size_t len) {
+    static const char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(len * 3);
+    for (size_t i = 0; i < len; i++) {
+        if (i) out.push_back(':');
+        out.push_back(hex[(data[i] >> 4) & 0xF]);
+        out.push_back(hex[data[i] & 0xF]);
+    }
+    return out;
+}
+
+// Normalise a fingerprint string for comparison: strip whitespace and
+// colons, upper-case the hex digits. So "ab:cd EF" matches "ABCDEF".
+inline std::string kujhadNormaliseFingerprint(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == ':' || c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '-') continue;
+        if (c >= 'a' && c <= 'f') out.push_back((char)(c - 32));
+        else out.push_back(c);
+    }
+    return out;
+}
+
+// Compute the SHA-256 fingerprint of a PEM cert file. Returns empty
+// string if the file can't be read or parsed.
+inline std::string kujhadCertFingerprintFromPemFile(const std::string& path) {
+#ifdef KUJHAD_HAVE_OPENSSL
+    kujhadEnsureOpenSsl();
+    FILE* fp = std::fopen(path.c_str(), "rb");
+    if (!fp) return "";
+    X509* cert = PEM_read_X509(fp, nullptr, nullptr, nullptr);
+    std::fclose(fp);
+    if (!cert) return "";
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int mdLen = 0;
+    int ok = X509_digest(cert, EVP_sha256(), md, &mdLen);
+    X509_free(cert);
+    if (!ok) return "";
+    return kujhadHexFingerprint(md, mdLen);
+#else
+    (void)path;
+    return "";
+#endif
+}
+
+#ifdef KUJHAD_HAVE_OPENSSL
+// Compute the SHA-256 fingerprint of an in-memory X509 cert.
+inline std::string kujhadCertFingerprintFromX509(X509* cert) {
+    if (!cert) return "";
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int mdLen = 0;
+    if (!X509_digest(cert, EVP_sha256(), md, &mdLen)) return "";
+    return kujhadHexFingerprint(md, mdLen);
+}
+#endif
+
+// Generate a 10-year self-signed RSA-2048 cert and write the cert + key
+// to the configured PEM paths. `commonName` is stamped into CN= so the
+// operator can recognise the cert in fingerprint dialogs. Returns the
+// SHA-256 fingerprint of the new cert on success, empty on failure.
+inline std::string kujhadGenerateSelfSignedCert(const std::string& certPath,
+                                                 const std::string& keyPath,
+                                                 const std::string& commonName) {
+#ifdef KUJHAD_HAVE_OPENSSL
+    kujhadEnsureOpenSsl();
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    if (!pkey) return "";
+    BIGNUM* bn = BN_new();
+    BN_set_word(bn, RSA_F4);
+    RSA* rsa = RSA_new();
+    if (!RSA_generate_key_ex(rsa, 2048, bn, nullptr)) {
+        RSA_free(rsa); BN_free(bn); EVP_PKEY_free(pkey); return "";
+    }
+    BN_free(bn);
+    if (!EVP_PKEY_assign_RSA(pkey, rsa)) { // takes ownership of rsa on success
+        RSA_free(rsa); EVP_PKEY_free(pkey); return "";
+    }
+
+    X509* cert = X509_new();
+    if (!cert) { EVP_PKEY_free(pkey); return ""; }
+    // Random 64-bit serial — OpenSSL refuses cert chains with duplicate
+    // serials from the same issuer, even self-signed.
+    unsigned char serialBytes[8];
+    if (RAND_bytes(serialBytes, sizeof(serialBytes)) != 1) {
+        // Fall back to clock if RNG is somehow broken.
+        uint64_t now = (uint64_t)std::time(nullptr);
+        std::memcpy(serialBytes, &now, sizeof(serialBytes));
+    }
+    BIGNUM* serialBn = BN_bin2bn(serialBytes, sizeof(serialBytes), nullptr);
+    if (serialBn) {
+        ASN1_INTEGER* serialAsn = BN_to_ASN1_INTEGER(serialBn, nullptr);
+        if (serialAsn) {
+            X509_set_serialNumber(cert, serialAsn);
+            ASN1_INTEGER_free(serialAsn);
+        }
+        BN_free(serialBn);
+    }
+    X509_set_version(cert, 2); // X509 v3
+    X509_gmtime_adj(X509_get_notBefore(cert), 0);
+    X509_gmtime_adj(X509_get_notAfter(cert), (long)(60L * 60L * 24L * 365L * 10L));
+    X509_set_pubkey(cert, pkey);
+    X509_NAME* name = X509_get_subject_name(cert);
+    std::string cn = commonName.empty() ? std::string("predator-kujhad") : commonName;
+    X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (const unsigned char*)"Predator RF", -1, -1, 0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char*)cn.c_str(), -1, -1, 0);
+    X509_set_issuer_name(cert, name);
+    if (!X509_sign(cert, pkey, EVP_sha256())) {
+        X509_free(cert); EVP_PKEY_free(pkey); return "";
+    }
+
+    // Write key (PEM, no passphrase — file lives next to the config so
+    // filesystem perms are the operator's responsibility, same as the
+    // API key in the config file).
+    FILE* kf = std::fopen(keyPath.c_str(), "wb");
+    if (!kf) { X509_free(cert); EVP_PKEY_free(pkey); return ""; }
+    bool keyOk = (PEM_write_PrivateKey(kf, pkey, nullptr, nullptr, 0, nullptr, nullptr) == 1);
+    std::fclose(kf);
+    if (!keyOk) { X509_free(cert); EVP_PKEY_free(pkey); return ""; }
+
+    FILE* cf = std::fopen(certPath.c_str(), "wb");
+    if (!cf) { X509_free(cert); EVP_PKEY_free(pkey); return ""; }
+    bool certOk = (PEM_write_X509(cf, cert) == 1);
+    std::fclose(cf);
+    if (!certOk) { X509_free(cert); EVP_PKEY_free(pkey); return ""; }
+
+    std::string fp = kujhadCertFingerprintFromX509(cert);
+    X509_free(cert);
+    EVP_PKEY_free(pkey);
+    return fp;
+#else
+    (void)certPath; (void)keyPath; (void)commonName;
+    return "";
+#endif
+}
+
+// Server-side TLS context. Owns the SSL_CTX with cert + key loaded.
+// `valid()` is true once both files have been parsed successfully.
+class KujhadServerTlsContext {
+public:
+    KujhadServerTlsContext() = default;
+    ~KujhadServerTlsContext() { reset(); }
+    KujhadServerTlsContext(const KujhadServerTlsContext&) = delete;
+    KujhadServerTlsContext& operator=(const KujhadServerTlsContext&) = delete;
+
+    bool load(const std::string& certPath, const std::string& keyPath, std::string& errOut) {
+#ifdef KUJHAD_HAVE_OPENSSL
+        kujhadEnsureOpenSsl();
+        reset();
+        ctx_ = SSL_CTX_new(TLS_server_method());
+        if (!ctx_) { errOut = "SSL_CTX_new failed"; return false; }
+        // TLS 1.2 floor — covers every operator-grade browser / runtime
+        // we'd realistically see, and shuts the door on SSLv3/TLSv1.0.
+        SSL_CTX_set_min_proto_version(ctx_, TLS1_2_VERSION);
+        SSL_CTX_set_options(ctx_, SSL_OP_NO_COMPRESSION);
+        if (SSL_CTX_use_certificate_file(ctx_, certPath.c_str(), SSL_FILETYPE_PEM) != 1) {
+            errOut = "cert load failed: " + certPath;
+            reset();
+            return false;
+        }
+        if (SSL_CTX_use_PrivateKey_file(ctx_, keyPath.c_str(), SSL_FILETYPE_PEM) != 1) {
+            errOut = "key load failed: " + keyPath;
+            reset();
+            return false;
+        }
+        if (SSL_CTX_check_private_key(ctx_) != 1) {
+            errOut = "cert/key mismatch";
+            reset();
+            return false;
+        }
+        fingerprint_ = kujhadCertFingerprintFromPemFile(certPath);
+        return true;
+#else
+        (void)certPath; (void)keyPath;
+        errOut = "TLS not built (no OpenSSL)";
+        return false;
+#endif
+    }
+
+    void reset() {
+#ifdef KUJHAD_HAVE_OPENSSL
+        if (ctx_) { SSL_CTX_free(ctx_); ctx_ = nullptr; }
+#endif
+        fingerprint_.clear();
+    }
+
+    bool valid() const {
+#ifdef KUJHAD_HAVE_OPENSSL
+        return ctx_ != nullptr;
+#else
+        return false;
+#endif
+    }
+
+    const std::string& fingerprint() const { return fingerprint_; }
+
+#ifdef KUJHAD_HAVE_OPENSSL
+    SSL_CTX* ctx() const { return ctx_; }
+#endif
+
+private:
+#ifdef KUJHAD_HAVE_OPENSSL
+    SSL_CTX* ctx_ = nullptr;
+#endif
+    std::string fingerprint_;
+};
+
+// Wrap an already-accepted client socket in TLS using the server context.
+// On success, ownership of `sock` moves into the returned connection. On
+// failure, `sock` is closed and an empty connection is returned.
+inline KujhadConnection kujhadAcceptTls(KujhadServerTlsContext& ctx, kujhad_socket_t sock) {
+    KujhadConnection c;
+    c.sock = sock;
+#ifdef KUJHAD_HAVE_OPENSSL
+    if (!ctx.valid()) { c.close(); return c; }
+    SSL* ssl = SSL_new(ctx.ctx());
+    if (!ssl) { c.close(); return c; }
+    SSL_set_fd(ssl, (int)sock);
+    int r = SSL_accept(ssl);
+    if (r <= 0) { SSL_free(ssl); c.close(); return c; }
+    c.ssl = ssl;
+#else
+    (void)ctx;
+    c.close();
+#endif
+    return c;
+}
+
+// Wrap a connected client socket in TLS for a controller client. The
+// peer certificate is captured into `outFingerprint` so the caller can
+// compare it against the operator-pinned value before sending any
+// authenticated traffic.
+inline bool kujhadConnectTls(kujhad_socket_t sock, KujhadConnection& outConn,
+                              std::string& outFingerprint, std::string& errOut) {
+#ifdef KUJHAD_HAVE_OPENSSL
+    kujhadEnsureOpenSsl();
+    static std::once_flag clientOnce;
+    static SSL_CTX* clientCtx = nullptr;
+    std::call_once(clientOnce, []() {
+        clientCtx = SSL_CTX_new(TLS_client_method());
+        if (clientCtx) {
+            SSL_CTX_set_min_proto_version(clientCtx, TLS1_2_VERSION);
+            // We pin by fingerprint, so disable chain verification —
+            // a self-signed device cert is the expected case.
+            SSL_CTX_set_verify(clientCtx, SSL_VERIFY_NONE, nullptr);
+        }
+    });
+    if (!clientCtx) { errOut = "client SSL_CTX init failed"; return false; }
+    SSL* ssl = SSL_new(clientCtx);
+    if (!ssl) { errOut = "SSL_new failed"; return false; }
+    SSL_set_fd(ssl, (int)sock);
+    int r = SSL_connect(ssl);
+    if (r <= 0) {
+        errOut = "TLS handshake failed";
+        SSL_free(ssl);
+        return false;
+    }
+    X509* peer = SSL_get_peer_certificate(ssl);
+    if (!peer) {
+        errOut = "peer presented no certificate";
+        SSL_shutdown(ssl); SSL_free(ssl);
+        return false;
+    }
+    outFingerprint = kujhadCertFingerprintFromX509(peer);
+    X509_free(peer);
+    outConn.sock = sock;
+    outConn.ssl = ssl;
+    return true;
+#else
+    (void)sock; (void)outConn; (void)outFingerprint;
+    errOut = "TLS not built (no OpenSSL)";
+    return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Tiny HTTP/1.1 helpers shared by both the device server and controller
 // client. Synchronous, blocking, single-threaded-per-connection. The whole
 // fleet protocol is small JSON request/response so a full async stack
@@ -182,34 +563,34 @@ inline std::string kujhadToLower(std::string s) {
     return s;
 }
 
-inline bool kujhadReadAll(kujhad_socket_t sock, char* buf, int n) {
+inline bool kujhadReadAll(KujhadConnection& conn, char* buf, int n) {
     int got = 0;
     while (got < n) {
-        int r = (int)::recv(sock, buf + got, n - got, 0);
+        int r = conn.recvOnce(buf + got, n - got);
         if (r <= 0) return false;
         got += r;
     }
     return true;
 }
 
-inline bool kujhadWriteAll(kujhad_socket_t sock, const char* buf, int n) {
+inline bool kujhadWriteAll(KujhadConnection& conn, const char* buf, int n) {
     int sent = 0;
     while (sent < n) {
-        int r = (int)::send(sock, buf + sent, n - sent, 0);
+        int r = conn.sendOnce(buf + sent, n - sent);
         if (r <= 0) return false;
         sent += r;
     }
     return true;
 }
 
-inline bool kujhadParseRequest(kujhad_socket_t sock, KujhadHttpRequest& req,
+inline bool kujhadParseRequest(KujhadConnection& conn, KujhadHttpRequest& req,
                                 int maxBytes = 1 << 20 /* 1 MiB */) {
     std::string buf;
     buf.reserve(2048);
     char ch;
     // Read until \r\n\r\n header terminator.
     while ((int)buf.size() < maxBytes) {
-        int r = (int)::recv(sock, &ch, 1, 0);
+        int r = conn.recvOnce(&ch, 1);
         if (r <= 0) return false;
         buf.push_back(ch);
         if (buf.size() >= 4 && buf.compare(buf.size() - 4, 4, "\r\n\r\n") == 0) break;
@@ -245,12 +626,12 @@ inline bool kujhadParseRequest(kujhad_socket_t sock, KujhadHttpRequest& req,
         int n = std::atoi(cl->second.c_str());
         if (n < 0 || n > maxBytes) return false;
         req.body.resize(n);
-        if (n > 0 && !kujhadReadAll(sock, &req.body[0], n)) return false;
+        if (n > 0 && !kujhadReadAll(conn, &req.body[0], n)) return false;
     }
     return true;
 }
 
-inline bool kujhadSendResponse(kujhad_socket_t sock, const KujhadHttpResponse& res) {
+inline bool kujhadSendResponse(KujhadConnection& conn, const KujhadHttpResponse& res) {
     const char* statusText = "OK";
     switch (res.status) {
         case 200: statusText = "OK"; break;
@@ -272,8 +653,8 @@ inline bool kujhadSendResponse(kujhad_socket_t sock, const KujhadHttpResponse& r
         "Access-Control-Allow-Origin: *\r\n"
         "\r\n",
         res.status, statusText, res.contentType.c_str(), (int)res.body.size());
-    if (!kujhadWriteAll(sock, header, n)) return false;
-    if (!res.body.empty() && !kujhadWriteAll(sock, res.body.data(), (int)res.body.size())) return false;
+    if (!kujhadWriteAll(conn, header, n)) return false;
+    if (!res.body.empty() && !kujhadWriteAll(conn, res.body.data(), (int)res.body.size())) return false;
     return true;
 }
 
@@ -416,6 +797,41 @@ public:
         apiKey_ = key;
     }
 
+    // Configure TLS. When `enabled` is true the listener wraps every
+    // accepted socket in TLS using the cert + key at `certPath` /
+    // `keyPath`. When `enabled` is false the listener serves plain HTTP
+    // and rejects any connection that doesn't originate from 127.0.0.1
+    // / ::1, so the API key never crosses the wire in the clear.
+    // Must be called before start(); changes take effect on the next
+    // start(). Returns true if the cert/key loaded cleanly (or TLS was
+    // disabled). On failure the TLS context is cleared and a future
+    // start() will refuse to bind.
+    bool setTlsConfig(bool enabled, const std::string& certPath,
+                      const std::string& keyPath, std::string& errOut) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        tlsEnabled_ = enabled;
+        tlsCertPath_ = certPath;
+        tlsKeyPath_ = keyPath;
+        tlsCtx_.reset();
+        if (!enabled) {
+            errOut.clear();
+            return true;
+        }
+        bool ok = tlsCtx_.load(certPath, keyPath, errOut);
+        if (!ok) tlsEnabled_ = false;
+        return ok;
+    }
+
+    bool tlsEnabled() const {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return tlsEnabled_ && tlsCtx_.valid();
+    }
+
+    std::string tlsFingerprint() const {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return tlsCtx_.fingerprint();
+    }
+
     bool start(int port, const std::string& apiKey) {
         stop();
         port_ = port;
@@ -443,6 +859,8 @@ public:
         stopFlag_ = true;
         running_ = false;
         // Poke the listener by connecting to ourselves so accept() returns.
+        // Always send a raw TCP RST-style close — the listener only needs
+        // to wake from accept(); it discards bad handshakes anyway.
         kujhad_socket_t poke = ::socket(AF_INET, SOCK_STREAM, 0);
         if (poke != KUJHAD_INVALID_SOCK) {
             sockaddr_in a{};
@@ -511,9 +929,31 @@ private:
                 break;
             }
             if (conn == KUJHAD_INVALID_SOCK) continue;
+            // Snapshot TLS state under the same lock that protects the
+            // SSL_CTX so a concurrent setTlsConfig() can't pull the
+            // context out from under SSL_accept().
+            bool useTls;
+            {
+                std::lock_guard<std::mutex> lk(mtx_);
+                useTls = tlsEnabled_ && tlsCtx_.valid();
+            }
+            // Plain HTTP is loopback-only by policy: anything that comes
+            // from a non-loopback peer when TLS is off would leak the
+            // API key on the wire, so we slam the door before any I/O.
+            // Convert to host order before masking so the check is
+            // endian-safe across platforms (the AF_INET socket gives us
+            // a network-order address regardless of CPU).
+            if (!useTls) {
+                uint32_t ipHbo = ntohl(client.sin_addr.s_addr);
+                // 127.0.0.0/8 is the IPv4 loopback block.
+                if ((ipHbo >> 24) != 127) {
+                    KUJHAD_CLOSESOCK(conn);
+                    continue;
+                }
+            }
             // Detached worker — small per-connection thread is fine; the
             // protocol is request/response and clients close immediately.
-            std::thread([this, conn]() { handleConnection(conn); }).detach();
+            std::thread([this, conn, useTls]() { handleConnection(conn, useTls); }).detach();
         }
         KUJHAD_CLOSESOCK(srv);
         listenerOk_ = false;
@@ -522,12 +962,35 @@ private:
 #endif
     }
 
-    void handleConnection(kujhad_socket_t conn) {
+    void handleConnection(kujhad_socket_t rawSock, bool useTls) {
         // Reasonable receive timeout so an idle peer doesn't pin the worker.
 #ifndef _WIN32
         timeval tv{}; tv.tv_sec = 10; tv.tv_usec = 0;
-        ::setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
+        // Wrap the accepted socket. KujhadConnection owns the lifetime
+        // from here on; falling out of scope closes both the SSL handle
+        // and the underlying socket. On TLS handshake failure the
+        // connection is already closed by kujhadAcceptTls. The
+        // SSL_CTX inside tlsCtx_ can be replaced by a concurrent
+        // setTlsConfig() (operator clicks "Regenerate"), so we hold
+        // mtx_ across SSL_accept to keep the context alive for the
+        // duration of the handshake. Handshakes are tens of ms; the
+        // brief serialisation is acceptable for a fleet console.
+        KujhadConnection conn;
+        if (useTls) {
+            std::lock_guard<std::mutex> lk(mtx_);
+            // Re-check tlsEnabled_ under the lock — the operator may
+            // have flipped TLS off between accept() and here.
+            if (!tlsEnabled_ || !tlsCtx_.valid()) {
+                KUJHAD_CLOSESOCK(rawSock);
+                return;
+            }
+            conn = kujhadAcceptTls(tlsCtx_, rawSock);
+            if (!conn.valid()) return;
+        } else {
+            conn.sock = rawSock;
+        }
         KujhadHttpRequest req;
         bool ok = kujhadParseRequest(conn, req);
         inboundRequests_++;
@@ -536,7 +999,6 @@ private:
             res.status = 400;
             res.body = "{\"error\":\"bad request\"}";
             kujhadSendResponse(conn, res);
-            KUJHAD_CLOSESOCK(conn);
             return;
         }
         // CORS preflight. Always answer; auth check skipped on OPTIONS.
@@ -545,7 +1007,6 @@ private:
             res.contentType = "text/plain";
             res.body.clear();
             kujhadSendResponse(conn, res);
-            KUJHAD_CLOSESOCK(conn);
             return;
         }
         // Parse path / query first so we can route the unauthenticated
@@ -565,7 +1026,6 @@ private:
             res.contentType = "text/html; charset=utf-8";
             res.body = kujhadWebConsoleHtml();
             kujhadSendResponse(conn, res);
-            KUJHAD_CLOSESOCK(conn);
             return;
         }
 
@@ -579,7 +1039,6 @@ private:
             res.status = 401;
             res.body = "{\"error\":\"unauthorized\"}";
             kujhadSendResponse(conn, res);
-            KUJHAD_CLOSESOCK(conn);
             return;
         }
 
@@ -614,7 +1073,6 @@ private:
                 res.status = 503;
                 res.body = "{\"error\":\"spectrum stream unavailable\"}";
                 kujhadSendResponse(conn, res);
-                KUJHAD_CLOSESOCK(conn);
                 return;
             }
             const char* hdr =
@@ -627,7 +1085,6 @@ private:
                 "Access-Control-Allow-Origin: *\r\n"
                 "\r\n";
             if (!kujhadWriteAll(conn, hdr, (int)std::strlen(hdr))) {
-                KUJHAD_CLOSESOCK(conn);
                 return;
             }
             // RAII guard for the active-stream counter so the decrement
@@ -676,7 +1133,6 @@ private:
             const char* end = "0\r\n\r\n";
             kujhadWriteAll(conn, end, 5);
             // streamGuard's destructor decrements activeSpectrumStreams_.
-            KUJHAD_CLOSESOCK(conn);
             return;
         }
         else if (req.method == "POST" && path == "/v1/command") {
@@ -719,7 +1175,6 @@ private:
             res.body = "{\"error\":\"not found\"}";
         }
         kujhadSendResponse(conn, res);
-        KUJHAD_CLOSESOCK(conn);
     }
 
     int port_ = 0;
@@ -731,8 +1186,12 @@ private:
     std::atomic<int>  rejectedCommands_{0};
 
     std::thread worker_;
-    std::mutex mtx_;
+    mutable std::mutex mtx_;
     std::string apiKey_;
+    bool tlsEnabled_ = false;
+    std::string tlsCertPath_;
+    std::string tlsKeyPath_;
+    KujhadServerTlsContext tlsCtx_;
 
     mutable std::mutex statusMtx_;
     std::string statusMsg_ = "Idle";
@@ -767,14 +1226,55 @@ class KujhadControllerClient {
 public:
     ~KujhadControllerClient() { stop(); }
 
-    void start(const std::string& host, int port, const std::string& apiKey) {
+    // Start polling a peer. When `useTls` is true the worker speaks TLS
+    // and refuses to send the API key unless the peer cert's SHA-256
+    // fingerprint matches `pinnedFingerprint` (case- and separator-
+    // insensitive). An empty pin means "trust on first use" — the
+    // first observed fingerprint is reported via lastSeenFingerprint()
+    // so the operator can copy it into the peer config to lock in the
+    // pin. When `useTls` is false the existing plain-HTTP path runs
+    // unchanged; safe for loopback / overlay-only deployments.
+    void start(const std::string& host, int port, const std::string& apiKey,
+               bool useTls = false, const std::string& pinnedFingerprint = "") {
         stop();
         host_ = host;
         port_ = port;
         apiKey_ = apiKey;
+        useTls_ = useTls;
+        pinnedFingerprint_ = kujhadNormaliseFingerprint(pinnedFingerprint);
+        {
+            std::lock_guard<std::mutex> lk(snapMtx_);
+            snap_ = KujhadPeerSnapshot{};
+            lastSeenFingerprint_.clear();
+            fingerprintMismatch_ = false;
+        }
         stopFlag_ = false;
         running_ = true;
         worker_ = std::thread([this]() { workerLoop(); });
+    }
+
+    // Backwards-compat overload kept for legacy call sites that don't
+    // care about TLS yet.
+    void start(const std::string& host, int port, const std::string& apiKey) {
+        start(host, port, apiKey, false, std::string());
+    }
+
+    bool tlsEnabled() const { return useTls_; }
+
+    // Most recently observed peer cert fingerprint (after a successful
+    // TLS handshake). Empty when TLS is off, the peer is unreachable,
+    // or no handshake has succeeded yet.
+    std::string lastSeenFingerprint() const {
+        std::lock_guard<std::mutex> lk(snapMtx_);
+        return lastSeenFingerprint_;
+    }
+
+    // True when the most recent TLS handshake produced a fingerprint
+    // different from the pinned one. Reset to false on a clean
+    // (matching) handshake.
+    bool fingerprintMismatch() const {
+        std::lock_guard<std::mutex> lk(snapMtx_);
+        return fingerprintMismatch_;
     }
 
     void stop() {
@@ -947,14 +1447,16 @@ private:
 #endif
     }
 
-    // Open a fresh connection per request — peers are local, the
-    // request volume is tiny, and per-connection state keeps the code
-    // simple and TLS-swap-friendly later. Returns true on a parsed
-    // response.
-    bool doRequest(const std::string& method, const std::string& path,
-                   const std::string& body, KujhadHttpResponse& out, int timeoutMs) {
+    // Open a TCP connection to host_:port_, then upgrade to TLS when
+    // useTls_ is set. On a successful TLS handshake the peer cert
+    // fingerprint is captured and compared against pinnedFingerprint_;
+    // a mismatch closes the connection and surfaces an error in the
+    // snapshot so the operator can re-pin (or investigate). Returns an
+    // owning KujhadConnection; check valid() before using.
+    KujhadConnection openConnection(int timeoutMs, std::string& errOut) {
+        KujhadConnection conn;
         kujhad_socket_t sock = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (sock == KUJHAD_INVALID_SOCK) return false;
+        if (sock == KUJHAD_INVALID_SOCK) { errOut = "socket() failed"; return conn; }
 #ifndef _WIN32
         timeval tv{}; tv.tv_sec = timeoutMs / 1000; tv.tv_usec = (timeoutMs % 1000) * 1000;
         ::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -967,18 +1469,70 @@ private:
         if (gai != 0 || !res) {
             if (res) ::freeaddrinfo(res);
             KUJHAD_CLOSESOCK(sock);
-            return false;
+            errOut = "getaddrinfo failed";
+            return conn;
         }
         bool connected = (::connect(sock, res->ai_addr, (socklen_t)res->ai_addrlen) == 0);
         ::freeaddrinfo(res);
         if (!connected) {
             KUJHAD_CLOSESOCK(sock);
+            errOut = "connect refused";
+            return conn;
+        }
+        if (useTls_) {
+            std::string seenFp;
+            std::string tlsErr;
+            if (!kujhadConnectTls(sock, conn, seenFp, tlsErr)) {
+                // kujhadConnectTls leaves sock un-owned on failure.
+                KUJHAD_CLOSESOCK(sock);
+                errOut = tlsErr;
+                return KujhadConnection();
+            }
+            // Capture the observed fingerprint for the UI either way —
+            // even on mismatch we want the operator to see what the
+            // peer presented so they can decide whether to re-pin.
+            std::string seenNorm = kujhadNormaliseFingerprint(seenFp);
+            bool mismatch = false;
+            {
+                std::lock_guard<std::mutex> lk(snapMtx_);
+                lastSeenFingerprint_ = seenFp;
+                if (!pinnedFingerprint_.empty() && seenNorm != pinnedFingerprint_) {
+                    fingerprintMismatch_ = true;
+                    snap_.lastError = "cert fingerprint mismatch (pinned=" + pinnedFingerprint_ +
+                                       ", seen=" + seenNorm + ")";
+                    mismatch = true;
+                } else {
+                    fingerprintMismatch_ = false;
+                }
+            }
+            if (mismatch) {
+                // Refuse to send the API key over a connection whose
+                // identity we can't verify. Close before returning.
+                conn.close();
+                errOut = "cert fingerprint mismatch";
+                return KujhadConnection();
+            }
+        } else {
+            conn.sock = sock;
+        }
+        return conn;
+    }
+
+    // Open a fresh connection per request — peers are local, the
+    // request volume is tiny, and per-connection state keeps the code
+    // simple. Returns true on a parsed response.
+    bool doRequest(const std::string& method, const std::string& path,
+                   const std::string& body, KujhadHttpResponse& out, int timeoutMs) {
+        std::string err;
+        KujhadConnection conn = openConnection(timeoutMs, err);
+        if (!conn.valid()) {
+            if (!err.empty()) {
+                std::lock_guard<std::mutex> lk(snapMtx_);
+                if (snap_.lastError.empty()) snap_.lastError = err;
+            }
             return false;
         }
-        std::string keyHeader;
-        {
-            keyHeader = std::string("X-Kujhad-Key: ") + apiKey_ + "\r\n";
-        }
+        std::string keyHeader = std::string("X-Kujhad-Key: ") + apiKey_ + "\r\n";
         char header[1024];
         int n = snprintf(header, sizeof(header),
             "%s %s HTTP/1.1\r\n"
@@ -990,21 +1544,19 @@ private:
             "\r\n",
             method.c_str(), path.c_str(), host_.c_str(), port_,
             keyHeader.c_str(), (int)body.size());
-        if (!kujhadWriteAll(sock, header, n)) { KUJHAD_CLOSESOCK(sock); return false; }
-        if (!body.empty() && !kujhadWriteAll(sock, body.data(), (int)body.size())) {
-            KUJHAD_CLOSESOCK(sock);
+        if (!kujhadWriteAll(conn, header, n)) return false;
+        if (!body.empty() && !kujhadWriteAll(conn, body.data(), (int)body.size())) {
             return false;
         }
         // Read response.
         std::string buf;
         char chunk[1024];
         for (;;) {
-            int r = (int)::recv(sock, chunk, sizeof(chunk), 0);
+            int r = conn.recvOnce(chunk, sizeof(chunk));
             if (r <= 0) break;
             buf.append(chunk, r);
             if (buf.size() > (1 << 20)) break; // 1 MiB cap
         }
-        KUJHAD_CLOSESOCK(sock);
         // Parse response: status line + headers + body.
         size_t headerEnd = buf.find("\r\n\r\n");
         if (headerEnd == std::string::npos) return false;
@@ -1028,31 +1580,11 @@ private:
         WSADATA wsa; WSAStartup(MAKEWORD(2, 2), &wsa);
 #endif
         while (!spectrumStop_.load()) {
-            kujhad_socket_t sock = ::socket(AF_INET, SOCK_STREAM, 0);
-            if (sock == KUJHAD_INVALID_SOCK) {
-                spectrumBackoff();
-                continue;
-            }
-#ifndef _WIN32
-            // Short read timeout so we can poll spectrumStop_ between frames.
-            timeval tv{}; tv.tv_sec = 1; tv.tv_usec = 0;
-            ::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-            ::setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-#endif
-            addrinfo hints{}; hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
-            addrinfo* res = nullptr;
-            std::string portStr = std::to_string(port_);
-            int gai = ::getaddrinfo(host_.c_str(), portStr.c_str(), &hints, &res);
-            if (gai != 0 || !res) {
-                if (res) ::freeaddrinfo(res);
-                KUJHAD_CLOSESOCK(sock);
-                spectrumBackoff();
-                continue;
-            }
-            bool connected = (::connect(sock, res->ai_addr, (socklen_t)res->ai_addrlen) == 0);
-            ::freeaddrinfo(res);
-            if (!connected) {
-                KUJHAD_CLOSESOCK(sock);
+            // 1s connect/handshake timeout keeps the worker responsive
+            // to spectrumStop_ when the peer is unreachable.
+            std::string err;
+            KujhadConnection conn = openConnection(1000, err);
+            if (!conn.valid()) {
                 spectrumBackoff();
                 continue;
             }
@@ -1065,16 +1597,15 @@ private:
                 "Connection: close\r\n"
                 "\r\n",
                 host_.c_str(), port_, apiKey_.c_str());
-            if (!kujhadWriteAll(sock, req, rn)) {
-                KUJHAD_CLOSESOCK(sock);
+            if (!kujhadWriteAll(conn, req, rn)) {
                 spectrumBackoff();
                 continue;
             }
-            // Buffered reader bound to this socket + stop flag.
+            // Buffered reader bound to this connection + stop flag.
             std::string buf;
             auto pump = [&]() -> bool {
                 char tmp[4096];
-                int r = (int)::recv(sock, tmp, sizeof(tmp), 0);
+                int r = conn.recvOnce(tmp, sizeof(tmp));
                 if (r > 0) { buf.append(tmp, r); return true; }
                 if (r == 0) return false;
 #ifndef _WIN32
@@ -1119,7 +1650,6 @@ private:
                 if (line.empty()) break;
             }
             if (!ok200) {
-                KUJHAD_CLOSESOCK(sock);
                 spectrumBackoff();
                 continue;
             }
@@ -1174,7 +1704,7 @@ private:
                 std::lock_guard<std::mutex> lk(spectrumMtx_);
                 spectrumStreaming_ = false;
             }
-            KUJHAD_CLOSESOCK(sock);
+            // conn destructor closes SSL + socket on scope exit.
             if (!spectrumStop_.load()) spectrumBackoff();
         }
 #ifdef _WIN32
@@ -1192,6 +1722,9 @@ private:
     std::string host_;
     int port_ = 0;
     std::string apiKey_;
+    bool useTls_ = false;
+    // Pre-normalised hex (no separators, lowercase) for fast compare.
+    std::string pinnedFingerprint_;
 
     std::atomic<bool> running_{false};
     std::atomic<bool> stopFlag_{false};
@@ -1199,6 +1732,8 @@ private:
 
     mutable std::mutex snapMtx_;
     KujhadPeerSnapshot snap_;
+    std::string lastSeenFingerprint_;
+    bool fingerprintMismatch_ = false;
 
     std::mutex eventMtx_;
     std::queue<kujhad_json> events_;
