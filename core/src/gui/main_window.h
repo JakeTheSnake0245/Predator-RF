@@ -159,6 +159,18 @@ private:
     bool kujhadScanRunningSnapshot = false;
     std::string kujhadScanStatusSnapshot;
     std::string kujhadSourceNameSnapshot;
+    // Mission state mirrored to peers via /v1/state. The Mission tab on a
+    // controller renders these instead of the local arrays whenever it
+    // has taken control of a peer, and edits round-trip back through
+    // mission.set* commands rather than mutating local config.
+    nlohmann::json kujhadSearchBandsSnapshot = nlohmann::json::array();
+    nlohmann::json kujhadTargetsSnapshot = nlohmann::json::array();
+    nlohmann::json kujhadExcludesSnapshot = nlohmann::json::array();
+    float kujhadThresholdSnapshot = -55.0f;
+    int kujhadDwellMsSnapshot = 1000;
+    int kujhadQuickScanDelayMsSnapshot = 250;
+    int kujhadQuickScanDurationMsSnapshot = 5000;
+    bool kujhadRecordAudioSnapshot = true;
     bool kujhadGpsHasFix = false;
     double kujhadGpsLat = 0.0;
     double kujhadGpsLon = 0.0;
