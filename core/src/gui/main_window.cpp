@@ -5486,8 +5486,10 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
-    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true,
-                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    ImGuiWindowFlags railFlags = backend::isTouchPrimary()
+        ? ImGuiWindowFlags_AlwaysVerticalScrollbar
+        : ImGuiWindowFlags_None;
+    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, railFlags);
 
     if (backend::isTouchPrimary()) {
         static bool s_railDragging = false;

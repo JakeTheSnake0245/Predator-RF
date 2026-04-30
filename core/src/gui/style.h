@@ -19,6 +19,7 @@ namespace style {
     void testtt();
     void applyTouchFriendlyTweaks();
     float snapToSupportedScale(float raw);
+    float snapDownToSupportedScale(float raw);
     float computeAutoScale();
 }
 
