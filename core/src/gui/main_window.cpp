@@ -1,6 +1,7 @@
 #include <gui/main_window.h>
 #include <gui/gui.h>
 #include "imgui.h"
+#include <imgui_internal.h>
 #include <stdio.h>
 #include <thread>
 #include <complex>
@@ -5485,7 +5486,33 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
-    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true);
+    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true,
+                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+    if (backend::isTouchPrimary()) {
+        static bool s_railDragging = false;
+        static float s_railScrollStart = 0.0f;
+        const float dragThreshold = 12.0f * style::uiScale;
+        bool inside = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        if (inside && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            float totalDrag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
+            if (!s_railDragging && std::fabs(totalDrag) > dragThreshold) {
+                s_railDragging = true;
+                s_railScrollStart = ImGui::GetScrollY();
+                ImGui::ClearActiveID();
+            }
+            if (s_railDragging) {
+                float target = s_railScrollStart - totalDrag;
+                if (target < 0.0f) target = 0.0f;
+                float maxY = ImGui::GetScrollMaxY();
+                if (target > maxY) target = maxY;
+                ImGui::SetScrollY(target);
+            }
+        }
+        else {
+            s_railDragging = false;
+        }
+    }
 
     for (int i = 0; i < 7; i++) {
         bool activeTab = (predatorTab == i);

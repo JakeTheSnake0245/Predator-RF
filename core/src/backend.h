@@ -12,6 +12,8 @@ namespace backend {
 
     float getNativeUiScale();
     bool isTouchPrimary();
+    int getDisplayHeightPx();
+    int getDisplayWidthPx();
     int renderLoop();
     int end();
 }

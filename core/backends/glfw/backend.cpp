@@ -252,6 +252,14 @@ namespace backend {
         return false;
     }
 
+    int getDisplayHeightPx() {
+        return _winHeight > 0 ? _winHeight : winHeight;
+    }
+
+    int getDisplayWidthPx() {
+        return _winWidth > 0 ? _winWidth : winWidth;
+    }
+
     int renderLoop() {
         // Main loop
         while (!glfwWindowShouldClose(window)) {

@@ -208,6 +208,14 @@ class MainActivity : NativeActivity() {
         return resources.displayMetrics.density;
     }
 
+    fun getDisplayHeightPx(): Int {
+        return resources.displayMetrics.heightPixels;
+    }
+
+    fun getDisplayWidthPx(): Int {
+        return resources.displayMetrics.widthPixels;
+    }
+
     fun startLocationUpdates() {
         val fine = PermissionChecker.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION);
         val coarse = PermissionChecker.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION);

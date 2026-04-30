@@ -212,6 +212,37 @@ namespace backend {
         return true;
     }
 
+    static int callIntActivityMethod(const char* name) {
+        if (!app || !app->activity) { return 0; }
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return 0; }
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return 0; }
+        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (clazz == NULL) {
+            java_vm->DetachCurrentThread();
+            return 0;
+        }
+        jmethodID mid = java_env->GetMethodID(clazz, name, "()I");
+        if (mid == NULL) {
+            java_vm->DetachCurrentThread();
+            return 0;
+        }
+        jint v = java_env->CallIntMethod(app->activity->clazz, mid);
+        java_vm->DetachCurrentThread();
+        return (int)v;
+    }
+
+    int getDisplayHeightPx() {
+        return callIntActivityMethod("getDisplayHeightPx");
+    }
+
+    int getDisplayWidthPx() {
+        return callIntActivityMethod("getDisplayWidthPx");
+    }
+
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
         lat = 0.0;
         lon = 0.0;

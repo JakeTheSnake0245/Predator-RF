@@ -48,7 +48,14 @@ namespace style {
 
     float computeAutoScale() {
         float raw = backend::getNativeUiScale();
-        if (backend::isTouchPrimary() && raw < 1.5f) raw = 1.5f;
+        if (backend::isTouchPrimary()) {
+            int h = backend::getDisplayHeightPx();
+            if (h > 0) {
+                float fit = (float)h / 1100.0f;
+                if (fit < raw) raw = fit;
+            }
+            if (raw < 1.5f) raw = 1.5f;
+        }
         return snapToSupportedScale(raw);
     }
 
