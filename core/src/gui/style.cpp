@@ -66,21 +66,20 @@ namespace style {
 
         const float MAIN_CHROME_PER_UNIT = 8.0f + 42.0f + 8.0f + 46.0f + 8.0f + 8.0f;
 
+        // Right rail composition after the Zoom/Max/Min sliders moved
+        // into the top-right waterfall dropdown overlay (Task #20):
+        // only the 7 tab buttons + their inter-spacing + child border
+        // padding remain. The slider/separator block is no longer in
+        // the rail so we drop it from the per-unit pixel budget,
+        // otherwise computeAutoScale would over-shrink on touch.
         const float TAB_HEIGHT       = 36.0f;
         const float TAB_COUNT        = 7.0f;
         const float ITEM_SPACING_Y   = 6.0f;
-        const float SEPARATOR_BLOCK  = 2.0f * ITEM_SPACING_Y + 2.0f;
-        const float SLIDER_HEIGHT    = 120.0f;
-        const float SLIDER_LABEL     = 16.0f;
-        const float SLIDER_NEWLINE   = 16.0f;
-        const float SLIDER_COUNT     = 3.0f;
         const float CHILD_PADDING    = 2.0f * 8.0f + 2.0f;
 
         const float RAIL_PER_UNIT =
             TAB_COUNT * TAB_HEIGHT
             + (TAB_COUNT - 1.0f) * ITEM_SPACING_Y
-            + SEPARATOR_BLOCK
-            + SLIDER_COUNT * (SLIDER_LABEL + SLIDER_HEIGHT + SLIDER_NEWLINE + ITEM_SPACING_Y)
             + CHILD_PADDING;
 
         const float TOTAL_PER_UNIT = MAIN_CHROME_PER_UNIT + RAIL_PER_UNIT;
