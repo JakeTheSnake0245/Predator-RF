@@ -5719,9 +5719,19 @@ void MainWindow::draw() {
         static int       s_imeLastBottom    = 0;
         static ImGuiID   s_imeLastActiveId  = 0;
         ImGuiID curActiveId = (gctx != nullptr) ? gctx->ActiveId : 0;
+        // Retrigger when:
+        //  • IME just appeared (last == 0, now > 0), OR
+        //  • the focused widget changed while the IME stayed up, OR
+        //  • the IME GREW (e.g. an autocomplete / suggestions panel
+        //    expanded under the keyboard mid-session) so an input that
+        //    was visible a frame ago is now covered. Shrinking the IME
+        //    or closing it is intentionally NOT a retrigger — we don't
+        //    want to snap content back and surprise the operator.
         bool    edge        = (imeBottom > 0)
                            && (curActiveId != 0)
-                           && (s_imeLastBottom == 0 || s_imeLastActiveId != curActiveId);
+                           && (s_imeLastBottom == 0
+                                || s_imeLastActiveId != curActiveId
+                                || imeBottom > s_imeLastBottom);
         if (edge && gctx != nullptr && gctx->ActiveIdWindow != nullptr) {
             float dispH     = ImGui::GetIO().DisplaySize.y;
             float visBottom = dispH - (float)imeBottom;
