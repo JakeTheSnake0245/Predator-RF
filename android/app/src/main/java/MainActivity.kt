@@ -204,20 +204,10 @@ class MainActivity : NativeActivity() {
         return gpsHasFix;
     }
 
-    // Native UI scale factor for the C++ side to use as its default
-    // ImGui scale. We hand back DisplayMetrics.density directly — the
-    // platform has already chosen a value matching the physical pixel
-    // pitch (1.0 on mdpi, 2.0 on xhdpi, 3.0 on xxhdpi, ~4.0 on a
-    // Samsung S22 portrait, etc.), so the native side can clamp + snap
-    // it to the nearest supported step without any other heuristics.
     fun getDisplayDensity(): Float {
         return resources.displayMetrics.density;
     }
 
-    // Companion to getDisplayDensity() for any future native code that
-    // wants the integer DPI bucket directly (e.g. for telemetry). Kept
-    // separate so the float density used for scaling stays the canonical
-    // signal.
     fun getDisplayDensityDpi(): Int {
         return resources.displayMetrics.densityDpi;
     }

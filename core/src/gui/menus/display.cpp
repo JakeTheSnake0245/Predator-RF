@@ -134,9 +134,6 @@ namespace displaymenu {
         uiScales.define(3.50f, "350%", 3.50f);
         uiScales.define(4.00f, "400%", 4.00f);
 
-        // Pick the combo entry from the stored config so "Auto (device)"
-        // stays highlighted across launches even when it resolves to
-        // a concrete scale like 3.0.
         const auto& v = core::configManager.conf["uiScale"];
         if (v.is_string() && v.get<std::string>() == "auto") {
             uiScaleId = uiScales.valueId(style::AUTO_SCALE);
@@ -236,8 +233,6 @@ namespace displaymenu {
             }
             core::configManager.release(true);
 
-            // Live re-apply: theme reset + ScaleAllSizes + touch tweaks.
-            // The font atlas is the only thing that needs a restart.
             thememenu::applyTheme();
             restartRequired = std::fabs(style::uiScale - style::loadedFontScale) > 0.05f;
         }

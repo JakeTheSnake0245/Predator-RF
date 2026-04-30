@@ -23,9 +23,6 @@ namespace style {
     float uiScale = 3.0f;
 #endif
 
-    // Scale that the font atlas was last rasterized for. The Display
-    // menu compares against this to decide whether the restart hint
-    // is needed after a live scale change.
 #ifndef __ANDROID__
     float loadedFontScale = 1.0f;
 #else
@@ -50,7 +47,9 @@ namespace style {
     }
 
     float computeAutoScale() {
-        return snapToSupportedScale(backend::getNativeUiScale());
+        float raw = backend::getNativeUiScale();
+        if (backend::isTouchPrimary() && raw < 1.5f) raw = 1.5f;
+        return snapToSupportedScale(raw);
     }
 
     bool loadFonts(std::string resDir) {
@@ -83,9 +82,6 @@ namespace style {
         bigFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), 45.0f * uiScale, NULL, bigRanges.Data);
         hugeFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), 128.0f * uiScale, NULL, hugeRanges.Data);
 
-        // Remember the scale we just baked into the font atlas so the
-        // Display menu can decide later whether the user's new pick
-        // requires a font rebuild (= app restart) or not.
         loadedFontScale = uiScale;
 
         return true;
@@ -112,8 +108,6 @@ namespace style {
     }
 
     void applyTouchFriendlyTweaks() {
-        // Skip on desktop at the default scale; touch devices always
-        // get the larger hit targets, even at 1.0x.
         if (!backend::isTouchPrimary() && uiScale <= 1.0001f) return;
 
         ImGuiStyle& s = ImGui::GetStyle();
