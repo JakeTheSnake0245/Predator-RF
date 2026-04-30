@@ -1499,6 +1499,17 @@ void MainWindow::draw() {
             j["missionMode"] = kujhadMissionModeSnapshot;
             j["scanRunning"] = kujhadScanRunningSnapshot;
             j["scanStatus"]  = kujhadScanStatusSnapshot;
+            // Mission edit surface — mirrored so a controller can render
+            // and edit the peer's bands/targets/excludes/settings via
+            // mission.set* commands without first guessing the contents.
+            j["searchBands"]         = kujhadSearchBandsSnapshot;
+            j["targets"]             = kujhadTargetsSnapshot;
+            j["excludes"]            = kujhadExcludesSnapshot;
+            j["thresholdDb"]         = kujhadThresholdSnapshot;
+            j["dwellMs"]             = kujhadDwellMsSnapshot;
+            j["quickScanDelayMs"]    = kujhadQuickScanDelayMsSnapshot;
+            j["quickScanDurationMs"] = kujhadQuickScanDurationMsSnapshot;
+            j["recordAudio"]         = kujhadRecordAudioSnapshot;
             return j;
         });
         kujhadServer.setGpsProvider([this]() {
@@ -1614,6 +1625,27 @@ void MainWindow::draw() {
                     errOut = "invalid mode"; return false;
                 }
             }
+            else if (cmd.commandClass == "mission" &&
+                     (cmd.action == "setSearchBands" || cmd.action == "setTargets" ||
+                      cmd.action == "setExcludes")) {
+                // Per-action payload key — explicit so a malformed
+                // command (wrong key, wrong type) is rejected at the
+                // protocol layer instead of corrupting peer config.
+                const char* key = (cmd.action == "setSearchBands") ? "bands"
+                                : (cmd.action == "setTargets")     ? "targets"
+                                                                   : "excludes";
+                if (!cmd.args.contains(key) || !cmd.args[key].is_array()) {
+                    errOut = std::string(key) + " array required"; return false;
+                }
+            }
+            else if (cmd.commandClass == "mission" && cmd.action == "setSettings") {
+                // All fields optional; presence is what triggers the
+                // overwrite on the peer. Empty body is a no-op rather
+                // than an error.
+                if (!cmd.args.is_object()) {
+                    errOut = "settings object required"; return false;
+                }
+            }
             else if (cmd.commandClass == "identify") {
                 // Ack only — no action needed.
                 return true;
@@ -1656,6 +1688,19 @@ void MainWindow::draw() {
         for (int i = n - 1; i >= 0; i--) {
             kujhadEventsSnapshot.push_back(events[i]);
         }
+        // Mission edit surface, shipped to controllers via /v1/state so
+        // the Mission tab on a controller can render the peer's bands /
+        // targets / excludes / settings 1:1 with the operator's local
+        // experience instead of falling back to the smaller Kujhad-tab
+        // command surface.
+        kujhadSearchBandsSnapshot         = searchBands;
+        kujhadTargetsSnapshot             = targets;
+        kujhadExcludesSnapshot            = excludes;
+        kujhadThresholdSnapshot           = missionThreshold;
+        kujhadDwellMsSnapshot             = dwellMs;
+        kujhadQuickScanDelayMsSnapshot    = quickScanDelayMs;
+        kujhadQuickScanDurationMsSnapshot = quickScanDurationMs;
+        kujhadRecordAudioSnapshot         = recordAudio;
     }
 
     // Drain any pending commands from the device server worker.
@@ -1683,6 +1728,49 @@ void MainWindow::draw() {
                 if (mode >= PREDATOR_MODE_MANUAL && mode <= PREDATOR_MODE_QUICKSCAN) {
                     predatorMissionMode = mode;
                 }
+            }
+            else if (cmd.commandClass == "mission" && cmd.action == "setSearchBands") {
+                if (cmd.args.contains("bands") && cmd.args["bands"].is_array()) {
+                    searchBands = cmd.args["bands"];
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold,
+                                      dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                }
+            }
+            else if (cmd.commandClass == "mission" && cmd.action == "setTargets") {
+                if (cmd.args.contains("targets") && cmd.args["targets"].is_array()) {
+                    targets = cmd.args["targets"];
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold,
+                                      dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                }
+            }
+            else if (cmd.commandClass == "mission" && cmd.action == "setExcludes") {
+                if (cmd.args.contains("excludes") && cmd.args["excludes"].is_array()) {
+                    excludes = cmd.args["excludes"];
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold,
+                                      dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                }
+            }
+            else if (cmd.commandClass == "mission" && cmd.action == "setSettings") {
+                // Only fields actually present in the payload overwrite
+                // peer state; missing fields keep their current value
+                // so a controller can edit one slider in isolation.
+                if (cmd.args.contains("thresholdDb") && cmd.args["thresholdDb"].is_number()) {
+                    missionThreshold = (float)cmd.args["thresholdDb"].get<double>();
+                }
+                if (cmd.args.contains("dwellMs") && cmd.args["dwellMs"].is_number()) {
+                    dwellMs = std::max<int>(100, cmd.args["dwellMs"].get<int>());
+                }
+                if (cmd.args.contains("quickScanDelayMs") && cmd.args["quickScanDelayMs"].is_number()) {
+                    quickScanDelayMs = std::max<int>(50, cmd.args["quickScanDelayMs"].get<int>());
+                }
+                if (cmd.args.contains("quickScanDurationMs") && cmd.args["quickScanDurationMs"].is_number()) {
+                    quickScanDurationMs = std::max<int>(100, cmd.args["quickScanDurationMs"].get<int>());
+                }
+                if (cmd.args.contains("recordAudio") && cmd.args["recordAudio"].is_boolean()) {
+                    recordAudio = cmd.args["recordAudio"].get<bool>();
+                }
+                saveMissionConfig(searchBands, targets, excludes, missionThreshold,
+                                  dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
             }
         }
     }
@@ -1838,6 +1926,78 @@ void MainWindow::draw() {
             kujhadMirroredFromPeerIdx = -1;
         }
     }
+
+    // Mission-tab peer routing. The operator's *selection* in the Kujhad
+    // tab is the source of truth: while a peer is selected, the Mission
+    // tab MUST route edits through the fleet command pipe — even if the
+    // peer's snapshot is stale, never-synced, or temporarily unreachable.
+    // Falling back to local mutation while a peer is selected would
+    // silently corrupt the operator's local rig and break the operator's
+    // mental model of "I am driving that peer right now". When the
+    // snapshot is missing the displayed lists default to empty + the
+    // banner shows a "no link / stale" indicator so the operator knows
+    // why the form is blank, but routing stays peer-bound.
+    bool missionPeerActive = false;
+    bool missionPeerSnapshotFresh = false;
+    std::string missionPeerName;
+    json missionPeerState = json::object();
+    int missionPeerMode = predatorMissionMode;
+    bool missionPeerScanRunning = predatorScanRunning;
+    bool missionPeerPlaying = playing;
+    uint64_t missionPeerLastSyncMs = 0;
+    if (predatorRole == PREDATOR_ROLE_CONTROLLER
+        && kujhadActivePeerIdx >= 0
+        && kujhadActivePeerIdx < (int)kujhadClients.size()
+        && kujhadClients[kujhadActivePeerIdx]
+        && kujhadActivePeerIdx < (int)kujhadActivePeers.size()) {
+        missionPeerActive = true;
+        missionPeerName   = readJsonString(kujhadActivePeers[kujhadActivePeerIdx], "name", "peer");
+        auto& client = kujhadClients[kujhadActivePeerIdx];
+        predator::KujhadPeerSnapshot snap = client->snapshot();
+        missionPeerLastSyncMs = snap.lastSyncMs;
+        // Treat the snapshot as "fresh" only when the worker is
+        // currently reaching the peer AND a state body has actually
+        // arrived. Stale state is still rendered (so the operator
+        // sees the last-known mission config) but the banner reports
+        // the staleness so they know commands may not land.
+        if (snap.state.is_object()) {
+            missionPeerState        = snap.state;
+            missionPeerMode         = snap.state.value("missionMode", predatorMissionMode);
+            missionPeerScanRunning  = snap.state.value("scanRunning", false);
+            missionPeerPlaying      = snap.state.value("playing",     false);
+            missionPeerSnapshotFresh = snap.reachable;
+        }
+    }
+    // Send a command to the active peer and surface ok / failure in
+    // the persistent status banner. Returns true on success.
+    auto missionRoutePeerCmd = [&](const std::string& cls, const std::string& action,
+                                    const json& args) -> bool {
+        if (!missionPeerActive) return false;
+        auto& client = kujhadClients[kujhadActivePeerIdx];
+        std::string err;
+        bool ok = client && client->sendCommand(cls, action, args, err);
+        char buf[256];
+        if (ok) {
+            std::snprintf(buf, sizeof(buf), "%s.%s -> %s ok",
+                          cls.c_str(), action.c_str(), missionPeerName.c_str());
+        } else {
+            std::snprintf(buf, sizeof(buf), "%s.%s -> %s FAILED: %s",
+                          cls.c_str(), action.c_str(), missionPeerName.c_str(), err.c_str());
+        }
+        kujhadStatusBanner = buf;
+        kujhadStatusBannerUntil = ImGui::GetTime() + 4.0;
+        return ok;
+    };
+    // Mission lists rendered by the Mission tab. When peer-driven these
+    // mirror the peer's /v1/state payload; when local they are aliases
+    // for the configManager-backed arrays. Edits in peer mode build a
+    // mutated copy and ship it via mission.set* without ever touching
+    // the operator's local config.
+    auto missionPeerArray = [&](const char* key) -> json {
+        if (!missionPeerActive) return json::array();
+        if (!missionPeerState.contains(key) || !missionPeerState[key].is_array()) return json::array();
+        return missionPeerState[key];
+    };
 
     auto exportPredatorSession = [&]() {
         std::string root = (std::string)core::args["root"];
@@ -2370,6 +2530,18 @@ void MainWindow::draw() {
     };
 
     auto startPredatorScan = [&](int mode) {
+        // When the operator has taken control of a peer, the local rig
+        // stays untouched: the mode + scan-start commands ride the
+        // fleet pipe so the peer is the one tuning, dwelling, and
+        // logging hits. The local "scanCandidates empty" / "no SDR"
+        // guards intentionally do not run here — the peer enforces
+        // its own preconditions and reports back via /v1/state.
+        if (missionPeerActive) {
+            json modeArgs; modeArgs["mode"] = mode;
+            missionRoutePeerCmd("mission", "setMode", modeArgs);
+            missionRoutePeerCmd("scan", "start", json::object());
+            return;
+        }
         predatorMissionMode = mode;
         savePredatorState();
         if (sourceName.empty()) {
@@ -2394,10 +2566,26 @@ void MainWindow::draw() {
     };
 
     auto drawMissionRunControls = [&]() {
-        ImGui::Text(T("State: %s"), predatorScanRunning ? T(predatorScanPaused ? "Paused" : "Running") : T("Idle"));
-        ImGui::TextWrapped(T("Queue: %d candidate%s"), (int)scanCandidates.size(), scanCandidates.size() == 1 ? "" : "s");
-        ImGui::TextWrapped(T("Current: %s"), predatorScanStatus.c_str());
-        if (ImGui::CollapsingHeader(T("Scan Progress"))) {
+        // Display state mirrors the peer when peer-active so the operator
+        // can confirm "the unit I'm driving is actually scanning" without
+        // tab-flipping to Kujhad. Pause / Previous / Next / Log Event do
+        // not have peer commands in the current schema and stay disabled
+        // in peer mode rather than silently mutating the local rig.
+        bool runRunning = missionPeerActive ? missionPeerScanRunning : predatorScanRunning;
+        bool runPaused  = missionPeerActive ? missionPeerState.value("scanPaused", false)
+                                            : predatorScanPaused;
+        bool runPlaying = missionPeerActive ? missionPeerPlaying : playing;
+        std::string runStatus = missionPeerActive
+                                  ? readJsonString(missionPeerState, "scanStatus", "")
+                                  : predatorScanStatus;
+        int runQueue = missionPeerActive
+                         ? (missionPeerArray("searchBands").size()
+                            + missionPeerArray("targets").size())
+                         : (int)scanCandidates.size();
+        ImGui::Text(T("State: %s"), runRunning ? T(runPaused ? "Paused" : "Running") : T("Idle"));
+        ImGui::TextWrapped(T("Queue: %d candidate%s"), runQueue, runQueue == 1 ? "" : "s");
+        ImGui::TextWrapped(T("Current: %s"), runStatus.c_str());
+        if (!missionPeerActive && ImGui::CollapsingHeader(T("Scan Progress"))) {
             int candidateCount = (int)scanCandidates.size();
             int currentStep = (candidateCount > 0) ? (predatorScanIndex + 1) : 0;
             double now = ImGui::GetTime();
@@ -2410,8 +2598,15 @@ void MainWindow::draw() {
             ImGui::Text("Hits: %d  Events: %d", (int)hits.size(), (int)events.size());
         }
 
-        if (ImGui::Button(playing ? T("Stop Listening") : T("Start Listening"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-            if (sourceName.empty() && !playing) {
+        if (ImGui::Button(runPlaying ? T("Stop Listening") : T("Start Listening"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            if (missionPeerActive) {
+                // No symmetrical peer command for "playing"; keep the
+                // local rig untouched and surface a hint instead of
+                // toggling local audio.
+                kujhadStatusBanner = std::string(T("Listening control is local-only while driving a peer."));
+                kujhadStatusBannerUntil = ImGui::GetTime() + 4.0;
+            }
+            else if (sourceName.empty() && !playing) {
                 predatorTab = PREDATOR_TAB_SYSTEM;
                 showMenu = true;
                 savePredatorState();
@@ -2429,17 +2624,24 @@ void MainWindow::draw() {
         }
 
         float halfWidth = (ImGui::GetContentRegionAvail().x - (6.0f * style::uiScale)) * 0.5f;
-        if (ImGui::Button(predatorScanPaused ? T("Resume") : T("Pause"), ImVec2(halfWidth, 0))) {
+        if (missionPeerActive) ImGui::BeginDisabled();
+        if (ImGui::Button(runPaused ? T("Resume") : T("Pause"), ImVec2(halfWidth, 0))) {
             if (predatorScanRunning) {
                 predatorScanPaused = !predatorScanPaused;
                 predatorScanLastStepAt = ImGui::GetTime();
             }
         }
+        if (missionPeerActive) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button(T("Stop"), ImVec2(halfWidth, 0))) {
-            stopPredatorScan();
+            if (missionPeerActive) {
+                missionRoutePeerCmd("scan", "stop", json::object());
+            } else {
+                stopPredatorScan();
+            }
         }
 
+        if (missionPeerActive) ImGui::BeginDisabled();
         if (ImGui::Button(T("Previous"), ImVec2(halfWidth, 0))) {
             predatorScanRunning = true;
             predatorScanPaused = true;
@@ -2451,20 +2653,47 @@ void MainWindow::draw() {
             predatorScanPaused = true;
             tuneScanCandidate(1);
         }
+        if (missionPeerActive) ImGui::EndDisabled();
 
         if (ImGui::Button(T("Target Current"), ImVec2(halfWidth, 0))) {
-            addCurrentFrequencyRow(targets, "Current Target", true);
-            scanCandidates = buildScanCandidates();
+            if (missionPeerActive) {
+                json updated = missionPeerArray("targets");
+                json row;
+                row["name"] = "Current Target";
+                row["frequency"] = gui::freqSelect.frequency;
+                row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                row["enabled"] = true;
+                updated.push_back(row);
+                json args; args["targets"] = updated;
+                missionRoutePeerCmd("mission", "setTargets", args);
+            } else {
+                addCurrentFrequencyRow(targets, "Current Target", true);
+                scanCandidates = buildScanCandidates();
+            }
         }
         ImGui::SameLine();
         if (ImGui::Button(T("Exclude Current"), ImVec2(halfWidth, 0))) {
-            addCurrentFrequencyRow(excludes, "Current Exclude", false);
-            scanCandidates = buildScanCandidates();
+            if (missionPeerActive) {
+                json updated = missionPeerArray("excludes");
+                json row;
+                row["name"] = "Current Exclude";
+                row["frequency"] = gui::freqSelect.frequency;
+                row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                row["enabled"] = true;
+                updated.push_back(row);
+                json args; args["excludes"] = updated;
+                missionRoutePeerCmd("mission", "setExcludes", args);
+            } else {
+                addCurrentFrequencyRow(excludes, "Current Exclude", false);
+                scanCandidates = buildScanCandidates();
+            }
         }
 
+        if (missionPeerActive) ImGui::BeginDisabled();
         if (ImGui::Button(T("Log Event"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
             appendPredatorEvent("manual", gui::freqSelect.frequency, "Manual Event", gui::waterfall.selectedVFOSNR, true);
         }
+        if (missionPeerActive) ImGui::EndDisabled();
     };
 
     // Handle auto-start
@@ -4151,16 +4380,127 @@ void MainWindow::draw() {
             static double newExcludeFreq = 462500000.0;
             static double newExcludeBandwidth = 12500.0;
 
+            // Persistent driver banner across the top of the Mission tab.
+            // LOCAL = green, PEER fresh = amber, PEER stale/no-link = red.
+            // Stays visible regardless of which section the operator scrolls
+            // to so they always know whether edits will hit this rig or be
+            // routed to a peer (and whether that peer link is healthy).
+            {
+                ImVec4 bannerCol;
+                if (!missionPeerActive) {
+                    bannerCol = ImVec4(0.18f, 0.42f, 0.20f, 1.0f);
+                } else if (missionPeerSnapshotFresh) {
+                    bannerCol = ImVec4(0.55f, 0.35f, 0.10f, 1.0f);
+                } else {
+                    bannerCol = ImVec4(0.55f, 0.18f, 0.18f, 1.0f);
+                }
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, bannerCol);
+                float bw = ImGui::GetContentRegionAvail().x;
+                float bh = ImGui::GetTextLineHeightWithSpacing() + (10.0f * style::uiScale);
+                ImGui::BeginChild("##mission_driver_banner", ImVec2(bw, bh),
+                                  false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                if (missionPeerActive) {
+                    if (missionPeerSnapshotFresh) {
+                        ImGui::Text(T("Driving PEER: %s   (edits route to peer)"), missionPeerName.c_str());
+                    } else if (missionPeerLastSyncMs > 0) {
+                        ImGui::Text(T("Driving PEER: %s   (link STALE — commands may not land)"),
+                                    missionPeerName.c_str());
+                    } else {
+                        ImGui::Text(T("Driving PEER: %s   (no link yet — commands may not land)"),
+                                    missionPeerName.c_str());
+                    }
+                } else {
+                    ImGui::TextUnformatted(T("Driving LOCAL rig"));
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+
+            // Resolve the mission view source for this frame. When peer-
+            // active these mirror the peer's /v1/state payload; otherwise
+            // they alias the local configManager-backed arrays.
+            json displayedBandsCopy    = missionPeerActive ? missionPeerArray("searchBands") : json::array();
+            json displayedTargetsCopy  = missionPeerActive ? missionPeerArray("targets")     : json::array();
+            json displayedExcludesCopy = missionPeerActive ? missionPeerArray("excludes")    : json::array();
+            const json& displayedBands    = missionPeerActive ? displayedBandsCopy    : searchBands;
+            const json& displayedTargets  = missionPeerActive ? displayedTargetsCopy  : targets;
+            const json& displayedExcludes = missionPeerActive ? displayedExcludesCopy : excludes;
+            int   displayedMode        = missionPeerActive ? missionPeerMode : predatorMissionMode;
+            int   displayedDwellMs     = missionPeerActive ? missionPeerState.value("dwellMs", dwellMs) : dwellMs;
+            int   displayedQsDelay     = missionPeerActive ? missionPeerState.value("quickScanDelayMs", quickScanDelayMs) : quickScanDelayMs;
+            int   displayedQsDuration  = missionPeerActive ? missionPeerState.value("quickScanDurationMs", quickScanDurationMs) : quickScanDurationMs;
+            float displayedThreshold   = missionPeerActive ? (float)missionPeerState.value("thresholdDb", (double)missionThreshold) : missionThreshold;
+            bool  displayedRecordAudio = missionPeerActive ? missionPeerState.value("recordAudio", recordAudio) : recordAudio;
+
+            // Commit helpers fan out to either the local config save path
+            // or the fleet command pipe so the rest of the body never has
+            // to spell the branch out at every edit site.
+            auto commitSearchBands = [&](const json& v) {
+                if (missionPeerActive) {
+                    json args; args["bands"] = v;
+                    missionRoutePeerCmd("mission", "setSearchBands", args);
+                } else {
+                    searchBands = v;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    scanCandidates = buildScanCandidates();
+                }
+            };
+            auto commitTargets = [&](const json& v) {
+                if (missionPeerActive) {
+                    json args; args["targets"] = v;
+                    missionRoutePeerCmd("mission", "setTargets", args);
+                } else {
+                    targets = v;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    scanCandidates = buildScanCandidates();
+                }
+            };
+            auto commitExcludes = [&](const json& v) {
+                if (missionPeerActive) {
+                    json args; args["excludes"] = v;
+                    missionRoutePeerCmd("mission", "setExcludes", args);
+                } else {
+                    excludes = v;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    scanCandidates = buildScanCandidates();
+                }
+            };
+            auto commitMissionSettings = [&](float threshold, int dwell, int qsDelay,
+                                             int qsDur, bool rec) {
+                if (missionPeerActive) {
+                    json args;
+                    args["thresholdDb"]         = threshold;
+                    args["dwellMs"]             = dwell;
+                    args["quickScanDelayMs"]    = qsDelay;
+                    args["quickScanDurationMs"] = qsDur;
+                    args["recordAudio"]         = rec;
+                    missionRoutePeerCmd("mission", "setSettings", args);
+                } else {
+                    missionThreshold     = threshold;
+                    dwellMs              = dwell;
+                    quickScanDelayMs     = qsDelay;
+                    quickScanDurationMs  = qsDur;
+                    recordAudio          = rec;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                }
+            };
+
             if (ImGui::CollapsingHeader(T("Mission Modes"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (int i = 0; i < 4; i++) {
-                    bool activeMode = (predatorMissionMode == i);
+                    bool activeMode = (displayedMode == i);
                     if (activeMode) {
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
                         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.45f, 0.24f, 1.0f));
                         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.50f, 0.27f, 1.0f));
                     }
                     if (ImGui::Button(missionModes[i], ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                        setMissionMode(i);
+                        if (missionPeerActive) {
+                            json args; args["mode"] = i;
+                            missionRoutePeerCmd("mission", "setMode", args);
+                        } else {
+                            setMissionMode(i);
+                        }
                     }
                     if (activeMode) {
                         ImGui::PopStyleColor(3);
@@ -4173,8 +4513,6 @@ void MainWindow::draw() {
             if (ImGui::CollapsingHeader(T("Mission Run"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 drawMissionRunControls();
             }
-
-            bool missionChanged = false;
 
             // Scroll the panel to expose the focused input field when the keyboard opens.
             // Called after every InputText/InputDouble so the tapped field stays visible.
@@ -4216,26 +4554,29 @@ void MainWindow::draw() {
                     row["start"] = std::min(newBandStart, newBandStop);
                     row["stop"] = std::max(newBandStart, newBandStop);
                     row["enabled"] = true;
-                    searchBands.push_back(row);
-                    missionChanged = true;
+                    json updated = displayedBands;
+                    updated.push_back(row);
+                    commitSearchBands(updated);
                 }
                 ImGui::Separator();
-                for (int i = 0; i < searchBands.size(); i++) {
+                for (int i = 0; i < (int)displayedBands.size(); i++) {
                     ImGui::PushID(3000 + i);
-                    bool enabled = readJsonBool(searchBands[i], "enabled", true);
+                    bool enabled = readJsonBool(displayedBands[i], "enabled", true);
                     if (ImGui::Checkbox("##search_enabled", &enabled)) {
-                        searchBands[i]["enabled"] = enabled;
-                        missionChanged = true;
+                        json updated = displayedBands;
+                        updated[i]["enabled"] = enabled;
+                        commitSearchBands(updated);
                     }
                     ImGui::SameLine();
-                    std::string bandName = readJsonString(searchBands[i], "name", "Band");
-                    double bandStart = readJsonDouble(searchBands[i], "start", 0.0);
-                    double bandStop = readJsonDouble(searchBands[i], "stop", 0.0);
+                    std::string bandName = readJsonString(displayedBands[i], "name", "Band");
+                    double bandStart = readJsonDouble(displayedBands[i], "start", 0.0);
+                    double bandStop = readJsonDouble(displayedBands[i], "stop", 0.0);
                     ImGui::TextWrapped("%s  %.3f - %.3f MHz", bandName.c_str(), bandStart/1e6, bandStop/1e6);
                     float delW = ImGui::GetContentRegionAvail().x;
                     if (ImGui::Button("Delete##sb", ImVec2(delW, 0))) {
-                        searchBands.erase(searchBands.begin() + i);
-                        missionChanged = true;
+                        json updated = displayedBands;
+                        updated.erase(updated.begin() + i);
+                        commitSearchBands(updated);
                         ImGui::PopID();
                         break;
                     }
@@ -4252,8 +4593,9 @@ void MainWindow::draw() {
                     row["frequency"] = gui::freqSelect.frequency;
                     row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
                     row["enabled"] = true;
-                    targets.push_back(row);
-                    missionChanged = true;
+                    json updated = displayedTargets;
+                    updated.push_back(row);
+                    commitTargets(updated);
                 }
                 ImGui::SetNextItemWidth(fw);
                 if (ImGui::InputDouble("##TargetHz", &newTargetFreq, 0, 0, "%.0f Hz")) {}
@@ -4273,24 +4615,27 @@ void MainWindow::draw() {
                     row["frequency"] = newTargetFreq;
                     row["bandwidth"] = newTargetBandwidth;
                     row["enabled"] = true;
-                    targets.push_back(row);
-                    missionChanged = true;
+                    json updated = displayedTargets;
+                    updated.push_back(row);
+                    commitTargets(updated);
                 }
                 ImGui::Separator();
-                for (int i = 0; i < targets.size(); i++) {
+                for (int i = 0; i < (int)displayedTargets.size(); i++) {
                     ImGui::PushID(4000 + i);
-                    bool enabled = readJsonBool(targets[i], "enabled", true);
+                    bool enabled = readJsonBool(displayedTargets[i], "enabled", true);
                     if (ImGui::Checkbox("##target_enabled", &enabled)) {
-                        targets[i]["enabled"] = enabled;
-                        missionChanged = true;
+                        json updated = displayedTargets;
+                        updated[i]["enabled"] = enabled;
+                        commitTargets(updated);
                     }
                     ImGui::SameLine();
-                    double targetFrequency = readJsonDouble(targets[i], "frequency", 0.0);
-                    double targetBandwidth = readJsonDouble(targets[i], "bandwidth", 12500.0);
+                    double targetFrequency = readJsonDouble(displayedTargets[i], "frequency", 0.0);
+                    double targetBandwidth = readJsonDouble(displayedTargets[i], "bandwidth", 12500.0);
                     ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", targetFrequency/1e6, targetBandwidth);
                     if (ImGui::Button("Delete##tgt", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                        targets.erase(targets.begin() + i);
-                        missionChanged = true;
+                        json updated = displayedTargets;
+                        updated.erase(updated.begin() + i);
+                        commitTargets(updated);
                         ImGui::PopID();
                         break;
                     }
@@ -4307,8 +4652,9 @@ void MainWindow::draw() {
                     row["frequency"] = gui::freqSelect.frequency;
                     row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
                     row["enabled"] = true;
-                    excludes.push_back(row);
-                    missionChanged = true;
+                    json updated = displayedExcludes;
+                    updated.push_back(row);
+                    commitExcludes(updated);
                 }
                 ImGui::SetNextItemWidth(fw);
                 if (ImGui::InputDouble("##ExclHz", &newExcludeFreq, 0, 0, "%.0f Hz")) {}
@@ -4328,24 +4674,27 @@ void MainWindow::draw() {
                     row["frequency"] = newExcludeFreq;
                     row["bandwidth"] = newExcludeBandwidth;
                     row["enabled"] = true;
-                    excludes.push_back(row);
-                    missionChanged = true;
+                    json updated = displayedExcludes;
+                    updated.push_back(row);
+                    commitExcludes(updated);
                 }
                 ImGui::Separator();
-                for (int i = 0; i < excludes.size(); i++) {
+                for (int i = 0; i < (int)displayedExcludes.size(); i++) {
                     ImGui::PushID(5000 + i);
-                    bool enabled = readJsonBool(excludes[i], "enabled", true);
+                    bool enabled = readJsonBool(displayedExcludes[i], "enabled", true);
                     if (ImGui::Checkbox("##exclude_enabled", &enabled)) {
-                        excludes[i]["enabled"] = enabled;
-                        missionChanged = true;
+                        json updated = displayedExcludes;
+                        updated[i]["enabled"] = enabled;
+                        commitExcludes(updated);
                     }
                     ImGui::SameLine();
-                    double excludeFrequency = readJsonDouble(excludes[i], "frequency", 0.0);
-                    double excludeBandwidth = readJsonDouble(excludes[i], "bandwidth", 12500.0);
+                    double excludeFrequency = readJsonDouble(displayedExcludes[i], "frequency", 0.0);
+                    double excludeBandwidth = readJsonDouble(displayedExcludes[i], "bandwidth", 12500.0);
                     ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", excludeFrequency/1e6, excludeBandwidth);
                     if (ImGui::Button("Delete##excl", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                        excludes.erase(excludes.begin() + i);
-                        missionChanged = true;
+                        json updated = displayedExcludes;
+                        updated.erase(updated.begin() + i);
+                        commitExcludes(updated);
                         ImGui::PopID();
                         break;
                     }
@@ -4355,23 +4704,39 @@ void MainWindow::draw() {
             }
 
             if (ImGui::CollapsingHeader(T("Scan / QuickScan Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::InputInt("Dwell (ms)", &dwellMs, 100, 500)) {
-                    dwellMs = std::max<int>(100, dwellMs);
-                    missionChanged = true;
+                // Local mirrors that ImGui binds to. When peer-active, the
+                // values seed from the peer snapshot and edits ship a
+                // mission.setSettings command; the on-screen value snaps
+                // back to the peer's state on the next /v1/state poll.
+                int   dwellEdit       = displayedDwellMs;
+                int   qsDelayEdit     = displayedQsDelay;
+                int   qsDurEdit       = displayedQsDuration;
+                float thresholdEdit   = displayedThreshold;
+                bool  recordEdit      = displayedRecordAudio;
+                bool settingsChanged = false;
+                if (ImGui::InputInt("Dwell (ms)", &dwellEdit, 100, 500)) {
+                    dwellEdit = std::max<int>(100, dwellEdit);
+                    settingsChanged = true;
                 }
-                if (ImGui::InputInt("QuickScan Delay (ms)", &quickScanDelayMs, 50, 250)) {
-                    quickScanDelayMs = std::max<int>(50, quickScanDelayMs);
-                    missionChanged = true;
+                if (ImGui::InputInt("QuickScan Delay (ms)", &qsDelayEdit, 50, 250)) {
+                    qsDelayEdit = std::max<int>(50, qsDelayEdit);
+                    settingsChanged = true;
                 }
-                if (ImGui::InputInt("QuickScan Duration (ms)", &quickScanDurationMs, 100, 500)) {
-                    quickScanDurationMs = std::max<int>(100, quickScanDurationMs);
-                    missionChanged = true;
+                if (ImGui::InputInt("QuickScan Duration (ms)", &qsDurEdit, 100, 500)) {
+                    qsDurEdit = std::max<int>(100, qsDurEdit);
+                    settingsChanged = true;
                 }
-                if (ImGui::SliderFloat("Threshold", &missionThreshold, -120.0f, 0.0f, "%.1f dB")) {
-                    missionChanged = true;
+                if (ImGui::SliderFloat("Threshold", &thresholdEdit, -120.0f, 0.0f, "%.1f dB")) {
+                    settingsChanged = true;
                 }
-                if (ImGui::Checkbox("Record Audio", &recordAudio)) {
-                    missionChanged = true;
+                if (ImGui::Checkbox("Record Audio", &recordEdit)) {
+                    settingsChanged = true;
+                }
+                if (settingsChanged) {
+                    commitMissionSettings(thresholdEdit, dwellEdit, qsDelayEdit, qsDurEdit, recordEdit);
+                }
+                if (missionPeerActive) {
+                    ImGui::TextDisabled("%s", T("Scan UX preferences below stay local — they govern this controller's UI only."));
                 }
                 bool scanUxChanged = false;
                 scanUxChanged |= ImGui::Checkbox(T("Hold on New Hit"), &predatorHoldOnNewHit);
@@ -4417,10 +4782,9 @@ void MainWindow::draw() {
             if (ImGui::CollapsingHeader(T("Operator Note"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextWrapped("This shell carries the Predator RF mission control concepts: mode, search bands, targets, excludes, dwell, quick filters, and map launch.");
             }
-
-            if (missionChanged) {
-                saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
-            }
+            // Mission edits no longer accumulate a "missionChanged" flag —
+            // each commit helper above either saves locally or ships a
+            // mission.set* command to the active peer in-place.
         }
         else if (predatorTab == PREDATOR_TAB_KUJHAD) {
             // Role selector — toggling changes which workflow runs.
