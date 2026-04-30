@@ -5490,40 +5490,6 @@ void MainWindow::draw() {
         : ImGuiWindowFlags_None;
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, railFlags);
 
-    if (backend::isTouchPrimary() && ImGui::GetScrollMaxY() > 0.0f) {
-        static bool  s_dragArmed   = false;
-        static bool  s_dragActive  = false;
-        static float s_scrollStart = 0.0f;
-        const float dragThreshold = 12.0f * style::uiScale;
-
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            bool justPressed = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-            if (justPressed) {
-                bool insideRail = ImGui::IsWindowHovered();
-                bool noActiveItem = (ImGui::GetActiveID() == 0);
-                s_dragArmed   = insideRail && noActiveItem;
-                s_dragActive  = false;
-                s_scrollStart = ImGui::GetScrollY();
-            }
-            if (s_dragArmed && !s_dragActive) {
-                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
-                if (std::fabs(dy) > dragThreshold) s_dragActive = true;
-            }
-            if (s_dragActive) {
-                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
-                float target = s_scrollStart - dy;
-                float maxY = ImGui::GetScrollMaxY();
-                if (target < 0.0f) target = 0.0f;
-                if (target > maxY) target = maxY;
-                ImGui::SetScrollY(target);
-            }
-        }
-        else {
-            s_dragArmed  = false;
-            s_dragActive = false;
-        }
-    }
-
     for (int i = 0; i < 7; i++) {
         bool activeTab = (predatorTab == i);
         if (activeTab) {
@@ -5592,6 +5558,46 @@ void MainWindow::draw() {
         core::configManager.acquire();
         core::configManager.conf["min"] = fftMin;
         core::configManager.release(true);
+    }
+
+    if (backend::isTouchPrimary() && ImGui::GetScrollMaxY() > 0.0f) {
+        static bool  s_dragArmed   = false;
+        static bool  s_dragActive  = false;
+        static float s_scrollStart = 0.0f;
+        const float dragThreshold = 12.0f * style::uiScale;
+
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            bool noActiveItem = (ImGui::GetActiveID() == 0);
+
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                s_dragArmed   = ImGui::IsWindowHovered() && noActiveItem;
+                s_dragActive  = false;
+                s_scrollStart = ImGui::GetScrollY();
+            }
+
+            if (!noActiveItem) {
+                s_dragArmed  = false;
+                s_dragActive = false;
+            }
+
+            if (s_dragArmed && !s_dragActive) {
+                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
+                if (std::fabs(dy) > dragThreshold) s_dragActive = true;
+            }
+
+            if (s_dragActive) {
+                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
+                float target = s_scrollStart - dy;
+                float maxY = ImGui::GetScrollMaxY();
+                if (target < 0.0f) target = 0.0f;
+                if (target > maxY) target = maxY;
+                ImGui::SetScrollY(target);
+            }
+        }
+        else {
+            s_dragArmed  = false;
+            s_dragActive = false;
+        }
     }
 
     ImGui::EndChild();
