@@ -155,6 +155,9 @@
   #ifndef SFM_WRITE
   #  define SFM_WRITE           0x20
   #endif
+  #ifndef SFM_RDWR
+  #  define SFM_RDWR            0x30
+  #endif
 
   /* TRUE / FALSE come from sndfile.h / pulse headers normally. */
   #ifndef TRUE
