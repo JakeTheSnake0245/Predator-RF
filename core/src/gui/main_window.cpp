@@ -2866,9 +2866,12 @@ void MainWindow::draw() {
     const float wfOvPad   = 8.0f  * style::uiScale;
     const float wfOvBtnW  = 60.0f * style::uiScale;
     const float wfOvBtnH  = 30.0f * style::uiScale;
+    // Never exceed ~25 % of the waterfall width, regardless of how
+    // narrow the spectrum gets, so the bulk of the FFT remains
+    // visible while the operator drags a slider. The 180 * uiScale
+    // cap stops the panel from looking absurdly wide on big screens.
     const float wfOvPanelW = std::min(180.0f * style::uiScale,
-                                      std::max(120.0f * style::uiScale,
-                                               (float)waterfallWidth * 0.24f));
+                                      (float)waterfallWidth * 0.24f);
     const float wfOvPanelH = 200.0f * style::uiScale;
     ImGui::SetCursorPos(ImVec2(pad, contentTop));
     ImVec2 wfChildScreen = ImGui::GetCursorScreenPos();
