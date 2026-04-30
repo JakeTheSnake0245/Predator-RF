@@ -51,7 +51,8 @@ private:
         PREDATOR_TAB_MAP,
         PREDATOR_TAB_MISSION,
         PREDATOR_TAB_KUJHAD,
-        PREDATOR_TAB_SYSTEM
+        PREDATOR_TAB_SYSTEM,
+        PREDATOR_TAB_BASELINE
     };
 
     enum PredatorRole {
