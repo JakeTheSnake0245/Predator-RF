@@ -732,9 +732,18 @@ void MainWindow::draw() {
         snprintf(pendEdit.label, sizeof(pendEdit.label), "%s", label);
         snprintf(pendEdit.buf,   sizeof(pendEdit.buf),   "%s", initial.c_str());
         pendEdit.onAccept = std::move(cb);
-        pendEdit.open     = true;
         pendEdit.setFocus = true;
-        ImGui::OpenPopup("##pend_edit");
+        // NOTE: do NOT call ImGui::OpenPopup() here.  This lambda is invoked from
+        // call sites that have user-defined IDs pushed on the ImGui ID stack
+        // (e.g. drawEditButton wraps every button in PushID(label); the Hits
+        // panel pushes PushID(7000+i) per row; etc.).  ImGui::OpenPopup hashes
+        // the popup ID against the *current* ID stack, so a popup opened from
+        // inside any PushID is filed under a child ID that the top-of-window
+        // BeginPopupModal block (which runs with no PushID active) will never
+        // find.  Instead we just set a "request to open" flag and let the
+        // top-level draw code below trigger OpenPopup at a clean ID-stack
+        // location, guaranteeing the IDs match.
+        pendEdit.open = true;
     };
 
     auto drawEditButton = [&](const char* label, const std::string& value,
@@ -831,6 +840,14 @@ void MainWindow::draw() {
     auto applyTouchScroll = [&]() {
 #ifdef __ANDROID__
         ImGuiIO& io = ImGui::GetIO();
+
+        // If any popup/modal is open, leave touch alone entirely.  The pendEdit
+        // popup has OK/Cancel buttons that don't immediately capture ActiveID
+        // on the press frame; without this guard a tap on the popup with a
+        // few-pixel finger wobble would scroll the panel behind it before the
+        // button registers, which feels like "the popup ate my tap and the
+        // page jumped".  Belt-and-braces with the ActiveID gate below.
+        if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return;
 
         // Don't steal the touch from widgets.  If anything has captured
         // ActiveId — a button being held, a slider being dragged, an
@@ -6719,6 +6736,19 @@ void MainWindow::draw() {
     // routed through the pendEdit struct. Because this popup uses
     // SetNextWindowPos(..., ImGuiCond_Always), it always wins over the
     // SetWindowPos that the inset compensation would otherwise apply.
+    // Honour the deferred open request from openPendEdit().  We are at the
+    // top of the main window draw scope here (no PushID active), so the popup
+    // ID hashed by OpenPopup will match the ID hashed by BeginPopupModal
+    // immediately below.  Without this trampoline the popup would be filed
+    // under whatever PushID was active at the call site (drawEditButton's
+    // PushID(label), the Hits row's PushID(7000+i), the Baseline row's
+    // PushID(ri), etc.) and BeginPopupModal would never find it — which is
+    // exactly the "tap to edit does nothing, no popup appears" symptom.
+    if (pendEdit.open) {
+        ImGui::OpenPopup("##pend_edit");
+        pendEdit.open = false;
+    }
+
     if (ImGui::IsPopupOpen("##pend_edit")) {
         float popW = winSize.x - 4.0f * pad;
         ImGui::SetNextWindowPos(ImVec2(2.0f * pad, contentTop + pad), ImGuiCond_Always);
