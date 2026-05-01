@@ -328,8 +328,13 @@ const char *sf_strerror(SNDFILE *s) { (void)s; return "no sndfile in Predator bu
  * never enter (initOpts sets use_rigctl=0 and there's no UI to flip it).
  * They exist purely to satisfy the linker.
  * ============================================================ */
-void SetModulation(int sockfd, int bw)        { (void)sockfd; (void)bw;        }
-void SetFreq      (int sockfd, long freq_hz)  { (void)sockfd; (void)freq_hz;   }
+/* Vendor headers (dsd.h) declare these as `bool`-returning. We never run
+ * rigctl in PREDATOR_BUILD (use_rigctl is forced to 0 in initOpts and there
+ * is no UI to flip it), so the call sites that reference these symbols are
+ * always inside dead branches. Returning `false` is safe because every
+ * caller in the vendor tree ignores the return value. */
+bool SetModulation(int sockfd, int bw)        { (void)sockfd; (void)bw;        return false; }
+bool SetFreq      (int sockfd, long freq_hz)  { (void)sockfd; (void)freq_hz;   return false; }
 
 /* ============================================================
  * Stub for the symbol defined in EXCLUDED dsd_ncurses_printer.c.

@@ -91,7 +91,7 @@ public:
                                               0, VFO_BANDWIDTH, VFO_SAMPLE_RATE,
                                               VFO_BANDWIDTH, VFO_BANDWIDTH, true);
         fmDemod_.init(vfo_->output, FM_DEVIATION, VFO_SAMPLE_RATE);
-        floatToShort_.init(&fmDemod_.out, sampleHandler, this, 1024);
+        floatToShort_.init(&fmDemod_.out, sampleHandler, this);
 
         // ----- Audio sink chain (voice output side) -----
         // rawVoice_ is a hand-pumped stream (no Processor feeding it). We pre-
@@ -108,7 +108,7 @@ public:
 
         // ----- Metadata events: register with native decoder registry -----
         predator::registerNativeDecoder(this, "DSDFME",
-            [this](size_t maxItems) -> predator::NativeDrainBatch {
+            [this](size_t maxItems) -> std::vector<predator::DecoderIngestEvent> {
                 return drainEvents(maxItems);
             });
         predator_dsd_set_event_cb(&DsdFmeDecoderModule::onDsdEvent, this);
@@ -265,30 +265,48 @@ private:
         auto* self = static_cast<DsdFmeDecoderModule*>(userdata);
         if (!self) return;
 
+        const std::string kindStr = kind ? kind : "info";
+        const std::string protoStr = protocol ? protocol : "DSDFME";
+
         predator::DecoderIngestEvent ev;
-        ev.timestampUs = predator::nowMicros();
-        ev.serial      = ++self->serial_;
         ev.decoder     = "DSDFME";
-        ev.eventType   = kind ? kind : "info";
-        ev.protocol    = protocol ? protocol : "DSDFME";
+        ev.protocol    = protoStr;
         ev.frequencyHz = 0;
         ev.strengthDb  = 0;
-        ev.label       = std::string(protocol ? protocol : "DSDFME") + ":" + ev.eventType;
-        ev.rawPayload  = payload_json ? payload_json : "{}";
+        ev.label       = protoStr + ":" + kindStr;
+
+        // Stash dsdfme-specific fields (kind, serial, timestamp, raw payload)
+        // into the generic `raw` JSON blob so the UI/log/export side can pick
+        // them up without needing dedicated struct fields.
+        nlohmann::json j = nlohmann::json::object();
+        j["kind"]        = kindStr;
+        j["serial"]      = ++self->serial_;
+        j["timestampUs"] = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::system_clock::now().time_since_epoch()).count();
+        if (payload_json && *payload_json) {
+            // parse(..., allow_exceptions=false) returns a discarded value on
+            // failure rather than throwing; fall back to wrapping the raw
+            // string so we never lose the original payload.
+            nlohmann::json parsed = nlohmann::json::parse(payload_json, nullptr, false);
+            if (parsed.is_discarded()) j["payload"] = std::string(payload_json);
+            else                       j["payload"] = std::move(parsed);
+        } else {
+            j["payload"] = nlohmann::json::object();
+        }
+        ev.raw = std::move(j);
 
         std::lock_guard<std::mutex> lk(self->queueMutex_);
         if (self->queue_.size() >= 256) self->queue_.pop_front();
         self->queue_.push_back(std::move(ev));
     }
 
-    predator::NativeDrainBatch drainEvents(size_t maxItems) {
-        predator::NativeDrainBatch out;
-        out.sourceKey = "DSDFME";
+    std::vector<predator::DecoderIngestEvent> drainEvents(size_t maxItems) {
+        std::vector<predator::DecoderIngestEvent> out;
         std::lock_guard<std::mutex> lk(queueMutex_);
         size_t n = std::min(maxItems, queue_.size());
-        out.events.reserve(n);
+        out.reserve(n);
         for (size_t i = 0; i < n; i++) {
-            out.events.push_back(std::move(queue_.front()));
+            out.push_back(std::move(queue_.front()));
             queue_.pop_front();
         }
         return out;
