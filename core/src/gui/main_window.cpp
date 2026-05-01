@@ -831,6 +831,16 @@ void MainWindow::draw() {
     auto applyTouchScroll = [&]() {
 #ifdef __ANDROID__
         ImGuiIO& io = ImGui::GetIO();
+
+        // Don't steal the touch from widgets.  If anything has captured
+        // ActiveId — a button being held, a slider being dragged, an
+        // InputText being edited — leave the touch alone so the widget can
+        // see the press/release events normally.  This is what made the
+        // previous build feel like "selecting something just scrolls" — the
+        // finger-drag would scroll the panel underneath while ImGui was
+        // also trying to register the button click.
+        if (ImGui::GetActiveID() != 0) return;
+
         // Direct position + button-state check.  IsWindowHovered/IsMouseDragging
         // are unreliable inside child windows when widgets (sliders, buttons) have
         // captured ActiveId — the hover check silently returns false even though
@@ -841,13 +851,14 @@ void MainWindow::draw() {
         if (io.MouseDown[0] &&
             io.MousePos.x >= wpos.x && io.MousePos.x < wpos.x + wsize.x &&
             io.MousePos.y >= wpos.y && io.MousePos.y < wpos.y + wsize.y) {
+            // Vertical only.  Per-user request, the X-axis touch-pan was
+            // removed: it caused the submenu to slide left/right unexpectedly
+            // when the finger wobbled during a vertical scroll, and there is
+            // no submenu wide enough to need horizontal scrolling on the
+            // device anyway.
             if (std::fabs(io.MouseDelta.y) > 0.5f && ImGui::GetScrollMaxY() > 0.0f) {
                 float next = ImGui::GetScrollY() - io.MouseDelta.y;
                 ImGui::SetScrollY(std::clamp(next, 0.0f, ImGui::GetScrollMaxY()));
-            }
-            if (std::fabs(io.MouseDelta.x) > 0.5f && ImGui::GetScrollMaxX() > 0.0f) {
-                float next = ImGui::GetScrollX() - io.MouseDelta.x;
-                ImGui::SetScrollX(std::clamp(next, 0.0f, ImGui::GetScrollMaxX()));
             }
         }
 #endif
@@ -3786,7 +3797,11 @@ void MainWindow::draw() {
                     float hitListH = std::min<float>((float)hitOrder.size(), 5.0f) *
                                      (ImGui::GetTextLineHeightWithSpacing() * 4.5f + 6.0f * style::uiScale);
                     hitListH = std::max(hitListH, 120.0f * style::uiScale);
-                    ImGui::BeginChild("##hit_list_scroll", ImVec2(0, hitListH), false, ImGuiWindowFlags_HorizontalScrollbar);
+                    // No HorizontalScrollbar flag — per user request, all submenu
+                    // panels are vertical-scroll only.  Long hit names will be
+                    // clipped to the panel width rather than allowing the page
+                    // to slide left/right.
+                    ImGui::BeginChild("##hit_list_scroll", ImVec2(0, hitListH), false);
                     std::sort(hitOrder.begin(), hitOrder.end(), [&](int a, int b) {
                         switch (predatorHitSortMode) {
                         case 1:
