@@ -12,8 +12,13 @@
             android:icon="@mipmap/ic_launcher"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             android:exported="true"
+<<<<<<< HEAD
             android:configChanges="orientation|keyboardHidden|screenSize"
             android:windowSoftInputMode="adjustResize">
+=======
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+>>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
             <meta-data android:name="android.app.lib_name" android:value="sdrpp_core" />
 
             <intent-filter>

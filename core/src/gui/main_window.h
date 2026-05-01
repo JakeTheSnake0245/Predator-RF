@@ -12,7 +12,7 @@
 #include <vector>
 #include "../json.hpp"
 
-#define WINDOW_FLAGS ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground
+#define WINDOW_FLAGS ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
 
 class MainWindow {
 public:
@@ -51,7 +51,8 @@ private:
         PREDATOR_TAB_MAP,
         PREDATOR_TAB_MISSION,
         PREDATOR_TAB_KUJHAD,
-        PREDATOR_TAB_SYSTEM
+        PREDATOR_TAB_SYSTEM,
+        PREDATOR_TAB_BASELINE
     };
 
     enum PredatorRole {

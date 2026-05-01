@@ -30,8 +30,11 @@
 #include <ctime>
 #include <chrono>
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <cctype>
+#include <sstream>
+#include <cstdlib>
 #include <signal_path/source.h>
 #include <gui/dialogs/loading_screen.h>
 #include <gui/colormaps.h>
@@ -41,6 +44,7 @@
 #include "../predator/decoder_ingest.h"
 #include "../predator/kujhad_fleet.h"
 #include "../predator/native_decoder_registry.h"
+#include "../predator/cot_reporter.h"
 #include <ctime>
 
 void MainWindow::init() {
@@ -219,10 +223,14 @@ void MainWindow::init() {
     gui::waterfall.setFFTHeight(fftHeight);
 
     predatorMissionMode = std::clamp<int>((int)core::configManager.conf["predatorMissionMode"], PREDATOR_MODE_MANUAL, PREDATOR_MODE_QUICKSCAN);
+<<<<<<< HEAD
     predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_SYSTEM);
     if (core::configManager.conf.contains("predatorWfControlsOpen")) {
         predatorWfControlsOpen = (bool)core::configManager.conf["predatorWfControlsOpen"];
     }
+=======
+    predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_BASELINE);
+>>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
     predatorQuickFilter = std::clamp<int>((int)core::configManager.conf["predatorQuickFilter"], 0, 3);
     predatorHitSortMode = std::clamp<int>((int)core::configManager.conf["predatorHitSortMode"], 0, 5);
     predatorEventFilter = std::clamp<int>((int)core::configManager.conf["predatorEventFilter"], 0, 5);
@@ -406,6 +414,13 @@ void MainWindow::vfoAddedHandler(VFOManager::VFO* vfo, void* ctx) {
 
     sigpath::vfoManager.setCenterOffset(name, _this->initComplete ? newOffset : offset);
 }
+
+struct BaselineBin {
+    double sum = 0.0;
+    int    n   = 0;
+    double mn  =  1e9;
+    double mx  = -1e9;
+};
 
 void MainWindow::draw() {
     ImGui::Begin("Main", NULL, WINDOW_FLAGS);
@@ -644,7 +659,8 @@ void MainWindow::draw() {
         "MAP",
         "MIS",
         "KUJ",
-        "SYS"
+        "SYS",
+        "BASE"
     };
 
     const char* tabTitles[] = {
@@ -654,7 +670,8 @@ void MainWindow::draw() {
         T("Map"),
         T("Mission Config"),
         T("Kujhad Fleet"),
-        T("System")
+        T("System"),
+        T("Baseline")
     };
 
     const char* tabDescriptions[] = {
@@ -664,7 +681,8 @@ void MainWindow::draw() {
         T("Launch the touch-first phone map tied to handset GPS."),
         T("Drive search bands, targets, excludes, dwell, and quick-scan workflow."),
         T("Operate this unit as a Device or pull peer state from a Controller."),
-        T("Health, theme, legacy modules, and operator-level status.")
+        T("Health, theme, legacy modules, and operator-level status."),
+        T("Record local RF noise floor and scan against it to surface anomalies.")
     };
 
     const char* quickFilterLabels[] = {
@@ -672,6 +690,90 @@ void MainWindow::draw() {
         T("Target"),
         T("Exclude"),
         T("Unknown")
+    };
+
+    // ── Text-edit popup ─────────────────────────────────────────────────────
+    // Android keyboards cover inline InputText widgets.  openPendEdit() opens
+    // a full-width modal anchored at the top of the content area, well above
+    // the keyboard, so the user can see what they are typing.
+    static struct {
+        bool                              open     = false;
+        bool                              setFocus = false;
+        char                              buf[256] = {};
+        char                              label[128] = {};
+        std::function<void(std::string)>  onAccept;
+    } pendEdit;
+
+    // ── Baseline recorder state ──────────────────────────────────────────────
+    static bool                        blRecording    = false;
+    static bool                        blTimedMode    = false;
+    static float                       blTimerMin     = 5.0f;
+    static double                      blRecStartTime = 0.0;
+    static double                      blRecStartLat  = 0.0;
+    static double                      blRecStartLon  = 0.0;
+    static char                        blCustomName[128] = {};
+    static float                       blResKhz       = 25.0f;
+    static std::map<int64_t, BaselineBin> blAccum;
+    static int                         blSampleFrames = 0;
+    static std::string                 blRecStatus;
+    static json                        blRanges       = json::array();
+    static char                        blNewRangeName[64] = {};
+    static double                      blNewRangeStart = 0.0;
+    static double                      blNewRangeStop  = 0.0;
+    // Baseline comparison (used by recordPeakHit)
+    static bool                        blCompEnabled  = false;
+    static float                       blCompThreshDb = 10.0f;
+    static std::string                 blCompFilePath;
+    static std::string                 blCompFileName;
+    static std::map<int64_t, float>    blCompMap;
+    static bool                        blCompLoaded   = false;
+    static std::string                 blCompStatus;
+    static std::vector<std::string>    blFileList;
+    static double                      blFileListRefreshedAt = 0.0;
+
+    auto openPendEdit = [&](const char* label, const std::string& initial,
+                             std::function<void(std::string)> cb) {
+        snprintf(pendEdit.label, sizeof(pendEdit.label), "%s", label);
+        snprintf(pendEdit.buf,   sizeof(pendEdit.buf),   "%s", initial.c_str());
+        pendEdit.onAccept = std::move(cb);
+        pendEdit.open     = true;
+        pendEdit.setFocus = true;
+        ImGui::OpenPopup("##pend_edit");
+    };
+
+    auto drawEditButton = [&](const char* label, const std::string& value,
+                              std::function<void(std::string)> cb) {
+        ImGui::TextDisabled("%s", label);
+        std::string buttonText = value.empty() ? std::string(T("Tap to edit")) : value;
+        ImGui::PushID(label);
+        if (ImGui::Button(buttonText.c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            openPendEdit(label, value, std::move(cb));
+        }
+        ImGui::PopID();
+    };
+
+    auto drawEditDoubleButton = [&](const char* label, double value, const char* fmt,
+                                    std::function<void(double)> cb) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), fmt, value);
+        drawEditButton(label, std::string(buf), [cb = std::move(cb)](std::string text) {
+            char* end = nullptr;
+            double next = std::strtod(text.c_str(), &end);
+            if (end != text.c_str()) {
+                cb(next);
+            }
+        });
+    };
+
+    auto drawEditIntButton = [&](const char* label, int value,
+                                 std::function<void(int)> cb) {
+        drawEditButton(label, std::to_string(value), [cb = std::move(cb)](std::string text) {
+            char* end = nullptr;
+            long next = std::strtol(text.c_str(), &end, 10);
+            if (end != text.c_str()) {
+                cb((int)next);
+            }
+        });
     };
 
     auto savePredatorState = [&]() {
@@ -733,15 +835,23 @@ void MainWindow::draw() {
     auto applyTouchScroll = [&]() {
 #ifdef __ANDROID__
         ImGuiIO& io = ImGui::GetIO();
-        // Threshold of 8px distinguishes a swipe from a tap; ChildWindows flag lets
-        // hover detection work even when a nested item captured the active state.
-        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows) &&
-            ImGui::IsMouseDragging(ImGuiMouseButton_Left, 8.0f * style::uiScale)) {
-            float nextScrollY = std::clamp(ImGui::GetScrollY() - io.MouseDelta.y, 0.0f, ImGui::GetScrollMaxY());
-            ImGui::SetScrollY(nextScrollY);
-            if (ImGui::GetScrollMaxX() > 0.0f) {
-                float nextScrollX = std::clamp(ImGui::GetScrollX() - io.MouseDelta.x, 0.0f, ImGui::GetScrollMaxX());
-                ImGui::SetScrollX(nextScrollX);
+        // Direct position + button-state check.  IsWindowHovered/IsMouseDragging
+        // are unreliable inside child windows when widgets (sliders, buttons) have
+        // captured ActiveId — the hover check silently returns false even though
+        // the finger is clearly over the window.  Instead, compare io.MousePos
+        // against the actual window rect and apply the per-frame delta directly.
+        ImVec2 wpos  = ImGui::GetWindowPos();
+        ImVec2 wsize = ImGui::GetWindowSize();
+        if (io.MouseDown[0] &&
+            io.MousePos.x >= wpos.x && io.MousePos.x < wpos.x + wsize.x &&
+            io.MousePos.y >= wpos.y && io.MousePos.y < wpos.y + wsize.y) {
+            if (std::fabs(io.MouseDelta.y) > 0.5f && ImGui::GetScrollMaxY() > 0.0f) {
+                float next = ImGui::GetScrollY() - io.MouseDelta.y;
+                ImGui::SetScrollY(std::clamp(next, 0.0f, ImGui::GetScrollMaxY()));
+            }
+            if (std::fabs(io.MouseDelta.x) > 0.5f && ImGui::GetScrollMaxX() > 0.0f) {
+                float next = ImGui::GetScrollX() - io.MouseDelta.x;
+                ImGui::SetScrollX(std::clamp(next, 0.0f, ImGui::GetScrollMaxX()));
             }
         }
 #endif
@@ -846,15 +956,22 @@ void MainWindow::draw() {
         core::configManager.release(true);
     };
 
+    // Debounced variant: at most one disk write per 500 ms for high-frequency
+    // decoder ingestion paths so the UI thread isn't blocked by JSON I/O on
+    // every frame during active scanning. Manual events and hit recording use
+    // savePredatorEvents() directly to stay immediate.
+    auto scheduleEventSave = [&]() {
+        static double lastSaveTime = -9999.0;
+        double now = ImGui::GetTime();
+        if (now - lastSaveTime >= 0.5) {
+            savePredatorEvents(events);
+            lastSaveTime = now;
+        }
+    };
+
     auto savePredatorHits = [&](const json& newHits) {
         core::configManager.acquire();
         core::configManager.conf["predatorHits"] = newHits;
-        core::configManager.release(true);
-    };
-
-    auto saveNetworkAliases = [&](const json& newAliases) {
-        core::configManager.acquire();
-        core::configManager.conf["predatorNetworkAliases"] = newAliases;
         core::configManager.release(true);
     };
 
@@ -881,12 +998,6 @@ void MainWindow::draw() {
             if (!decoderBridges[key].contains("mode")    || !decoderBridges[key]["mode"].is_string())     { decoderBridges[key]["mode"]    = defaultMode; }
             if (!decoderBridges[key].contains("notes")   || !decoderBridges[key]["notes"].is_string())    { decoderBridges[key]["notes"]   = defaultNotes; }
         }
-    };
-
-    auto saveSessionNote = [&](const std::string& note) {
-        core::configManager.acquire();
-        core::configManager.conf["predatorSessionNote"] = note;
-        core::configManager.release(true);
     };
 
     auto saveDsdFmeConfig = [&](bool enabled, const std::string& host, int port, const std::string& mode) {
@@ -982,10 +1093,17 @@ void MainWindow::draw() {
 
     auto buildScanCandidates = [&]() {
         std::vector<PredatorScanCandidate> candidates;
+        // Whether any search band is enabled — used to filter targets by band.
+        bool anyBandEnabled = false;
+        for (int bi = 0; bi < (int)searchBands.size(); bi++) {
+            if (readJsonBool(searchBands[bi], "enabled", true)) { anyBandEnabled = true; break; }
+        }
         for (int i = 0; i < targets.size(); i++) {
             if (!readJsonBool(targets[i], "enabled", true)) { continue; }
             double frequency = readJsonDouble(targets[i], "frequency", 0.0);
             if (frequency <= 0.0 || isExcludedFrequency(frequency)) { continue; }
+            // Skip targets outside any enabled search band (respects deselected bands).
+            if (anyBandEnabled && !isInEnabledSearchBand(frequency)) { continue; }
             PredatorScanCandidate cand;
             cand.name = readJsonString(targets[i], "name", "Target");
             cand.frequency = frequency;
@@ -1102,6 +1220,117 @@ void MainWindow::draw() {
         return std::string(buf);
     };
 
+    // ── Baseline helpers ─────────────────────────────────────────────────────
+
+    auto blFmtHz = [](double hz) -> std::string {
+        char b[32];
+        if      (hz >= 1e9) snprintf(b, sizeof(b), "%.0fG", hz / 1e9);
+        else if (hz >= 1e6) snprintf(b, sizeof(b), "%.0fM", hz / 1e6);
+        else if (hz >= 1e3) snprintf(b, sizeof(b), "%.0fk", hz / 1e3);
+        else                snprintf(b, sizeof(b), "%.0f",  hz);
+        return std::string(b);
+    };
+
+    auto blDefaultFilename = [&]() -> std::string {
+        char tsBuf[32];
+        std::time_t t = (std::time_t)blRecStartTime;
+        if (t == 0) t = std::time(nullptr);
+        std::tm* tm = std::localtime(&t);
+        if (tm) std::strftime(tsBuf, sizeof(tsBuf), "%Y%m%d_%H%M%S", tm);
+        else    snprintf(tsBuf, sizeof(tsBuf), "unknown");
+        std::string suffix;
+        for (int r = 0; r < (int)blRanges.size(); r++) {
+            if (!readJsonBool(blRanges[r], "enabled", true)) continue;
+            double rs = readJsonDouble(blRanges[r], "start", 0.0);
+            double re = readJsonDouble(blRanges[r], "stop",  0.0);
+            if (rs > re) std::swap(rs, re);
+            if (!suffix.empty()) suffix += "_";
+            suffix += blFmtHz(rs) + "-" + blFmtHz(re);
+        }
+        return std::string(tsBuf) + (suffix.empty() ? "" : "_" + suffix) + "_baseline.csv";
+    };
+
+    auto saveBaseline = [&]() {
+        if (blAccum.empty()) { blRecStatus = "No data — start recording first"; return; }
+        std::string root = (std::string)core::args["root"];
+        std::filesystem::path dir = std::filesystem::path(root) / "baselines";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+
+        std::string fname = (strlen(blCustomName) > 0) ? std::string(blCustomName) : blDefaultFilename();
+        if (fname.size() < 4 || fname.substr(fname.size() - 4) != ".csv") fname += ".csv";
+
+        std::filesystem::path outPath = dir / fname;
+        std::ofstream out(outPath);
+        if (!out.is_open()) { blRecStatus = "Cannot write: " + outPath.string(); return; }
+
+        char startTs[32]; std::time_t st = (std::time_t)blRecStartTime;
+        std::tm* stm = std::localtime(&st);
+        if (stm) std::strftime(startTs, sizeof(startTs), "%Y-%m-%dT%H:%M:%S", stm);
+        else     snprintf(startTs, sizeof(startTs), "unknown");
+
+        double resHz = blResKhz * 1000.0;
+        out << "freq_hz,mean_power_dbfs,min_power_dbfs,max_power_dbfs,sample_count,"
+               "recording_start,recording_lat,recording_lon\n";
+        for (auto& [bucket, bin] : blAccum) {
+            if (bin.n == 0) continue;
+            double freqHz = (double)bucket * resHz;
+            double mean   = bin.sum / (double)bin.n;
+            char row[256];
+            snprintf(row, sizeof(row), "%lld,%.2f,%.2f,%.2f,%d,%s,%.7f,%.7f\n",
+                     (long long)(int64_t)freqHz, mean, bin.mn, bin.mx, bin.n,
+                     startTs, blRecStartLat, blRecStartLon);
+            out << row;
+        }
+        blRecStatus = "Saved: " + fname;
+        blFileListRefreshedAt = 0.0; // force refresh of file list
+    };
+
+    auto loadBaseline = [&](const std::string& path, const std::string& name) {
+        blCompMap.clear();
+        blCompLoaded = false;
+        blCompStatus = "Loading...";
+        std::ifstream in(path);
+        if (!in.is_open()) { blCompStatus = "Cannot open: " + name; return; }
+        std::string line;
+        std::getline(in, line); // skip header
+        double resHz = blResKhz * 1000.0;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            std::istringstream ss(line);
+            std::string tok;
+            if (!std::getline(ss, tok, ',')) continue;
+            int64_t freqHz = 0;
+            try { freqHz = std::stoll(tok); } catch (...) { continue; }
+            if (!std::getline(ss, tok, ',')) continue;
+            float mean = 0.0f;
+            try { mean = std::stof(tok); } catch (...) { continue; }
+            int64_t bucket = (int64_t)std::round((double)freqHz / resHz);
+            blCompMap[bucket] = mean;
+        }
+        blCompLoaded  = !blCompMap.empty();
+        blCompFilePath = path;
+        blCompFileName = name;
+        blCompStatus  = blCompLoaded
+            ? ("Loaded " + std::to_string(blCompMap.size()) + " bins")
+            : "File empty or unreadable";
+    };
+
+    auto refreshBaselineFileList = [&]() {
+        std::string root = (std::string)core::args["root"];
+        std::filesystem::path dir = std::filesystem::path(root) / "baselines";
+        blFileList.clear();
+        std::error_code ec;
+        if (!std::filesystem::exists(dir, ec)) return;
+        for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            std::string ext = entry.path().extension().string();
+            if (ext != ".csv") continue;
+            blFileList.push_back(entry.path().string());
+        }
+        std::sort(blFileList.begin(), blFileList.end(), std::greater<std::string>());
+    };
+
     auto extractionPath = [&](bool voice, const std::string& baseName, const char* extension) {
         FolderSelect& selector = voice ? voiceFolderSelect : dataFolderSelect;
         std::string configuredPath = voice ? voiceOutputPath : dataOutputPath;
@@ -1158,6 +1387,83 @@ void MainWindow::draw() {
     // Ensure RTL433 bridge config is normalized every frame, even if the user
     // never opened the Decoder Bridges section. This lets the ingester start
     // automatically on app launch when enabled was persisted as true.
+    // -------- ATAK CoT reporter --------
+    // Declared at this scope so the lambda closures below (recordPeakHit etc.)
+    // can capture cotReporter by reference.  Config is re-applied only when
+    // the user changes a setting (guarded by lastCotCfg diff check).
+    static predator::CotReporter cotReporter;
+    {
+        static predator::CotReporter::Config lastCotCfg;
+
+        predator::CotReporter::Config cfg;
+        cfg.enabled       = readJsonBool  (core::configManager.conf, "cotEnabled",       false);
+        cfg.useUdp        = readJsonBool  (core::configManager.conf, "cotUseUdp",        true);
+        cfg.host          = readJsonString(core::configManager.conf, "cotHost",           "239.2.3.1");
+        cfg.port          = (int)readJsonDouble(core::configManager.conf, "cotPort",     6969.0);
+        cfg.uid           = readJsonString(core::configManager.conf, "cotUid",            "");
+        cfg.callsign      = readJsonString(core::configManager.conf, "cotCallsign",       "Predator RF");
+        cfg.chatRoom      = readJsonString(core::configManager.conf, "cotChatRoom",       "All Chat Rooms");
+        cfg.sensorMode    = readJsonBool  (core::configManager.conf, "cotSensorMode",    true);
+        cfg.saIntervalSec = (float)readJsonDouble(core::configManager.conf, "cotSaIntervalSec", 30.0);
+
+        // Only reconfigure when something actually changed to avoid restarting
+        // the SA thread every draw() frame.
+        if (cfg.enabled       != lastCotCfg.enabled       ||
+            cfg.useUdp        != lastCotCfg.useUdp        ||
+            cfg.host          != lastCotCfg.host          ||
+            cfg.port          != lastCotCfg.port          ||
+            cfg.callsign      != lastCotCfg.callsign      ||
+            cfg.chatRoom      != lastCotCfg.chatRoom      ||
+            cfg.sensorMode    != lastCotCfg.sensorMode    ||
+            cfg.saIntervalSec != lastCotCfg.saIntervalSec) {
+            cotReporter.configure(cfg);
+            lastCotCfg = cfg;
+        }
+
+        cotReporter.updateGps(phoneLat, phoneLon, phoneAccuracy, phoneHasFix);
+    }
+
+    // ── Baseline per-frame recording ────────────────────────────────────────
+    if (blRecording && playing) {
+        double now = ImGui::GetTime();
+        bool timerExpired = blTimedMode && blTimerMin > 0.0f &&
+                            (now - blRecStartTime) >= (double)(blTimerMin * 60.0f);
+        if (timerExpired) {
+            blRecording = false;
+            saveBaseline();
+        } else {
+            int width = 0;
+            float* fft = gui::waterfall.acquireLatestFFT(width);
+            if (fft && width >= 8) {
+                double centerHz = gui::waterfall.getCenterFrequency();
+                double bwHz     = gui::waterfall.getBandwidth();
+                double binHz    = bwHz / (double)width;
+                double resHz    = blResKhz * 1000.0;
+                for (int i = 0; i < width; i++) {
+                    if (fft[i] <= -900.0f || !std::isfinite(fft[i])) continue;
+                    double freqHz = centerHz - bwHz * 0.5 + ((double)i + 0.5) * binHz;
+                    bool inRange = blRanges.empty(); // pass-all when no ranges configured
+                    for (int r = 0; r < (int)blRanges.size() && !inRange; r++) {
+                        if (!readJsonBool(blRanges[r], "enabled", true)) continue;
+                        double rs = readJsonDouble(blRanges[r], "start", 0.0);
+                        double re = readJsonDouble(blRanges[r], "stop",  0.0);
+                        if (rs > re) std::swap(rs, re);
+                        if (freqHz >= rs && freqHz <= re) inRange = true;
+                    }
+                    if (!inRange) continue;
+                    int64_t bucket = (int64_t)std::round(freqHz / resHz);
+                    BaselineBin& bin = blAccum[bucket];
+                    bin.sum += fft[i];
+                    bin.n++;
+                    bin.mn = std::min(bin.mn, (double)fft[i]);
+                    bin.mx = std::max(bin.mx, (double)fft[i]);
+                }
+                blSampleFrames++;
+                gui::waterfall.releaseLatestFFT();
+            }
+        }
+    }
+
     ensureDecoderBridge("rtl433", "127.0.0.1", 1433, "TCP JSON Lines",
         "rtl_433 ISM device telemetry (315/433/868/915 MHz). Each JSON line becomes one Network event; protocol = device model, networkId = device id, talkgroup = channel.");
 
@@ -2259,6 +2565,18 @@ void MainWindow::draw() {
             (predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(frequency))) {
             return 0;
         }
+        // Baseline comparison: suppress hits that are within the baseline noise floor.
+        // Signals NOT present in the baseline always pass through (new emitter).
+        if (blCompEnabled && blCompLoaded && !blCompMap.empty()) {
+            double resHz   = blResKhz * 1000.0;
+            int64_t bucket = (int64_t)std::round(frequency / resHz);
+            auto it = blCompMap.find(bucket);
+            if (it != blCompMap.end()) {
+                // Known frequency: only record if clearly above baseline
+                if (strengthDb <= it->second + blCompThreshDb) return 0;
+            }
+            // Not in baseline → new emitter → fall through and record
+        }
 
         int hitIndex = -1;
         bool newHit = false;
@@ -2324,7 +2642,10 @@ void MainWindow::draw() {
         }
         savePredatorHits(hits);
         if (!suppressEvent) {
-            savePredatorEvents(events);
+            scheduleEventSave();
+            // Fire CoT GeoChat report to configured ATAK endpoint.
+            cotReporter.reportHit(frequency, strengthDb, (float)readJsonDouble(hit, "snrDb", 0.0),
+                                  hitCount, state, readJsonString(hit, "name", ""));
         }
         predatorScanStatus = "Hit " + formatFrequency(frequency);
         if (newHit && state == "unknown") { return 2; }
@@ -2348,13 +2669,20 @@ void MainWindow::draw() {
         double visibleStart = lowFreq;
         double visibleStop = lowFreq + gui::waterfall.getViewBandwidth();
 
+        // Apply band filter in ALL modes when at least one search band is enabled.
+        // When no bands are configured (e.g. classify cold-start), pass everything.
+        bool bandFilterActive = false;
+        for (int si = 0; si < (int)searchBands.size(); si++) {
+            if (readJsonBool(searchBands[si], "enabled", true)) { bandFilterActive = true; break; }
+        }
+
         double noiseSum = 0.0;
         int noiseCount = 0;
         for (int i = 0; i < width; i++) {
             if (fft[i] <= -900.0f || !std::isfinite(fft[i])) { continue; }
             double freq = lowFreq + ((double)i + 0.5) * pixelToFreq;
             if (freq < visibleStart || freq > visibleStop ||
-                (predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(freq)) ||
+                (bandFilterActive && !isInEnabledSearchBand(freq)) ||
                 isExcludedFrequency(freq)) { continue; }
             noiseSum += fft[i];
             noiseCount++;
@@ -2384,7 +2712,7 @@ void MainWindow::draw() {
             float snrDb = fft[i] - noiseDb;
             if (fft[i] < missionThreshold || snrDb < predatorPeakSnrDb) { continue; }
             double freq = lowFreq + ((double)i + 0.5) * pixelToFreq;
-            if ((predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(freq)) || isExcludedFrequency(freq)) { continue; }
+            if ((bandFilterActive && !isInEnabledSearchBand(freq)) || isExcludedFrequency(freq)) { continue; }
 
             double weightedFreq = 0.0;
             double weightedPower = 0.0;
@@ -2744,11 +3072,11 @@ void MainWindow::draw() {
     float pad = 8.0f * style::uiScale;
     float statusBarHeight = 42.0f * style::uiScale;
     float controlBarHeight = 46.0f * style::uiScale;
-    float railWidth = 64.0f * style::uiScale;
+    float railWidth = 72.0f * style::uiScale;
     float contentTop = pad + statusBarHeight + pad + controlBarHeight + pad;
     float contentHeight = std::max<float>(winSize.y - contentTop - pad, 120.0f * style::uiScale);
     float waterfallWidth = std::max<float>(winSize.x - railWidth - (3.0f * pad), 120.0f * style::uiScale);
-    float railX = pad + waterfallWidth + pad;
+    float railX = winSize.x - railWidth - pad;  // anchor to right edge; immune to any waterfallWidth clamping
     float overlayMinWidth = std::min<float>(320.0f * style::uiScale, waterfallWidth);
     float overlayMaxWidth = std::max<float>(overlayMinWidth, waterfallWidth - (28.0f * style::uiScale));
 #ifdef __ANDROID__
@@ -2807,6 +3135,41 @@ void MainWindow::draw() {
         predatorTab = PREDATOR_TAB_MAP;
         showMenu = true;
         savePredatorState();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button(T("VIEW"), ImVec2(68.0f * style::uiScale, 0))) {
+        ImGui::OpenPopup("##predator_spectrum_view");
+    }
+    if (ImGui::BeginPopup("##predator_spectrum_view")) {
+        ImGui::TextUnformatted(T("Spectrum View"));
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(220.0f * style::uiScale);
+        if (ImGui::SliderFloat(T("Zoom"), &bw, 0.0f, 1.0f, "%.2f")) {
+            double factor = (double)bw * (double)bw;
+            double wfBw = gui::waterfall.getBandwidth();
+            double delta = wfBw - 1000.0;
+            double finalBw = std::min<double>(1000.0 + (factor * delta), wfBw);
+            gui::waterfall.setViewBandwidth(finalBw);
+            if (vfo != NULL) {
+                gui::waterfall.setViewOffset(vfo->centerOffset);
+            }
+        }
+        ImGui::SetNextItemWidth(220.0f * style::uiScale);
+        if (ImGui::SliderFloat(T("Max"), &fftMax, -160.0f, 0.0f, "%.0f dB")) {
+            fftMax = std::max<float>(fftMax, fftMin + 10.0f);
+            core::configManager.acquire();
+            core::configManager.conf["max"] = fftMax;
+            core::configManager.release(true);
+        }
+        ImGui::SetNextItemWidth(220.0f * style::uiScale);
+        if (ImGui::SliderFloat(T("Min"), &fftMin, -160.0f, 0.0f, "%.0f dB")) {
+            fftMin = std::min<float>(fftMax - 10.0f, fftMin);
+            core::configManager.acquire();
+            core::configManager.conf["min"] = fftMin;
+            core::configManager.release(true);
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::SetCursorPosX(ImGui::GetWindowSize().x - (44.0f * style::uiScale));
@@ -3387,11 +3750,27 @@ void MainWindow::draw() {
                     }
                     ImGui::SameLine(0, 4.0f * style::uiScale);
                     if (ImGui::Button(T("Clear All Hits"), ImVec2(bw, 0))) {
-                        for (int i = (int)hits.size() - 1; i >= 0; i--) {
-                            releaseHitRoute(i);
+                        ImGui::OpenPopup("##confirm_clear_hits");
+                    }
+                    if (ImGui::BeginPopupModal("##confirm_clear_hits", nullptr,
+                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+                        ImGui::TextUnformatted(T("Clear all hits?"));
+                        ImGui::TextDisabled("%s", T("This cannot be undone."));
+                        ImGui::Spacing();
+                        float cbw = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
+                        if (ImGui::Button(T("Clear##hits_yes"), ImVec2(cbw, 0))) {
+                            for (int i = (int)hits.size() - 1; i >= 0; i--) {
+                                releaseHitRoute(i);
+                            }
+                            hits = json::array();
+                            savePredatorHits(hits);
+                            ImGui::CloseCurrentPopup();
                         }
-                        hits = json::array();
-                        savePredatorHits(hits);
+                        ImGui::SameLine(0, 8.0f * style::uiScale);
+                        if (ImGui::Button(T("Cancel##hits_no"), ImVec2(cbw, 0))) {
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndPopup();
                     }
                     ImGui::Separator();
                 }
@@ -3667,17 +4046,34 @@ void MainWindow::draw() {
                             readJsonString(hit, "routeVfo", "—").c_str());
                     }
 
-                    if (ImGui::CollapsingHeader(T("Rename / Notes"))) {
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                        if (ImGui::InputText("Name##selected_hit_name", hitNameBuf, sizeof(hitNameBuf))) {
-                            hit["name"] = std::string(hitNameBuf);
-                            selectedChanged = true;
-                        }
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                        if (ImGui::InputTextMultiline("Note##selected_hit_note", hitNoteBuf, sizeof(hitNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 88.0f * style::uiScale))) {
-                            hit["note"] = std::string(hitNoteBuf);
-                            selectedChanged = true;
-                        }
+                    // Rename button opens a keyboard-safe popup positioned above
+                    // the Android soft keyboard so the user can see what they type.
+                    if (ImGui::Button(T("Rename / Notes"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        int capturedIdx = selectedIndex;
+                        openPendEdit(T("Hit Name"), std::string(hitNameBuf),
+                            [capturedIdx](std::string newName) {
+                                // Write through config manager (safe across frames —
+                                // pendEdit.onAccept is static; `hits` is frame-local).
+                                core::configManager.acquire();
+                                auto& h = core::configManager.conf["predatorHits"];
+                                if (h.is_array() && capturedIdx >= 0 && capturedIdx < (int)h.size()) {
+                                    h[capturedIdx]["name"] = newName;
+                                }
+                                core::configManager.release(true);
+                                // hitNameBuf is static; the next draw() frame reloads it from config.
+                            });
+                    }
+                    if (ImGui::Button(T("Edit Note"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        int capturedIdx = selectedIndex;
+                        openPendEdit(T("Hit Note"), std::string(hitNoteBuf),
+                            [capturedIdx](std::string newNote) {
+                                core::configManager.acquire();
+                                auto& h = core::configManager.conf["predatorHits"];
+                                if (h.is_array() && capturedIdx >= 0 && capturedIdx < (int)h.size()) {
+                                    h[capturedIdx]["note"] = newNote;
+                                }
+                                core::configManager.release(true);
+                            });
                     }
 
                     float halfWidth = (ImGui::GetContentRegionAvail().x - (6.0f * style::uiScale)) * 0.5f;
@@ -3905,8 +4301,24 @@ void MainWindow::draw() {
                 ImGui::EndChild();
 
                 if (ImGui::Button(T("Clear Events"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                    events = json::array();
-                    savePredatorEvents(events);
+                    ImGui::OpenPopup("##confirm_clear_events");
+                }
+                if (ImGui::BeginPopupModal("##confirm_clear_events", nullptr,
+                        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+                    ImGui::TextUnformatted(T("Clear all events?"));
+                    ImGui::TextDisabled("%s", T("This cannot be undone."));
+                    ImGui::Spacing();
+                    float bw = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
+                    if (ImGui::Button(T("Clear##events_yes"), ImVec2(bw, 0))) {
+                        events = json::array();
+                        savePredatorEvents(events);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine(0, 8.0f * style::uiScale);
+                    if (ImGui::Button(T("Cancel##events_no"), ImVec2(bw, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
                 }
             }
             if (predatorQuickFilter == 0 || predatorQuickFilter == 1) {
@@ -4152,8 +4564,10 @@ void MainWindow::draw() {
                     pushUniqueString(nodes[match].radioIds, radioId);
                 }
 
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                ImGui::InputTextWithHint("##predator_network_filter", T("Filter protocol / network / TG / radio / alias"), networkSearchBuf, sizeof(networkSearchBuf));
+                drawEditButton(T("Filter protocol / network / TG / radio / alias"), std::string(networkSearchBuf),
+                    [&](std::string nextFilter) {
+                        snprintf(networkSearchBuf, sizeof(networkSearchBuf), "%s", nextFilter.c_str());
+                    });
                 std::string filter = networkSearchBuf;
                 std::string filterLower = filter;
                 std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), [](unsigned char c){ return std::tolower(c); });
@@ -4367,11 +4781,16 @@ void MainWindow::draw() {
 
                 if (!selectedNetworkKey.empty() && ImGui::CollapsingHeader(T("Network Node Actions"), ImGuiTreeNodeFlags_DefaultOpen)) {
                     ImGui::TextDisabled("Selected: %s", selectedNetworkKey.c_str());
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    if (ImGui::InputText(T("Alias"), selectedNetworkAlias, sizeof(selectedNetworkAlias))) {
-                        networkAliases[selectedNetworkKey] = std::string(selectedNetworkAlias);
-                        saveNetworkAliases(networkAliases);
-                    }
+                    std::string selectedKeyForEdit = selectedNetworkKey;
+                    drawEditButton(T("Alias"), std::string(selectedNetworkAlias),
+                        [selectedKeyForEdit](std::string nextAlias) {
+                            snprintf(selectedNetworkAlias, sizeof(selectedNetworkAlias), "%s", nextAlias.c_str());
+                            core::configManager.acquire();
+                            auto& aliases = core::configManager.conf["predatorNetworkAliases"];
+                            if (!aliases.is_object()) { aliases = json::object(); }
+                            aliases[selectedKeyForEdit] = nextAlias;
+                            core::configManager.release(true);
+                        });
                     float thirdWidth = (ImGui::GetContentRegionAvail().x - (12.0f * style::uiScale)) / 3.0f;
                     if (ImGui::Button(T("Target Node"), ImVec2(thirdWidth, 0))) {
                         int count = applyNetworkAction(selectedNetworkKey, "target", selectedNetworkAlias);
@@ -4404,9 +4823,6 @@ void MainWindow::draw() {
                 ensureDecoderBridge("adsb",    "127.0.0.1",  30003, "BaseStation 30003","dump1090 / readsb feed. networkId = ICAO hex, talkgroup = callsign, radioId = squawk. Aircraft positions can be forwarded to the tactical map.");
                 ensureDecoderBridge("ais",     "127.0.0.1",  10110, "UDP NMEA",         "AIS marine VHF (161.975 / 162.025 MHz) via rtl_ais or aisdec. networkId = MMSI, talkgroup = ship type, radioId = call sign.");
 
-                static char bridgeHostBuf[1024];
-                static char bridgeNotesBuf[2048];
-
                 auto renderBridge = [&](const std::string& key, const char* title, const char* protocolLabel, const char* const* modes, int modeCount) {
                     json& b = decoderBridges[key];
                     bool enabled = readJsonBool(b, "enabled", false);
@@ -4430,11 +4846,22 @@ void MainWindow::draw() {
                         bool changed = false;
                         if (ImGui::Checkbox(T("Enable"), &enabled)) { b["enabled"] = enabled; changed = true; }
 
-                        snprintf(bridgeHostBuf, sizeof(bridgeHostBuf), "%s", host.c_str());
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-                        if (ImGui::InputText(T("Host"), bridgeHostBuf, sizeof(bridgeHostBuf))) { b["host"] = std::string(bridgeHostBuf); changed = true; }
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.4f);
-                        if (ImGui::InputInt(T("Port"), &port, 1, 100)) { port = std::clamp<int>(port, 1, 65535); b["port"] = port; changed = true; }
+                        drawEditButton(T("Host"), host,
+                            [key](std::string nextHost) {
+                                core::configManager.acquire();
+                                auto& bridges = core::configManager.conf["predatorDecoderBridges"];
+                                if (!bridges.is_object()) { bridges = json::object(); }
+                                bridges[key]["host"] = nextHost;
+                                core::configManager.release(true);
+                            });
+                        drawEditIntButton(T("Port"), port,
+                            [key](int nextPort) {
+                                core::configManager.acquire();
+                                auto& bridges = core::configManager.conf["predatorDecoderBridges"];
+                                if (!bridges.is_object()) { bridges = json::object(); }
+                                bridges[key]["port"] = std::clamp<int>(nextPort, 1, 65535);
+                                core::configManager.release(true);
+                            });
 
                         int modeIndex = 0;
                         for (int m = 0; m < modeCount; m++) { if (mode == modes[m]) { modeIndex = m; break; } }
@@ -4447,12 +4874,14 @@ void MainWindow::draw() {
                             changed = true;
                         }
 
-                        snprintf(bridgeNotesBuf, sizeof(bridgeNotesBuf), "%s", notes.c_str());
-                        ImGui::TextWrapped("%s", T("Notes / Endpoint Format"));
-                        if (ImGui::InputTextMultiline(("##" + key + "_notes").c_str(), bridgeNotesBuf, sizeof(bridgeNotesBuf), ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight() * 3.0f))) {
-                            b["notes"] = std::string(bridgeNotesBuf);
-                            changed = true;
-                        }
+                        drawEditButton(T("Notes / Endpoint Format"), notes,
+                            [key](std::string nextNotes) {
+                                core::configManager.acquire();
+                                auto& bridges = core::configManager.conf["predatorDecoderBridges"];
+                                if (!bridges.is_object()) { bridges = json::object(); }
+                                bridges[key]["notes"] = nextNotes;
+                                core::configManager.release(true);
+                            });
 
                         if (changed) { saveDecoderBridges(decoderBridges); }
                         ImGui::TreePop();
@@ -4525,20 +4954,28 @@ void MainWindow::draw() {
             if (ImGui::CollapsingHeader(T("DSD-FME Digital Voice"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 bool dsdChanged = false;
                 dsdChanged |= ImGui::Checkbox(T("Enable DSD-FME Bridge"), &dsdFmeEnabled);
-                static char dsdHostBuf[128] = "";
-                static bool dsdHostInit = false;
-                if (!dsdHostInit || strcmp(dsdHostBuf, dsdFmeHost.c_str()) == 0) {
-                    snprintf(dsdHostBuf, sizeof(dsdHostBuf), "%s", dsdFmeHost.c_str());
-                    dsdHostInit = true;
-                }
-                if (ImGui::InputText(T("Bridge Host"), dsdHostBuf, sizeof(dsdHostBuf))) {
-                    dsdFmeHost = dsdHostBuf;
-                    dsdChanged = true;
-                }
-                if (ImGui::InputInt(T("Bridge Port"), &dsdFmePort, 1, 100)) {
-                    dsdFmePort = std::clamp<int>(dsdFmePort, 1, 65535);
-                    dsdChanged = true;
-                }
+                drawEditButton(T("Bridge Host"), dsdFmeHost,
+                    [dsdFmeEnabled, dsdFmePort, dsdFmeMode, voiceOutputPath, dataOutputPath](std::string nextHost) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDsdFmeEnabled"] = dsdFmeEnabled;
+                        core::configManager.conf["predatorDsdFmeHost"] = nextHost;
+                        core::configManager.conf["predatorDsdFmePort"] = dsdFmePort;
+                        core::configManager.conf["predatorDsdFmeMode"] = dsdFmeMode;
+                        core::configManager.conf["predatorVoiceOutputPath"] = voiceOutputPath;
+                        core::configManager.conf["predatorDataOutputPath"] = dataOutputPath;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Bridge Port"), dsdFmePort,
+                    [dsdFmeEnabled, dsdFmeHost, dsdFmeMode, voiceOutputPath, dataOutputPath](int nextPort) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDsdFmeEnabled"] = dsdFmeEnabled;
+                        core::configManager.conf["predatorDsdFmeHost"] = dsdFmeHost;
+                        core::configManager.conf["predatorDsdFmePort"] = std::clamp<int>(nextPort, 1, 65535);
+                        core::configManager.conf["predatorDsdFmeMode"] = dsdFmeMode;
+                        core::configManager.conf["predatorVoiceOutputPath"] = voiceOutputPath;
+                        core::configManager.conf["predatorDataOutputPath"] = dataOutputPath;
+                        core::configManager.release(true);
+                    });
                 const char* dsdModes[] = { "TCP Direct Link Audio", "RIGCTL Metadata", "External Companion" };
                 int dsdModeIndex = (dsdFmeMode == dsdModes[1]) ? 1 : ((dsdFmeMode == dsdModes[2]) ? 2 : 0);
                 if (ImGui::Combo(T("Bridge Mode"), &dsdModeIndex, "TCP Direct Link Audio\0RIGCTL Metadata\0External Companion\0")) {
@@ -4804,30 +5241,67 @@ void MainWindow::draw() {
                 drawMissionRunControls();
             }
 
-            // Scroll the panel to expose the focused input field when the keyboard opens.
-            // Called after every InputText/InputDouble so the tapped field stays visible.
-#ifdef __ANDROID__
-            auto scrollToActive = []() {
-                if (ImGui::IsItemActivated()) { ImGui::SetScrollHereY(0.0f); }
-            };
-#else
-            auto scrollToActive = []() {};
-#endif
+            // ── Baseline Comparison ──────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Baseline Comparison"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                ImGui::Checkbox(T("Scan against baseline##blcomp"), &blCompEnabled);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", T("When enabled, hits within the baseline noise floor are suppressed.\nOnly signals that exceed the baseline by the threshold are recorded."));
+
+                if (blCompEnabled) {
+                    ImGui::Spacing();
+                    ImGui::LeftLabel(T("Threshold##blcomp"));
+                    ImGui::SetNextItemWidth(fw * 0.5f);
+                    ImGui::SliderFloat("##blThresh", &blCompThreshDb, 1.0f, 40.0f, "+%.1f dB");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", T("Signal must exceed baseline by this many dB to be recorded as a hit."));
+
+                    ImGui::Spacing();
+                    if (blCompLoaded) {
+                        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "%s", T("Baseline loaded:"));
+                        ImGui::TextWrapped("%s", blCompFileName.c_str());
+                        ImGui::TextWrapped("%s", blCompStatus.c_str());
+                        if (ImGui::Button(T("Unload baseline##blcu"), ImVec2(fw, 0))) {
+                            blCompMap.clear();
+                            blCompLoaded   = false;
+                            blCompFilePath = "";
+                            blCompFileName = "";
+                            blCompStatus   = "";
+                        }
+                    } else {
+                        ImGui::TextDisabled("%s", blCompStatus.empty() ? T("No baseline loaded. Open the Baseline tab to record and load one.") : blCompStatus.c_str());
+                        // Inline file picker from saved baselines
+                        double now2 = ImGui::GetTime();
+                        if (now2 - blFileListRefreshedAt > 1.0) {
+                            refreshBaselineFileList();
+                            blFileListRefreshedAt = now2;
+                        }
+                        if (!blFileList.empty()) {
+                            ImGui::Spacing();
+                            ImGui::TextDisabled("%s", T("Select a saved baseline:"));
+                            for (auto& fpath : blFileList) {
+                                std::string fname2 = std::filesystem::path(fpath).filename().string();
+                                ImGui::PushID(fpath.c_str());
+                                if (ImGui::Button(fname2.c_str(), ImVec2(fw, 0))) {
+                                    loadBaseline(fpath, fname2);
+                                }
+                                ImGui::PopID();
+                            }
+                        }
+                    }
+                }
+            }
 
             if (ImGui::CollapsingHeader(T("Search Bands"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 float fw = ImGui::GetContentRegionAvail().x;
-                float hw = (fw - 4.0f * style::uiScale) * 0.5f;
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputText("##BandName", newBandName, sizeof(newBandName))) {}
-                ImGui::SameLine(0, 0); ImGui::TextDisabled(" Band Name");
-                scrollToActive();
-                ImGui::SetNextItemWidth(hw);
-                if (ImGui::InputDouble("##BandStart", &newBandStart, 0, 0, "%.0f Hz")) {}
-                scrollToActive();
-                ImGui::SameLine(0, 4.0f * style::uiScale);
-                ImGui::SetNextItemWidth(hw);
-                if (ImGui::InputDouble("##BandStop", &newBandStop, 0, 0, "%.0f Hz")) {}
-                scrollToActive();
+                drawEditButton(T("Band Name"), std::string(newBandName),
+                    [&](std::string nextName) {
+                        snprintf(newBandName, sizeof(newBandName), "%s", nextName.c_str());
+                    });
+                drawEditDoubleButton(T("Band Start Hz"), newBandStart, "%.0f",
+                    [&](double nextStart) { newBandStart = nextStart; });
+                drawEditDoubleButton(T("Band Stop Hz"), newBandStop, "%.0f",
+                    [&](double nextStop) { newBandStop = nextStop; });
                 float stepBtnW = (fw - 4.0f * style::uiScale) * 0.5f;
                 if (ImGui::Button("- 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart -= 1e6; newBandStop -= 1e6; }
                 ImGui::SameLine(0, 4.0f * style::uiScale);
@@ -4887,14 +5361,10 @@ void MainWindow::draw() {
                     updated.push_back(row);
                     commitTargets(updated);
                 }
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##TargetHz", &newTargetFreq, 0, 0, "%.0f Hz")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Target Hz");
-                scrollToActive();
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##TargetBW", &newTargetBandwidth, 0, 0, "%.0f Hz BW")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Bandwidth");
-                scrollToActive();
+                drawEditDoubleButton(T("Target Hz"), newTargetFreq, "%.0f",
+                    [&](double nextFreq) { newTargetFreq = nextFreq; });
+                drawEditDoubleButton(T("Target Bandwidth Hz"), newTargetBandwidth, "%.0f",
+                    [&](double nextBw) { newTargetBandwidth = nextBw; });
                 if (ImGui::Button("From Current View##tgt", ImVec2(fw, 0))) {
                     newTargetFreq = gui::waterfall.getCenterFrequency();
                     newTargetBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
@@ -4946,14 +5416,10 @@ void MainWindow::draw() {
                     updated.push_back(row);
                     commitExcludes(updated);
                 }
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##ExclHz", &newExcludeFreq, 0, 0, "%.0f Hz")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Exclude Hz");
-                scrollToActive();
-                ImGui::SetNextItemWidth(fw);
-                if (ImGui::InputDouble("##ExclBW", &newExcludeBandwidth, 0, 0, "%.0f Hz BW")) {}
-                ImGui::SameLine(0,0); ImGui::TextDisabled(" Bandwidth");
-                scrollToActive();
+                drawEditDoubleButton(T("Exclude Hz"), newExcludeFreq, "%.0f",
+                    [&](double nextFreq) { newExcludeFreq = nextFreq; });
+                drawEditDoubleButton(T("Exclude Bandwidth Hz"), newExcludeBandwidth, "%.0f",
+                    [&](double nextBw) { newExcludeBandwidth = nextBw; });
                 if (ImGui::Button("From Current View##excl", ImVec2(fw, 0))) {
                     newExcludeFreq = gui::waterfall.getCenterFrequency();
                     newExcludeBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
@@ -5004,18 +5470,36 @@ void MainWindow::draw() {
                 float thresholdEdit   = displayedThreshold;
                 bool  recordEdit      = displayedRecordAudio;
                 bool settingsChanged = false;
-                if (ImGui::InputInt("Dwell (ms)", &dwellEdit, 100, 500)) {
-                    dwellEdit = std::max<int>(100, dwellEdit);
-                    settingsChanged = true;
-                }
-                if (ImGui::InputInt("QuickScan Delay (ms)", &qsDelayEdit, 50, 250)) {
-                    qsDelayEdit = std::max<int>(50, qsDelayEdit);
-                    settingsChanged = true;
-                }
-                if (ImGui::InputInt("QuickScan Duration (ms)", &qsDurEdit, 100, 500)) {
-                    qsDurEdit = std::max<int>(100, qsDurEdit);
-                    settingsChanged = true;
-                }
+                drawEditIntButton(T("Dwell (ms)"), dwellEdit,
+                    [thresholdEdit, qsDelayEdit, qsDurEdit, recordEdit](int nextDwell) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = std::max<int>(100, nextDwell);
+                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
+                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("QuickScan Delay (ms)"), qsDelayEdit,
+                    [thresholdEdit, dwellEdit, qsDurEdit, recordEdit](int nextDelay) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
+                        core::configManager.conf["predatorQuickScanDelayMs"] = std::max<int>(50, nextDelay);
+                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("QuickScan Duration (ms)"), qsDurEdit,
+                    [thresholdEdit, dwellEdit, qsDelayEdit, recordEdit](int nextDuration) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
+                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
+                        core::configManager.conf["predatorQuickScanDurationMs"] = std::max<int>(100, nextDuration);
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
                 if (ImGui::SliderFloat("Threshold", &thresholdEdit, -120.0f, 0.0f, "%.1f dB")) {
                     settingsChanged = true;
                 }
@@ -5031,10 +5515,13 @@ void MainWindow::draw() {
                 bool scanUxChanged = false;
                 scanUxChanged |= ImGui::Checkbox(T("Hold on New Hit"), &predatorHoldOnNewHit);
                 scanUxChanged |= ImGui::Checkbox(T("Suppress Duplicate Hits"), &predatorSuppressDuplicateHits);
-                if (ImGui::InputInt(T("Duplicate Window (s)"), &predatorDuplicateHitWindowSec, 1, 5)) {
-                    predatorDuplicateHitWindowSec = std::clamp<int>(predatorDuplicateHitWindowSec, 1, 600);
-                    scanUxChanged = true;
-                }
+                drawEditIntButton(T("Duplicate Window (s)"), predatorDuplicateHitWindowSec,
+                    [this](int nextWindow) {
+                        predatorDuplicateHitWindowSec = std::clamp<int>(nextWindow, 1, 600);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDuplicateHitWindowSec"] = predatorDuplicateHitWindowSec;
+                        core::configManager.release(true);
+                    });
                 scanUxChanged |= ImGui::Checkbox(T("Extend Dwell on Strong Hit"), &predatorExtendDwellOnStrongHit);
                 if (ImGui::SliderFloat(T("Strong Hit SNR"), &predatorStrongHitSnrDb, 6.0f, 40.0f, "%.1f dB")) {
                     scanUxChanged = true;
@@ -5051,18 +5538,27 @@ void MainWindow::draw() {
                 if (ImGui::SliderFloat(T("Peak SNR"), &predatorPeakSnrDb, 3.0f, 30.0f, "%.1f dB")) {
                     peakChanged = true;
                 }
-                if (ImGui::InputDouble(T("Peak Spacing Hz"), &predatorPeakMinSpacingHz, 1000.0, 12500.0, "%.0f")) {
-                    predatorPeakMinSpacingHz = std::max<double>(1000.0, predatorPeakMinSpacingHz);
-                    peakChanged = true;
-                }
-                if (ImGui::InputInt(T("Max Peaks / Dwell"), &predatorPeakMaxPerDwell, 1, 5)) {
-                    predatorPeakMaxPerDwell = std::clamp<int>(predatorPeakMaxPerDwell, 1, 20);
-                    peakChanged = true;
-                }
-                if (ImGui::InputInt(T("Marker Slots"), &predatorMarkerSlots, 1, 1)) {
-                    predatorMarkerSlots = std::clamp<int>(predatorMarkerSlots, 1, 16);
-                    peakChanged = true;
-                }
+                drawEditDoubleButton(T("Peak Spacing Hz"), predatorPeakMinSpacingHz, "%.0f",
+                    [this](double nextSpacing) {
+                        predatorPeakMinSpacingHz = std::max<double>(1000.0, nextSpacing);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorPeakMinSpacingHz"] = predatorPeakMinSpacingHz;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Max Peaks / Dwell"), predatorPeakMaxPerDwell,
+                    [this](int nextMax) {
+                        predatorPeakMaxPerDwell = std::clamp<int>(nextMax, 1, 20);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorPeakMaxPerDwell"] = predatorPeakMaxPerDwell;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Marker Slots"), predatorMarkerSlots,
+                    [this](int nextSlots) {
+                        predatorMarkerSlots = std::clamp<int>(nextSlots, 1, 16);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorMarkerSlots"] = predatorMarkerSlots;
+                        core::configManager.release(true);
+                    });
                 ImGui::TextWrapped("%s", chineseUi ? "\u6383\u63cf\u505c\u7559\u6642\uff0cPredator RF \u6703\u5c07\u901a\u904e\u9580\u6abb\u8207 SNR \u689d\u4ef6\u7684\u5cf0\u503c\u8a18\u9304\u70ba\u96c6\u7fa4\u547d\u4e2d\uff0c\u4e26\u7531\u547d\u4e2d\u9801\u9762\u6307\u6d3e\u6a19\u8a18\u3001\u89e3\u78bc\u5668\u3001\u76ee\u6a19\u6216\u6392\u9664\u3002" : "During scan dwell, Predator RF records peaks that clear threshold and SNR checks as clustered hits. Markers, decoders, targets, and excludes are assigned from the Hits page.");
                 if (peakChanged) {
                     savePeakDetectionConfig();
@@ -5098,36 +5594,42 @@ void MainWindow::draw() {
                         savePredatorState();
                     }
                     int port = kujhadDeviceListenPort;
-                    if (ImGui::InputInt(T("Listen port"), &port)) {
-                        kujhadDeviceListenPort = std::clamp(port, 1, 65535);
-                        savePredatorState();
-                    }
-                    char nameBuf[64];
-                    std::snprintf(nameBuf, sizeof(nameBuf), "%s", kujhadDeviceName.c_str());
-                    if (ImGui::InputText(T("Device name"), nameBuf, sizeof(nameBuf))) {
-                        kujhadDeviceName = nameBuf;
-                        savePredatorState();
-                    }
+                    drawEditIntButton(T("Listen port"), port,
+                        [this](int nextPort) {
+                            kujhadDeviceListenPort = std::clamp(nextPort, 1, 65535);
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadDeviceListenPort"] = kujhadDeviceListenPort;
+                            core::configManager.release(true);
+                        });
+                    drawEditButton(T("Device name"), kujhadDeviceName,
+                        [this](std::string nextName) {
+                            kujhadDeviceName = nextName;
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadDeviceName"] = kujhadDeviceName;
+                            core::configManager.release(true);
+                        });
                     // Optional operator override for the address that will
                     // be advertised to controllers in the identify payload
                     // and shown in Reachable Addresses. Useful when the
                     // detected NICs aren't what the operator wants peers
                     // to dial — for example a NAT'd public IP, a DNS name,
                     // or the inside-VPN address when multi-homed.
-                    char advBuf[128];
-                    std::snprintf(advBuf, sizeof(advBuf), "%s", kujhadAdvertiseAddress.c_str());
-                    if (ImGui::InputText(T("Advertise address (override)"), advBuf, sizeof(advBuf))) {
-                        kujhadAdvertiseAddress = advBuf;
-                        savePredatorState();
-                    }
+                    drawEditButton(T("Advertise address (override)"), kujhadAdvertiseAddress,
+                        [this](std::string nextAddress) {
+                            kujhadAdvertiseAddress = nextAddress;
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadAdvertiseAddress"] = kujhadAdvertiseAddress;
+                            core::configManager.release(true);
+                        });
                     ImGui::TextDisabled("%s", T("Leave empty to publish only the auto-detected NICs below."));
-                    char keyBuf[96];
-                    std::snprintf(keyBuf, sizeof(keyBuf), "%s", kujhadApiKey.c_str());
-                    if (ImGui::InputText(T("API key"), keyBuf, sizeof(keyBuf))) {
-                        kujhadApiKey = keyBuf;
-                        kujhadServer.setApiKey(kujhadApiKey);
-                        savePredatorState();
-                    }
+                    drawEditButton(T("API key"), kujhadApiKey,
+                        [this](std::string nextKey) {
+                            kujhadApiKey = nextKey;
+                            kujhadServer.setApiKey(kujhadApiKey);
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadApiKey"] = kujhadApiKey;
+                            core::configManager.release(true);
+                        });
                     if (ImGui::Button(T("Regenerate API key"))) {
                         kujhadApiKey = predator::kujhadGenerateApiKey();
                         kujhadServer.setApiKey(kujhadApiKey);
@@ -5155,19 +5657,21 @@ void MainWindow::draw() {
                         savePredatorState();
                     }
                     if (!tlsAvailable) ImGui::EndDisabled();
-                    char certBuf[512];
-                    char keyBufTls[512];
-                    std::snprintf(certBuf, sizeof(certBuf), "%s", kujhadTlsCertPath.c_str());
-                    std::snprintf(keyBufTls, sizeof(keyBufTls), "%s", kujhadTlsKeyPath.c_str());
-                    if (ImGui::InputText(T("TLS cert (PEM)"), certBuf, sizeof(certBuf))) {
-                        kujhadTlsCertPath = certBuf;
-                        kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
-                        savePredatorState();
-                    }
-                    if (ImGui::InputText(T("TLS key (PEM)"), keyBufTls, sizeof(keyBufTls))) {
-                        kujhadTlsKeyPath = keyBufTls;
-                        savePredatorState();
-                    }
+                    drawEditButton(T("TLS cert (PEM)"), kujhadTlsCertPath,
+                        [this](std::string nextPath) {
+                            kujhadTlsCertPath = nextPath;
+                            kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadTlsCertPath"] = kujhadTlsCertPath;
+                            core::configManager.release(true);
+                        });
+                    drawEditButton(T("TLS key (PEM)"), kujhadTlsKeyPath,
+                        [this](std::string nextPath) {
+                            kujhadTlsKeyPath = nextPath;
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadTlsKeyPath"] = kujhadTlsKeyPath;
+                            core::configManager.release(true);
+                        });
                     if (!tlsAvailable) ImGui::BeginDisabled();
                     if (ImGui::Button(T("Regenerate self-signed cert"))) {
                         // CN follows the device name so peers see a
@@ -5317,12 +5821,16 @@ void MainWindow::draw() {
                             saveKujhadPeers(peers);
                         }
                         ImGui::SameLine();
-                        char pinBuf[128];
-                        std::snprintf(pinBuf, sizeof(pinBuf), "%s", peerPin.c_str());
-                        if (ImGui::InputText(T("Pinned fingerprint"), pinBuf, sizeof(pinBuf))) {
-                            peers[i]["pinnedFingerprint"] = std::string(pinBuf);
-                            saveKujhadPeers(peers);
-                        }
+                        int peerIndexForPin = (int)i;
+                        drawEditButton(T("Pinned fingerprint"), peerPin,
+                            [peerIndexForPin](std::string nextPin) {
+                                core::configManager.acquire();
+                                auto& peersConf = core::configManager.conf["kujhadPeers"];
+                                if (peersConf.is_array() && peerIndexForPin >= 0 && peerIndexForPin < (int)peersConf.size()) {
+                                    peersConf[peerIndexForPin]["pinnedFingerprint"] = nextPin;
+                                }
+                                core::configManager.release(true);
+                            });
                         // Trust-on-first-use helper: copy the peer's
                         // currently observed cert fingerprint into the
                         // pinned slot so subsequent connections refuse
@@ -5356,22 +5864,42 @@ void MainWindow::draw() {
                 }
 
                 if (ImGui::CollapsingHeader(T("Add Peer"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                    ImGui::InputText(T("Name"), kujhadAddPeerName, sizeof(kujhadAddPeerName));
-                    ImGui::InputText(T("Host"), kujhadAddPeerHost, sizeof(kujhadAddPeerHost));
-                    ImGui::InputInt(T("Port"), &kujhadAddPeerPort);
-                    ImGui::InputText(T("API Key"), kujhadAddPeerKey, sizeof(kujhadAddPeerKey));
+                    static char kujhadAddPeerName[64] = {0};
+                    static char kujhadAddPeerHost[128] = {0};
+                    static int  kujhadAddPeerPort = 8080;
+                    static char kujhadAddPeerKey[96] = {0};
+                    static bool kujhadAddPeerTls = false;
+                    static char kujhadAddPeerPin[128] = {0};
+
+                    drawEditButton(T("Name"), std::string(kujhadAddPeerName),
+                        [](std::string nextName) {
+                            snprintf(kujhadAddPeerName, sizeof(kujhadAddPeerName), "%s", nextName.c_str());
+                        });
+                    drawEditButton(T("Host"), std::string(kujhadAddPeerHost),
+                        [](std::string nextHost) {
+                            snprintf(kujhadAddPeerHost, sizeof(kujhadAddPeerHost), "%s", nextHost.c_str());
+                        });
+                    drawEditIntButton(T("Port"), kujhadAddPeerPort,
+                        [](int nextPort) {
+                            kujhadAddPeerPort = std::clamp<int>(nextPort, 1, 65535);
+                        });
+                    drawEditButton(T("API Key"), std::string(kujhadAddPeerKey),
+                        [](std::string nextKey) {
+                            snprintf(kujhadAddPeerKey, sizeof(kujhadAddPeerKey), "%s", nextKey.c_str());
+                        });
                     // New peers default to TLS-off so existing
                     // loopback/overlay setups keep working without
                     // surprise. The operator flips the per-row toggle
                     // (and pastes the fingerprint) once the device is
                     // verified.
-                    static bool kujhadAddPeerTls = false;
-                    static char kujhadAddPeerPin[128] = {0};
                     if (!predator::kujhadTlsAvailable()) ImGui::BeginDisabled();
                     ImGui::Checkbox(T("TLS (HTTPS)"), &kujhadAddPeerTls);
                     if (!predator::kujhadTlsAvailable()) ImGui::EndDisabled();
                     ImGui::SameLine();
-                    ImGui::InputText(T("Pinned fingerprint (optional)"), kujhadAddPeerPin, sizeof(kujhadAddPeerPin));
+                    drawEditButton(T("Pinned fingerprint (optional)"), std::string(kujhadAddPeerPin),
+                        [](std::string nextPin) {
+                            snprintf(kujhadAddPeerPin, sizeof(kujhadAddPeerPin), "%s", nextPin.c_str());
+                        });
                     if (ImGui::Button(T("Add peer"))) {
                         if (kujhadAddPeerName[0] && kujhadAddPeerHost[0]) {
                             json& peers = core::configManager.conf["kujhadPeers"];
@@ -5425,7 +5953,8 @@ void MainWindow::draw() {
                     else {
                         auto& client = kujhadClients[kujhadActivePeerIdx];
                         static double cmdFreq = 433920000.0;
-                        ImGui::InputDouble(T("Frequency Hz"), &cmdFreq, 1000.0, 1000000.0, "%.0f");
+                        drawEditDoubleButton(T("Frequency Hz"), cmdFreq, "%.0f",
+                            [](double nextFreq) { cmdFreq = nextFreq; });
                         if (ImGui::Button(T("Send tune.set"))) {
                             std::string err;
                             json args; args["frequencyHz"] = cmdFreq;
@@ -5469,7 +5998,7 @@ void MainWindow::draw() {
                     "mission, identify. The tx.* class is rejected at the wire (RX-only build)."));
             }
         }
-        else {
+        else if (predatorTab == PREDATOR_TAB_SYSTEM) {
             if (ImGui::CollapsingHeader(T("Language"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 int languageIndex = (predatorLanguage == "zh-Hant") ? 1 : 0;
                 if (ImGui::Combo(T("Language"), &languageIndex, "English\0Traditional Chinese\0")) {
@@ -5506,11 +6035,156 @@ void MainWindow::draw() {
                 }
                 ImGui::TextWrapped("Maps are now wired through the phone GPS path. DF remains intentionally excluded.");
             }
-            if (ImGui::CollapsingHeader(T("Session Export"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                if (ImGui::InputTextMultiline("Note##session_note", sessionNoteBuf, sizeof(sessionNoteBuf), ImVec2(ImGui::GetContentRegionAvail().x, 96.0f * style::uiScale))) {
-                    saveSessionNote(std::string(sessionNoteBuf));
+            // ---- TAK / ATAK CoT integration ----
+            if (ImGui::CollapsingHeader(T("TAK Integration"), ImGuiTreeNodeFlags_None)) {
+                float w = ImGui::GetContentRegionAvail().x;
+                ImGui::TextWrapped("%s", T("Send CoT GeoChat to an ATAK endpoint whenever a frequency hit is recorded. "
+                    "Sensor SA beacons broadcast the GPS fix as a friendly unit on the ATAK map."));
+                ImGui::Separator();
+
+                // Enabled toggle
+                bool cotEnabled = readJsonBool(core::configManager.conf, "cotEnabled", false);
+                if (ImGui::Checkbox(T("Enable TAK CoT reporting##cot"), &cotEnabled)) {
+                    core::configManager.acquire();
+                    core::configManager.conf["cotEnabled"] = cotEnabled;
+                    core::configManager.release(true);
                 }
+
+                ImGui::Spacing();
+
+                // Protocol (UDP / TCP)
+                {
+                    bool useUdp = readJsonBool(core::configManager.conf, "cotUseUdp", true);
+                    int proto = useUdp ? 0 : 1;
+                    ImGui::LeftLabel(T("Protocol##cot"));
+                    ImGui::SetNextItemWidth(w * 0.5f);
+                    if (ImGui::Combo("##cot_proto", &proto, "UDP\0TCP\0")) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotUseUdp"] = (proto == 0);
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("UDP: multicast/unicast (fire-and-forget).\nTCP: direct TAK Server connection."));
+                    }
+                }
+
+                // Host
+                {
+                    std::string cotHost = readJsonString(core::configManager.conf, "cotHost", "239.2.3.1");
+                    ImGui::LeftLabel(T("Host##cot"));
+                    drawEditButton(T("Host"), cotHost,
+                        [](std::string nextHost) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotHost"] = nextHost;
+                            core::configManager.release(true);
+                        });
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("239.2.3.1 = ATAK multicast (LAN)\n127.0.0.1 = same device\nIP of TAK Server = direct TCP"));
+                    }
+                }
+
+                // Port
+                {
+                    int cotPort = (int)readJsonDouble(core::configManager.conf, "cotPort", 6969.0);
+                    ImGui::LeftLabel(T("Port##cot"));
+                    drawEditIntButton(T("Port"), cotPort,
+                        [](int nextPort) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotPort"] = std::max(1, std::min(65535, nextPort));
+                            core::configManager.release(true);
+                        });
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("6969 = ATAK SA multicast\n4242 = ATAK direct UDP\n8087 = TAK Server TLS\n8088 = TAK Server plain TCP"));
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", T("Identity"));
+                ImGui::Separator();
+
+                // Sensor mode toggle
+                {
+                    bool sensorMode = readJsonBool(core::configManager.conf, "cotSensorMode", true);
+                    if (ImGui::Checkbox(T("Sensor mode (separate entity)##cot"), &sensorMode)) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotSensorMode"] = sensorMode;
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("On: messages appear from a dedicated 'Predator RF' sensor entity.\nOff: messages use the callsign below but no separate SA beacon is sent."));
+                    }
+                }
+
+                // Callsign
+                {
+                    std::string cotCallsign = readJsonString(core::configManager.conf, "cotCallsign", "Predator RF");
+                    ImGui::LeftLabel(T("Callsign##cot"));
+                    drawEditButton(T("Callsign"), cotCallsign,
+                        [](std::string nextCallsign) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotCallsign"] = nextCallsign;
+                            core::configManager.conf["cotUid"] = "";  // force UID rederivation
+                            core::configManager.release(true);
+                        });
+                }
+
+                // Chat room
+                {
+                    std::string cotRoom = readJsonString(core::configManager.conf, "cotChatRoom", "All Chat Rooms");
+                    ImGui::LeftLabel(T("Chat Room##cot"));
+                    drawEditButton(T("Chat Room"), cotRoom,
+                        [](std::string nextRoom) {
+                            core::configManager.acquire();
+                            core::configManager.conf["cotChatRoom"] = nextRoom;
+                            core::configManager.release(true);
+                        });
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("'All Chat Rooms' = broadcast to everyone.\nType a team name (e.g. TeamBlue) for group chat."));
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", T("SA Beacon (sensor mode)"));
+                ImGui::Separator();
+
+                // SA interval
+                {
+                    float saInterval = (float)readJsonDouble(core::configManager.conf, "cotSaIntervalSec", 30.0);
+                    ImGui::LeftLabel(T("SA interval (s)##cot"));
+                    ImGui::SetNextItemWidth(w - ImGui::GetCursorPosX());
+                    if (ImGui::SliderFloat("##cot_sa_interval", &saInterval, 5.0f, 300.0f, "%.0f s")) {
+                        core::configManager.acquire();
+                        core::configManager.conf["cotSaIntervalSec"] = saInterval;
+                        core::configManager.release(true);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("How often the sensor SA beacon is sent.\nLower = more frequent map presence updates."));
+                    }
+                    ImGui::TextDisabled("GPS: %s  |  SA running: %s",
+                        phoneHasFix ? "fixed" : "none",
+                        (readJsonBool(core::configManager.conf, "cotEnabled", false) &&
+                         readJsonBool(core::configManager.conf, "cotSensorMode", true))
+                            ? "yes" : "no");
+                }
+
+                ImGui::Spacing();
+                // Test button
+                if (ImGui::Button(T("Send Test Message##cot"), ImVec2(w, 0))) {
+                    cotReporter.reportHit(154575000.0, -55.0f, 12.0f, 1, "test", "Predator RF Test");
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", T("Sends a synthetic 154.575 MHz hit to verify endpoint connectivity."));
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Session Export"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                drawEditButton(T("Note"), std::string(sessionNoteBuf),
+                    [](std::string nextNote) {
+                        snprintf(sessionNoteBuf, sizeof(sessionNoteBuf), "%s", nextNote.c_str());
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorSessionNote"] = nextNote;
+                        core::configManager.release(true);
+                    });
                 if (ImGui::Button(T("Export Session JSON"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     exportPredatorSession();
                 }
@@ -5544,6 +6218,235 @@ void MainWindow::draw() {
 
                 ImGui::Checkbox("WF Single Click", &gui::waterfall.VFOMoveSingleClick);
                 ImGui::Checkbox("Lock Menu Order", &gui::menu.locked);
+            }
+        }
+
+        else if (predatorTab == PREDATOR_TAB_BASELINE) {
+            float fw = ImGui::GetContentRegionAvail().x;
+            float hw = (fw - 4.0f * style::uiScale) * 0.5f;
+
+            // ── Frequency Ranges ─────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Frequency Ranges"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Range name — tap to open keyboard-safe popup above the soft keyboard
+                ImGui::TextDisabled("%s", T("Range Name"));
+                {
+                    char* nameDst = blNewRangeName; int nameSz = (int)sizeof(blNewRangeName);
+                    const char* namePreview = strlen(blNewRangeName) > 0 ? blNewRangeName : T("(tap to set name)");
+                    if (ImGui::Button(namePreview, ImVec2(fw, 0))) {
+                        openPendEdit(T("Range Name"), std::string(blNewRangeName),
+                            [nameDst, nameSz](std::string s) {
+                                snprintf(nameDst, nameSz, "%s", s.c_str());
+                            });
+                    }
+                }
+                // Start / Stop Hz — use popup so the keyboard doesn't cover the field
+                ImGui::TextDisabled("%s", T("Start Hz"));
+                {
+                    double* startDst = &blNewRangeStart;
+                    char startPreview[48];
+                    snprintf(startPreview, sizeof(startPreview), "%.0f Hz", blNewRangeStart);
+                    if (ImGui::Button(startPreview, ImVec2(hw, 0))) {
+                        char initStr[48]; snprintf(initStr, sizeof(initStr), "%.0f", blNewRangeStart);
+                        openPendEdit(T("Start Frequency (Hz)"), std::string(initStr),
+                            [startDst](std::string s) {
+                                try { *startDst = std::stod(s); } catch (...) {}
+                            });
+                    }
+                }
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                ImGui::TextDisabled("%s", T("Stop Hz"));
+                {
+                    double* stopDst = &blNewRangeStop;
+                    char stopPreview[48];
+                    snprintf(stopPreview, sizeof(stopPreview), "%.0f Hz", blNewRangeStop);
+                    if (ImGui::Button(stopPreview, ImVec2(hw, 0))) {
+                        char initStr[48]; snprintf(initStr, sizeof(initStr), "%.0f", blNewRangeStop);
+                        openPendEdit(T("Stop Frequency (Hz)"), std::string(initStr),
+                            [stopDst](std::string s) {
+                                try { *stopDst = std::stod(s); } catch (...) {}
+                            });
+                    }
+                }
+                if (ImGui::Button(T("From Current View##bl"), ImVec2(fw, 0))) {
+                    double ctr = gui::waterfall.getCenterFrequency();
+                    double bw2 = gui::waterfall.getViewBandwidth();
+                    blNewRangeStart = ctr - bw2 * 0.5;
+                    blNewRangeStop  = ctr + bw2 * 0.5;
+                }
+                if (ImGui::Button(T("+ Add Range##bl"), ImVec2(fw, 0))) {
+                    if (blNewRangeStart != blNewRangeStop) {
+                        json r;
+                        r["name"]    = strlen(blNewRangeName) > 0 ? std::string(blNewRangeName) : "Range";
+                        r["start"]   = std::min(blNewRangeStart, blNewRangeStop);
+                        r["stop"]    = std::max(blNewRangeStart, blNewRangeStop);
+                        r["enabled"] = true;
+                        blRanges.push_back(r);
+                        snprintf(blNewRangeName, sizeof(blNewRangeName), "%s", "");
+                        blNewRangeStart = 0.0; blNewRangeStop = 0.0;
+                    }
+                }
+                ImGui::Spacing();
+                for (int ri = 0; ri < (int)blRanges.size(); ri++) {
+                    bool en = readJsonBool(blRanges[ri], "enabled", true);
+                    ImGui::PushID(ri);
+                    if (ImGui::Checkbox("##blen", &en)) blRanges[ri]["enabled"] = en;
+                    ImGui::SameLine();
+                    double rs = readJsonDouble(blRanges[ri], "start", 0.0);
+                    double re = readJsonDouble(blRanges[ri], "stop",  0.0);
+                    std::string rangeLabel = readJsonString(blRanges[ri], "name", "Range")
+                        + "  " + blFmtHz(rs) + " – " + blFmtHz(re);
+                    ImGui::TextUnformatted(rangeLabel.c_str());
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(fw - 40.0f * style::uiScale);
+                    if (ImGui::Button(T("Del##blr"), ImVec2(40.0f * style::uiScale, 0))) {
+                        blRanges.erase(blRanges.begin() + ri);
+                        ri--;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::Spacing();
+                ImGui::LeftLabel(T("Resolution"));
+                ImGui::SetNextItemWidth(fw * 0.4f);
+                ImGui::SliderFloat("##blRes", &blResKhz, 5.0f, 100.0f, "%.0f kHz");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Frequency bucket size for accumulation.\nSmaller = finer resolution, larger file."));
+            }
+
+            // ── Recording ────────────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Recording"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Mode selector
+                if (ImGui::RadioButton(T("Continuous##blmode"), !blTimedMode)) blTimedMode = false;
+                ImGui::SameLine(0, 12.0f * style::uiScale);
+                if (ImGui::RadioButton(T("Timed##blmode"), blTimedMode))  blTimedMode = true;
+                if (blTimedMode) {
+                    ImGui::SetNextItemWidth(fw * 0.5f);
+                    ImGui::SliderFloat(T("Duration (min)##blmin"), &blTimerMin, 0.5f, 120.0f, "%.1f min");
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", T("Output filename (leave blank for auto)"));
+                {
+                    char* cnameDst = blCustomName; int cnameSz = (int)sizeof(blCustomName);
+                    const char* cnamePreview = strlen(blCustomName) > 0 ? blCustomName : T("(tap to set custom filename)");
+                    if (ImGui::Button(cnamePreview, ImVec2(fw, 0))) {
+                        openPendEdit(T("Output Filename (.csv)"), std::string(blCustomName),
+                            [cnameDst, cnameSz](std::string s) {
+                                snprintf(cnameDst, cnameSz, "%s", s.c_str());
+                            });
+                    }
+                }
+                if (strlen(blCustomName) == 0) {
+                    std::string hint = "  " + blDefaultFilename();
+                    ImGui::TextDisabled("%s", hint.c_str());
+                }
+
+                ImGui::Spacing();
+                if (!blRecording) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.18f, 0.55f, 0.22f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.65f, 0.26f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.18f, 1.0f));
+                    if (ImGui::Button(T("▶  START RECORDING##bl"), ImVec2(fw, 0))) {
+                        if (!playing) {
+                            blRecStatus = "Start the SDR source first";
+                        } else {
+                            blAccum.clear();
+                            blSampleFrames = 0;
+                            blRecStartTime = ImGui::GetTime();
+                            blRecStartLat  = phoneLat;
+                            blRecStartLon  = phoneLon;
+                            blRecording    = true;
+                            blRecStatus    = "Recording…";
+                        }
+                    }
+                    ImGui::PopStyleColor(3);
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.70f, 0.18f, 0.18f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.22f, 0.22f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.60f, 0.15f, 0.15f, 1.0f));
+                    if (ImGui::Button(T("■  STOP RECORDING##bl"), ImVec2(fw, 0))) {
+                        blRecording = false;
+                        blRecStatus = "Stopped — press Save to export";
+                    }
+                    ImGui::PopStyleColor(3);
+                    // Elapsed / remaining
+                    double elapsed = ImGui::GetTime() - blRecStartTime;
+                    int em = (int)(elapsed / 60.0); int es = (int)elapsed % 60;
+                    char statBuf[128];
+                    if (blTimedMode && blTimerMin > 0.0f) {
+                        double remaining = (double)(blTimerMin * 60.0f) - elapsed;
+                        if (remaining < 0.0) remaining = 0.0;
+                        int rm = (int)(remaining / 60.0); int rs2 = (int)remaining % 60;
+                        snprintf(statBuf, sizeof(statBuf),
+                                 "Recording  %d:%02d elapsed | %d:%02d remaining | %d frames",
+                                 em, es, rm, rs2, blSampleFrames);
+                    } else {
+                        snprintf(statBuf, sizeof(statBuf),
+                                 "Recording  %d:%02d elapsed | %d frames",
+                                 em, es, blSampleFrames);
+                    }
+                    ImGui::TextWrapped("%s", statBuf);
+                }
+
+                if (!blRecording && blSampleFrames > 0) {
+                    ImGui::Spacing();
+                    if (ImGui::Button(T("💾  Save to File##bl"), ImVec2(fw, 0))) {
+                        saveBaseline();
+                    }
+                }
+
+                if (!blRecStatus.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextWrapped("%s", blRecStatus.c_str());
+                }
+            }
+
+            // ── Saved Baselines ───────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Saved Baselines"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Refresh list once per second
+                double now = ImGui::GetTime();
+                if (now - blFileListRefreshedAt > 1.0) {
+                    refreshBaselineFileList();
+                    blFileListRefreshedAt = now;
+                }
+
+                if (ImGui::Button(T("Refresh##blfl"), ImVec2(fw, 0))) {
+                    refreshBaselineFileList();
+                    blFileListRefreshedAt = now;
+                }
+                ImGui::Spacing();
+
+                if (blFileList.empty()) {
+                    ImGui::TextDisabled("%s", T("No baseline files found in baselines/ folder."));
+                } else {
+                    for (auto& fpath : blFileList) {
+                        std::string fname = std::filesystem::path(fpath).filename().string();
+                        ImGui::PushID(fpath.c_str());
+                        ImGui::TextWrapped("%s", fname.c_str());
+                        float bw3 = (fw - 4.0f * style::uiScale) * 0.5f;
+                        if (ImGui::Button(T("Load for Comparison##blfc"), ImVec2(bw3, 0))) {
+                            loadBaseline(fpath, fname);
+                        }
+                        ImGui::SameLine(0, 4.0f * style::uiScale);
+                        if (ImGui::Button(T("Delete##blfd"), ImVec2(bw3, 0))) {
+                            std::error_code ec2;
+                            std::filesystem::remove(fpath, ec2);
+                            refreshBaselineFileList();
+                            if (blCompFilePath == fpath) {
+                                blCompMap.clear();
+                                blCompLoaded  = false;
+                                blCompStatus  = "Loaded file was deleted";
+                                blCompFilePath = "";
+                                blCompFileName = "";
+                            }
+                        }
+                        ImGui::PopID();
+                        ImGui::Separator();
+                    }
+                }
+
+                if (blCompLoaded) {
+                    ImGui::Spacing();
+                    ImGui::TextWrapped("%s", blCompStatus.c_str());
+                }
             }
         }
 
@@ -5615,19 +6518,28 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
+<<<<<<< HEAD
     ImGuiWindowFlags railFlags = backend::isTouchPrimary()
         ? ImGuiWindowFlags_AlwaysVerticalScrollbar
         : ImGuiWindowFlags_None;
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, railFlags);
+=======
+    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+>>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
 
-    for (int i = 0; i < 7; i++) {
+    float tabAvailH = ImGui::GetContentRegionAvail().y;
+    float tabSpacingY = ImGui::GetStyle().ItemSpacing.y;
+    float tabBtnH = std::floor((tabAvailH - (tabSpacingY * 7.0f)) / 8.0f);
+    tabBtnH = std::max(tabBtnH, 1.0f);
+
+    for (int i = 0; i < 8; i++) {
         bool activeTab = (predatorTab == i);
         if (activeTab) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.45f, 0.24f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.50f, 0.27f, 1.0f));
         }
-        if (ImGui::Button(tabLabels[i], ImVec2(ImGui::GetContentRegionAvail().x, 36.0f * style::uiScale))) {
+        if (ImGui::Button(tabLabels[i], ImVec2(ImGui::GetContentRegionAvail().x, tabBtnH))) {
             if (predatorTab == i && showMenu) {
                 showMenu = false;
             }
@@ -5645,6 +6557,7 @@ void MainWindow::draw() {
         }
     }
 
+<<<<<<< HEAD
     // Zoom / Max / Min sliders moved out of the rail and into the
     // top-right dropdown overlay above the waterfall (see the
     // "Top-right Zoom/Max/Min dropdown" block earlier in draw()).
@@ -5690,6 +6603,9 @@ void MainWindow::draw() {
     }
 
     ImGui::EndChild();
+=======
+    ImGui::EndChild();  // PredatorRightRail
+>>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
     ImGui::PopStyleColor();
 
     gui::waterfall.setFFTMin(fftMin);
@@ -5697,6 +6613,7 @@ void MainWindow::draw() {
     gui::waterfall.setWaterfallMin(fftMin);
     gui::waterfall.setWaterfallMax(fftMax);
 
+<<<<<<< HEAD
     // === Soft-keyboard inset compensation ====================================
     // When the Android IME is up, treat the bottom strip of DisplaySize
     // covered by the keyboard as unusable, then ensure the active text
@@ -5835,6 +6752,41 @@ void MainWindow::draw() {
         }
         s_imeLastBottom   = imeBottom;
         s_imeLastActiveId = curActiveId;
+=======
+    // ── Text-edit popup ──────────────────────────────────────────────────────
+    // Rendered last so it appears on top of everything.  Positioned in the
+    // upper portion of the content area so the Android software keyboard
+    // (which appears at the bottom) never obscures the input field.
+    if (ImGui::IsPopupOpen("##pend_edit")) {
+        float popW = winSize.x - 4.0f * pad;
+        ImGui::SetNextWindowPos(ImVec2(2.0f * pad, contentTop + pad), ImGuiCond_Always);
+        // Force the width; height auto-sizes around the label + input + buttons.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(popW, 0.0f), ImVec2(popW, winSize.y * 0.45f));
+    }
+    if (ImGui::BeginPopupModal("##pend_edit", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize)) {
+        ImGui::TextUnformatted(pendEdit.label);
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if (pendEdit.setFocus) {
+            ImGui::SetKeyboardFocusHere();
+            pendEdit.setFocus = false;
+        }
+        bool submitted = ImGui::InputText("##pend_edit_text", pendEdit.buf, sizeof(pendEdit.buf),
+            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::Spacing();
+        float bw2 = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
+        if (submitted || ImGui::Button(T("OK##pend_edit_ok"), ImVec2(bw2, 0))) {
+            if (pendEdit.onAccept) { pendEdit.onAccept(std::string(pendEdit.buf)); }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine(0, 8.0f * style::uiScale);
+        if (ImGui::Button(T("Cancel##pend_edit_cancel"), ImVec2(bw2, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+>>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
     }
 
     ImGui::End();
