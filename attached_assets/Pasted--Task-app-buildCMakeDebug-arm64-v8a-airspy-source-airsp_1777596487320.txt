@@ -1,0 +1,1059 @@
+> Task :app:buildCMakeDebug[arm64-v8a][airspy_source,airspyhf_source,etc]
+C/C++: ninja: Entering directory `C:\Users\cjake\TEMP\Predator-SDR\android\app\.cmake\Debug\3z4r304y\arm64-v8a'
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/spectran_http_client.cpp:53:88: warning: format specifies type 'int' but the argument has type 'uint64_t' (aka 'unsigned long') [-Wformat]
+C/C++:     sprintf(buf, "{\"frequencyCenter\":%d,\"frequencySpan\":%d,\"type\":\"capture\"}", freq, _samplerate);
+C/C++:                                        ~~                                              ^~~~
+C/C++:                                        %lu
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/spectran_http_client.cpp:53:94: warning: format specifies type 'int' but the argument has type 'uint64_t' (aka 'unsigned long') [-Wformat]
+C/C++:     sprintf(buf, "{\"frequencyCenter\":%d,\"frequencySpan\":%d,\"type\":\"capture\"}", freq, _samplerate);
+C/C++:                                                             ~~                               ^~~~~~~~~~~
+C/C++:                                                             %lu
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/spectran_http_client.cpp:56:27: warning: format specifies type 'int' but the argument has type 'std::basic_string<char>::size_type' (aka 'unsigned long') [-Wformat]
+C/C++:     sprintf(lenBuf, "%d", data.size());
+C/C++:                      ~~   ^~~~~~~~~~~
+C/C++:                      %lu
+C/C++: 3 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hackrf_source/src/main.cpp:3:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hackrf_source/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/plutosdr_source/src/main.cpp:3:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/plutosdr_source/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/android_audio_sink/src/main.cpp:3:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/android_audio_sink/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspyhf_source/src/main.cpp:3:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspyhf_source/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -DINSTALL_PREFIX=\"/usr\" -Drtl433_decoder_EXPORTS -IC:/Users/cjake/TEMP/Predator-SDR/core/src/src -IC:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src -IC:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/vendor/rtl_433/include -IC:/Users/cjake/TEMP/Predator-SDR/core/src -IC:/Users/cjake/TEMP/Predator-SDR/core/src/imgui -IC:/Users/cjake/TEMP/Predator-SDR/core/backends/android -IC:/Users/cjake/TEMP/Predator-SDR/core/backends/android/imgui -IC:/Users/cjake/TEMP/Predator-SDR/core/libcorrect/include -IC:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include -IC:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/sources/android/native_app_glue -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -g -Og -std=c++17 -Wno-unused-command-line-argument -undefined dynamic_lookup -MD -MT decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/src/main.cpp.o -MF decoder_modules\rtl433_decoder\CMakeFiles\rtl433_decoder.dir\src\main.cpp.o.d -o decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/src/main.cpp.o -c C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp:33:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp:34:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp:126:28: error: only virtual member functions can be marked 'override'
+C/C++:     ~Rtl433DecoderModule() override {
+C/C++:                            ^~~~~~~~~
+C/C++: 2 warnings and 1 error generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspy_source/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspy_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_sdr_source/src/main.cpp:3:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_sdr_source/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/sdrpp_server_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/sdrpp_server_source/src/main.cpp:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spyserver_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spyserver_source/src/main.cpp:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_tcp_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_tcp_source/src/main.cpp:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hermes_source/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hermes_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rfspace_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rfspace_source/src/main.cpp:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/network_sink/src/main.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/network_sink/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/gui/dialogs/loading_screen.cpp:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: 1 warning generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:273:34: note: in instantiation of template class 'dsp::buffer::Reshaper<float>' requested here
+C/C++:     dsp::buffer::Reshaper<float> reshape;
+C/C++:                                  ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 3 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/file_source/src/main.cpp:5:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/file_source/src/main.cpp:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/gui/menus/bandplan.cpp:3:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: 1 warning generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/gui/gui.cpp:1:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: 1 warning generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/core.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/core.cpp:21:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+
+> Task :app:buildCMakeDebug[arm64-v8a][airspy_source,airspyhf_source,etc] FAILED
+Execution failed for task ':app:buildCMakeDebug[arm64-v8a][airspy_source,airspyhf_source,etc]'.
+> com.android.ide.common.process.ProcessException: ninja: Entering directory `C:\Users\cjake\TEMP\Predator-SDR\android\app\.cmake\Debug\3z4r304y\arm64-v8a'
+  [1/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/error_buffer.c.o
+  [2/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/lookup.c.o
+  [3/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/history_buffer.c.o
+  [4/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/convolutional.c.o
+  [5/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/metric.c.o
+  [6/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/bit.c.o
+  [7/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/encode.c.o
+  [8/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/decode.c.o
+  [9/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/encode.c.o
+  [10/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/reed-solomon.c.o
+  [11/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/polynomial.c.o
+  [12/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/decode.c.o
+  [13/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/decoder_util.c.o
+  [14/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/compat_time.c.o
+  [15/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/confparse.c.o
+  [16/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/data_tag.c.o
+  [17/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/data.c.o
+  [18/481] Building CXX object decoder_modules/m17_decoder/CMakeFiles/m17_decoder.dir/src/base40.cpp.o
+  [19/481] Linking C static library core\libcorrect\lib\libcorrect.a
+  [20/481] Building CXX object source_modules/rtl_tcp_source/CMakeFiles/rtl_tcp_source.dir/src/rtl_tcp_client.cpp.o
+  [21/481] Building CXX object source_modules/rfspace_source/CMakeFiles/rfspace_source.dir/src/rfspace_client.cpp.o
+  [22/481] Building CXX object source_modules/spyserver_source/CMakeFiles/spyserver_source.dir/src/spyserver_client.cpp.o
+  [23/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/abuf.c.o
+  [24/481] Building CXX object source_modules/hermes_source/CMakeFiles/hermes_source.dir/src/hermes.cpp.o
+  [25/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/am_analyze.c.o
+  [26/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/compat_paths.c.o
+  [27/481] Building CXX object decoder_modules/m17_decoder/CMakeFiles/m17_decoder.dir/src/lsf_decode.cpp.o
+  [28/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/bitbuffer.c.o
+  [29/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/bit_util.c.o
+  [30/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/baldr_rain.c.o
+  [31/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/badger_water.c.o
+  [32/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/blueline.c.o
+  [33/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/baseband.c.o
+  [34/481] Building CXX object source_modules/spectran_http_source/CMakeFiles/spectran_http_source.dir/src/spectran_http_client.cpp.o
+  C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/spectran_http_client.cpp:53:88: warning: format specifies type 'int' but the argument has type 'uint64_t' (aka 'unsigned long') [-Wformat]
+      sprintf(buf, "{\"frequencyCenter\":%d,\"frequencySpan\":%d,\"type\":\"capture\"}", freq, _samplerate);
+                                         ~~                                              ^~~~
+                                         %lu
+  C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/spectran_http_client.cpp:53:94: warning: format specifies type 'int' but the argument has type 'uint64_t' (aka 'unsigned long') [-Wformat]
+      sprintf(buf, "{\"frequencyCenter\":%d,\"frequencySpan\":%d,\"type\":\"capture\"}", freq, _samplerate);
+                                                              ~~                               ^~~~~~~~~~~
+                                                              %lu
+  C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/spectran_http_client.cpp:56:27: warning: format specifies type 'int' but the argument has type 'std::basic_string<char>::size_type' (aka 'unsigned long') [-Wformat]
+      sprintf(lenBuf, "%d", data.size());
+                       ~~   ^~~~~~~~~~~
+                       %lu
+  3 warnings generated.
+  [35/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/blyss.c.o
+  [36/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/list.c.o
+  [37/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/brennenstuhl_rcs_2044.c.o
+  [38/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/logger.c.o
+  [39/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/jsmn.c.o
+  [40/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/predator_stubs.c.o
+  [41/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/output_log.c.o
+  [42/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/output_file.c.o
+  [43/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/fileformat.c.o
+  [44/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/optparse.c.o
+  [45/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_analyzer.c.o
+  [46/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_data.c.o
+  [47/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_detect_fsk.c.o
+  [48/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/rfraw.c.o
+  [49/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/raw_output.c.o
+  [50/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_detect.c.o
+  [51/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_slicer.c.o
+  [52/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/samp_grab.c.o
+  [53/481] Building CXX object source_modules/sdrpp_server_source/CMakeFiles/sdrpp_server_source.dir/src/sdrpp_server_client.cpp.o
+  [54/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/r_util.c.o
+  [55/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/acurite_01185m.c.o
+  [56/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/acurite.c.o
+  [57/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ambient_weather.c.o
+  [58/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/abmt.c.o
+  [59/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/akhan_100F14.c.o
+  [60/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ambientweather_wh31e.c.o
+  [61/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/alecto.c.o
+  [62/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ambientweather_tx8300.c.o
+  [63/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/arad_ms_meter.c.o
+  [64/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/atech_ws308.c.o
+  [65/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ant_antplus.c.o
+  [66/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/archos_tbh.c.o
+  [67/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_hg02832.c.o
+  [68/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/arexx_ml.c.o
+  [69/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_afw2a1.c.o
+  [70/481] Building CXX object source_modules/hackrf_source/CMakeFiles/hackrf_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hackrf_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hackrf_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [71/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_ahfl.c.o
+  [72/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_aft77b2.c.o
+  [73/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_4ld5661.c.o
+  [74/481] Building CXX object source_modules/plutosdr_source/CMakeFiles/plutosdr_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/plutosdr_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/plutosdr_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [75/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/r_api.c.o
+  [76/481] Building CXX object sink_modules/android_audio_sink/CMakeFiles/audio_sink.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/android_audio_sink/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/android_audio_sink/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [77/481] Building CXX object source_modules/airspyhf_source/CMakeFiles/airspyhf_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspyhf_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspyhf_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [78/481] Building CXX object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/src/main.cpp.o
+  FAILED: decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/src/main.cpp.o 
+  C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -DINSTALL_PREFIX=\"/usr\" -Drtl433_decoder_EXPORTS -IC:/Users/cjake/TEMP/Predator-SDR/core/src/src -IC:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src -IC:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/vendor/rtl_433/include -IC:/Users/cjake/TEMP/Predator-SDR/core/src -IC:/Users/cjake/TEMP/Predator-SDR/core/src/imgui -IC:/Users/cjake/TEMP/Predator-SDR/core/backends/android -IC:/Users/cjake/TEMP/Predator-SDR/core/backends/android/imgui -IC:/Users/cjake/TEMP/Predator-SDR/core/libcorrect/include -IC:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include -IC:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/sources/android/native_app_glue -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -g -Og -std=c++17 -Wno-unused-command-line-argument -undefined dynamic_lookup -MD -MT decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/src/main.cpp.o -MF decoder_modules\rtl433_decoder\CMakeFiles\rtl433_decoder.dir\src\main.cpp.o.d -o decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/src/main.cpp.o -c C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp:33:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp:34:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/rtl433_decoder/src/main.cpp:126:28: error: only virtual member functions can be marked 'override'
+      ~Rtl433DecoderModule() override {
+                             ^~~~~~~~~
+  2 warnings and 1 error generated.
+  [79/481] Building CXX object source_modules/airspy_source/CMakeFiles/airspy_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspy_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/airspy_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [80/481] Building CXX object source_modules/rtl_sdr_source/CMakeFiles/rtl_sdr_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_sdr_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_sdr_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [81/481] Building CXX object source_modules/sdrpp_server_source/CMakeFiles/sdrpp_server_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/sdrpp_server_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/sdrpp_server_source/src/main.cpp:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [82/481] Building CXX object source_modules/spyserver_source/CMakeFiles/spyserver_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spyserver_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spyserver_source/src/main.cpp:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [83/481] Building CXX object source_modules/rtl_tcp_source/CMakeFiles/rtl_tcp_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_tcp_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rtl_tcp_source/src/main.cpp:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [84/481] Building CXX object source_modules/hermes_source/CMakeFiles/hermes_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hermes_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/hermes_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [85/481] Building CXX object source_modules/spectran_http_source/CMakeFiles/spectran_http_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/spectran_http_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [86/481] Building CXX object source_modules/rfspace_source/CMakeFiles/rfspace_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rfspace_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/rfspace_source/src/main.cpp:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [87/481] Building CXX object sink_modules/network_sink/CMakeFiles/network_sink.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/network_sink/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/sink_modules/network_sink/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [88/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/command_args.cpp.o
+  [89/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/credits.cpp.o
+  [90/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/gui/dialogs/credits.cpp.o
+  [91/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/gui/dialogs/loading_screen.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/gui/dialogs/loading_screen.cpp:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  1 warning generated.
+  [92/481] Building CXX object decoder_modules/m17_decoder/CMakeFiles/m17_decoder.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/decoder_modules/m17_decoder/src/main.cpp:273:34: note: in instantiation of template class 'dsp::buffer::Reshaper<float>' requested here
+      dsp::buffer::Reshaper<float> reshape;
+                                   ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  3 warnings generated.
+  [93/481] Building CXX object source_modules/file_source/CMakeFiles/file_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/file_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/source_modules/file_source/src/main.cpp:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [94/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/gui/menus/bandplan.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/gui/menus/bandplan.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  1 warning generated.
+  [95/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/gui/gui.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/gui/gui.cpp:1:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  1 warning generated.
+  [96/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/gui/icons.cpp.o
+  [97/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/gui/colormaps.cpp.o
+  [98/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/config.cpp.o
+  [99/481] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/core.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/core.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src/core.cpp:21:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-SDR/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  ninja: build stopped: subcommand failed.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+BUILD FAILED in 7s
+59 actionable tasks: 5 executed, 54 up-to-date
+Ask Gemini
+
