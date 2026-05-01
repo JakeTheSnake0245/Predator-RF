@@ -59,10 +59,14 @@ public:
     void updateGps(double lat, double lon, float ceMeters, bool hasFix);
 
     // Fire a GeoChat hit report.  Non-blocking — returns immediately after
-    // building and transmitting the UDP/TCP packet.
+    // building and transmitting the UDP/TCP packet.  baselineNote is appended
+    // to the message when non-empty (e.g. "+8.2 dB over 'office_rooftop'" or
+    // "NEW: not in any baseline") so the operator can tell at a glance which
+    // hits were specifically baseline-exceedance alerts versus generic peaks.
     void reportHit(double freqHz, float strengthDb, float snrDb,
                    int hitCount, const std::string& state,
-                   const std::string& label = "");
+                   const std::string& label = "",
+                   const std::string& baselineNote = "");
 
 private:
     void        saLoop();

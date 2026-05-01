@@ -45,6 +45,9 @@
 #include "../predator/kujhad_fleet.h"
 #include "../predator/native_decoder_registry.h"
 #include "../predator/cot_reporter.h"
+// Pure enum header from misc_modules/recorder — no link dep, just constants
+// for core::modComManager.callInterface(name, RECORDER_IFACE_CMD_START, ...)
+#include "../../../misc_modules/recorder/src/recorder_interface.h"
 #include <ctime>
 
 void MainWindow::init() {
@@ -242,6 +245,17 @@ void MainWindow::init() {
     predatorExtendDwellOnStrongHit = core::configManager.conf["predatorExtendDwellOnStrongHit"];
     predatorStrongHitSnrDb = core::configManager.conf["predatorStrongHitSnrDb"];
     predatorClassifyAutoMarker = core::configManager.conf["predatorClassifyAutoMarker"];
+
+    // Baseline-comparison + IQ-alert prefs.  Use cfg.value() with defaults so
+    // existing user configs (which won't have these keys yet) keep working.
+    {
+        auto& cfg = core::configManager.conf;
+        blCompEnabled       = cfg.value("blCompEnabled",       false);
+        blCompThreshDb      = cfg.value("blCompThreshDb",      10.0f);
+        blAlertRecordIQ     = cfg.value("blAlertRecordIQ",     false);
+        blAlertRecordSec    = cfg.value("blAlertRecordSec",    10.0f);
+        blAlertRecorderName = cfg.value("blAlertRecorderName", std::string(""));
+    }
 
     // Kujhad fleet console state. Defaults are populated by core::init() so
     // these reads are always present.
@@ -717,15 +731,37 @@ void MainWindow::draw() {
     static double                      blNewRangeStart = 0.0;
     static double                      blNewRangeStop  = 0.0;
     // Baseline comparison (used by recordPeakHit)
-    static bool                        blCompEnabled  = false;
-    static float                       blCompThreshDb = 10.0f;
-    static std::string                 blCompFilePath;
-    static std::string                 blCompFileName;
-    static std::map<int64_t, float>    blCompMap;
-    static bool                        blCompLoaded   = false;
-    static std::string                 blCompStatus;
-    static std::vector<std::string>    blFileList;
-    static double                      blFileListRefreshedAt = 0.0;
+    //
+    // Multi-baseline support: blLoadedBaselines holds N concurrently-loaded
+    // baseline files.  A peak is suppressed when, for at least one loaded
+    // baseline, the peak frequency is present AND the signal is within
+    // blCompThreshDb of that baseline's value.  When the peak is NOT
+    // suppressed by any baseline, the comparison code computes a "baseline
+    // tag" string that names the baseline the peak most clearly exceeded
+    // (or "NEW: not in any baseline" if the frequency was unknown to every
+    // loaded baseline) — that tag is plumbed through to the CoT GeoChat so
+    // the operator's TAK feed shows why each alert fired.
+    struct LoadedBaseline {
+        std::string                 path;
+        std::string                 name;
+        std::map<int64_t, float>    map;
+    };
+    // NOTE: blCompEnabled, blCompThreshDb, blAlertRecordIQ, blAlertRecordSec,
+    // and blAlertRecorderName are MainWindow class members (declared in
+    // main_window.h) so init() can load them from config and the periodic
+    // save block can write them back.  The remaining baseline state below is
+    // not persisted, so it stays as draw()-local statics.
+    static std::vector<LoadedBaseline>       blLoadedBaselines;
+    static std::string                       blCompStatus;   // last load-attempt msg
+    static std::vector<std::string>          blFileList;
+    static double                            blFileListRefreshedAt = 0.0;
+    // ── Baseline-alert raw-IQ recording ──────────────────────────────────
+    // blAlertRecStopAt is the absolute ImGui::GetTime() at which the active
+    // capture should be stopped; any new alert resets it forward, so a burst
+    // of hits inside the window keeps the recorder running rather than
+    // starting/stopping repeatedly.  Not persisted — only meaningful while
+    // the app is live.
+    static double                            blAlertRecStopAt   = 0.0;
 
     auto openPendEdit = [&](const char* label, const std::string& initial,
                              std::function<void(std::string)> cb) {
@@ -1048,6 +1084,12 @@ void MainWindow::draw() {
         core::configManager.conf["predatorExtendDwellOnStrongHit"] = predatorExtendDwellOnStrongHit;
         core::configManager.conf["predatorStrongHitSnrDb"] = predatorStrongHitSnrDb;
         core::configManager.conf["predatorClassifyAutoMarker"] = predatorClassifyAutoMarker;
+        // Baseline-comparison + IQ-alert prefs (mirrored on System & Baseline tabs).
+        core::configManager.conf["blCompEnabled"]       = blCompEnabled;
+        core::configManager.conf["blCompThreshDb"]      = blCompThreshDb;
+        core::configManager.conf["blAlertRecordIQ"]     = blAlertRecordIQ;
+        core::configManager.conf["blAlertRecordSec"]    = blAlertRecordSec;
+        core::configManager.conf["blAlertRecorderName"] = blAlertRecorderName;
         core::configManager.release(true);
     };
 
@@ -1311,9 +1353,13 @@ void MainWindow::draw() {
     };
 
     auto loadBaseline = [&](const std::string& path, const std::string& name) {
-        blCompMap.clear();
-        blCompLoaded = false;
+        // Build into a temporary so a partial / corrupt file never leaves the
+        // active baselines vector in a half-loaded state.
+        LoadedBaseline tmp;
+        tmp.path = path;
+        tmp.name = name;
         blCompStatus = "Loading...";
+
         std::ifstream in(path);
         if (!in.is_open()) { blCompStatus = "Cannot open: " + name; return; }
         std::string line;
@@ -1330,14 +1376,21 @@ void MainWindow::draw() {
             float mean = 0.0f;
             try { mean = std::stof(tok); } catch (...) { continue; }
             int64_t bucket = (int64_t)std::round((double)freqHz / resHz);
-            blCompMap[bucket] = mean;
+            tmp.map[bucket] = mean;
         }
-        blCompLoaded  = !blCompMap.empty();
-        blCompFilePath = path;
-        blCompFileName = name;
-        blCompStatus  = blCompLoaded
-            ? ("Loaded " + std::to_string(blCompMap.size()) + " bins")
-            : "File empty or unreadable";
+        if (tmp.map.empty()) {
+            blCompStatus = "File empty or unreadable: " + name;
+            return;
+        }
+        // De-dupe: if the same path is already loaded, replace it in-place so
+        // re-loading the file just refreshes its contents.
+        for (auto it = blLoadedBaselines.begin(); it != blLoadedBaselines.end(); ++it) {
+            if (it->path == path) { blLoadedBaselines.erase(it); break; }
+        }
+        blLoadedBaselines.push_back(std::move(tmp));
+        blCompStatus = "Loaded " + name + " (" +
+            std::to_string(blLoadedBaselines.back().map.size()) + " bins). " +
+            std::to_string(blLoadedBaselines.size()) + " baseline(s) active.";
     };
 
     auto refreshBaselineFileList = [&]() {
@@ -1353,6 +1406,138 @@ void MainWindow::draw() {
             blFileList.push_back(entry.path().string());
         }
         std::sort(blFileList.begin(), blFileList.end(), std::greater<std::string>());
+    };
+
+    // Shared comparison-status panel — drawn on BOTH the System tab and the
+    // Baseline tab.  The idSuffix keeps ImGui IDs unique across call sites so
+    // buttons / sliders don't conflict with each other when both panels are
+    // visible in the same frame.
+    auto drawBaselineComparisonPanel = [&](const char* idSuffix) {
+        float fw = ImGui::GetContentRegionAvail().x;
+
+        ImGui::PushID(idSuffix);
+
+        ImGui::Checkbox(T("Scan against baselines"), &blCompEnabled);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", T("When enabled, hits within the loaded baselines' noise floor are\nsuppressed.  Only signals that exceed the strongest matching baseline\nby the threshold are recorded as hits."));
+
+        if (blCompEnabled) {
+            ImGui::Spacing();
+            ImGui::LeftLabel(T("Threshold"));
+            ImGui::SetNextItemWidth(fw * 0.5f);
+            ImGui::SliderFloat("##blThresh", &blCompThreshDb, 1.0f, 40.0f, "+%.1f dB");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", T("Signal must exceed baseline by this many dB to be recorded as a hit."));
+
+            ImGui::Spacing();
+            // Loaded-baselines list with per-row Unload + Unload All
+            if (!blLoadedBaselines.empty()) {
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f),
+                    "%s (%d):", T("Loaded baselines"),
+                    (int)blLoadedBaselines.size());
+                int rmIdx = -1;
+                for (size_t i = 0; i < blLoadedBaselines.size(); i++) {
+                    auto& bl = blLoadedBaselines[i];
+                    ImGui::PushID((int)i);
+                    ImGui::BulletText("%s  (%d bins)",
+                        bl.name.c_str(), (int)bl.map.size());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(T("X##blu"))) rmIdx = (int)i;
+                    ImGui::PopID();
+                }
+                if (rmIdx >= 0) {
+                    blLoadedBaselines.erase(blLoadedBaselines.begin() + rmIdx);
+                    blCompStatus = blLoadedBaselines.empty()
+                        ? std::string("All baselines unloaded")
+                        : (std::to_string(blLoadedBaselines.size()) + " baseline(s) active.");
+                }
+                if (ImGui::Button(T("Unload all##blua"), ImVec2(fw, 0))) {
+                    blLoadedBaselines.clear();
+                    blCompStatus = "All baselines unloaded";
+                }
+                if (!blCompStatus.empty()) {
+                    ImGui::TextDisabled("%s", blCompStatus.c_str());
+                }
+            } else {
+                ImGui::TextDisabled("%s", blCompStatus.empty()
+                    ? T("No baselines loaded.  Pick one below or record one on the Baseline tab.")
+                    : blCompStatus.c_str());
+            }
+
+            // Inline file picker for additional baselines (files that are not
+            // already in blLoadedBaselines).
+            double now2 = ImGui::GetTime();
+            if (now2 - blFileListRefreshedAt > 1.0) {
+                refreshBaselineFileList();
+                blFileListRefreshedAt = now2;
+            }
+            std::vector<std::string> available;
+            for (auto& fp : blFileList) {
+                bool already = false;
+                for (auto& bl : blLoadedBaselines) {
+                    if (bl.path == fp) { already = true; break; }
+                }
+                if (!already) available.push_back(fp);
+            }
+            if (!available.empty()) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", T("Add a saved baseline:"));
+                for (auto& fpath : available) {
+                    std::string fname2 = std::filesystem::path(fpath).filename().string();
+                    ImGui::PushID(fpath.c_str());
+                    if (ImGui::Button(fname2.c_str(), ImVec2(fw, 0))) {
+                        loadBaseline(fpath, fname2);
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            // ── IQ recording on baseline-exceedance ────────────────────────
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextDisabled("%s", T("IQ capture on baseline alert"));
+            ImGui::Checkbox(T("Record IQ when baseline exceeded"), &blAlertRecordIQ);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", T("When a hit exceeds any loaded baseline, ask the selected\nrecorder module to capture raw IQ for the configured window."));
+            if (blAlertRecordIQ) {
+                ImGui::LeftLabel(T("Window (s)"));
+                ImGui::SetNextItemWidth(fw * 0.5f);
+                ImGui::SliderFloat("##blAlSec", &blAlertRecordSec, 1.0f, 120.0f, "%.0f s");
+
+                // Enumerate recorder module instances
+                ImGui::LeftLabel(T("Recorder"));
+                ImGui::SetNextItemWidth(fw * 0.5f);
+                std::vector<std::string> recNames;
+                for (auto const& [nm, inst] : core::moduleManager.instances) {
+                    if (core::moduleManager.getInstanceModuleName(nm) == "recorder")
+                        recNames.push_back(nm);
+                }
+                if (recNames.empty()) {
+                    ImGui::TextDisabled("%s", T("(no recorder module loaded)"));
+                } else {
+                    if (blAlertRecorderName.empty() ||
+                        std::find(recNames.begin(), recNames.end(), blAlertRecorderName) == recNames.end()) {
+                        blAlertRecorderName = recNames[0];
+                    }
+                    if (ImGui::BeginCombo("##blAlRec", blAlertRecorderName.c_str())) {
+                        for (auto& nm : recNames) {
+                            bool sel = (nm == blAlertRecorderName);
+                            if (ImGui::Selectable(nm.c_str(), sel)) blAlertRecorderName = nm;
+                            if (sel) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (blAlertRecStopAt > 0.0) {
+                    double remain = blAlertRecStopAt - ImGui::GetTime();
+                    if (remain < 0.0) remain = 0.0;
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                        "%s %.1fs", T("Recording, stops in"), remain);
+                }
+            }
+        }
+
+        ImGui::PopID();
     };
 
     auto extractionPath = [&](bool voice, const std::string& baseName, const char* extension) {
@@ -1445,6 +1630,19 @@ void MainWindow::draw() {
         }
 
         cotReporter.updateGps(phoneLat, phoneLon, phoneAccuracy, phoneHasFix);
+    }
+
+    // ── Baseline-alert IQ recording: stop when window expires ───────────────
+    // recordPeakHit() pushes blAlertRecStopAt forward each time a baseline
+    // alert fires.  When ImGui::GetTime() crosses that mark and no further
+    // alerts have refreshed it, ask the recorder module to stop the capture.
+    if (blAlertRecStopAt > 0.0 && ImGui::GetTime() >= blAlertRecStopAt) {
+        if (!blAlertRecorderName.empty() &&
+            core::modComManager.interfaceExists(blAlertRecorderName)) {
+            core::modComManager.callInterface(blAlertRecorderName,
+                RECORDER_IFACE_CMD_STOP, NULL, NULL);
+        }
+        blAlertRecStopAt = 0.0;
     }
 
     // ── Baseline per-frame recording ────────────────────────────────────────
@@ -2589,17 +2787,50 @@ void MainWindow::draw() {
             (predatorMissionMode != PREDATOR_MODE_CLASSIFY && !isInEnabledSearchBand(frequency))) {
             return 0;
         }
-        // Baseline comparison: suppress hits that are within the baseline noise floor.
-        // Signals NOT present in the baseline always pass through (new emitter).
-        if (blCompEnabled && blCompLoaded && !blCompMap.empty()) {
+        // Baseline comparison: suppress hits that are within the noise floor of
+        // ANY currently-loaded baseline.  Signals not present in any baseline
+        // (new emitter) always pass through.  When a hit DOES pass through and
+        // baselines are active, build a baselineNote describing why so the CoT
+        // GeoChat shows "+8.2 dB over 'office_rooftop'" or "NEW: not in any
+        // baseline" rather than a generic "HIT" line.
+        std::string baselineNote;
+        if (blCompEnabled && !blLoadedBaselines.empty()) {
             double resHz   = blResKhz * 1000.0;
             int64_t bucket = (int64_t)std::round(frequency / resHz);
-            auto it = blCompMap.find(bucket);
-            if (it != blCompMap.end()) {
-                // Known frequency: only record if clearly above baseline
-                if (strengthDb <= it->second + blCompThreshDb) return 0;
+            float maxKnownDb = -1e9f;
+            const std::string* maxKnownName = nullptr;
+            for (auto& lb : blLoadedBaselines) {
+                auto it = lb.map.find(bucket);
+                if (it == lb.map.end()) continue;
+                if (it->second > maxKnownDb) {
+                    maxKnownDb    = it->second;
+                    maxKnownName  = &lb.name;
+                }
             }
-            // Not in baseline → new emitter → fall through and record
+            if (maxKnownName != nullptr) {
+                // Known frequency: suppress unless clearly above the highest
+                // baseline value at that bucket.
+                if (strengthDb <= maxKnownDb + blCompThreshDb) return 0;
+                char tag[160];
+                std::snprintf(tag, sizeof(tag), "+%.1f dB over '%s'",
+                              strengthDb - maxKnownDb, maxKnownName->c_str());
+                baselineNote = tag;
+            } else {
+                // Frequency is in NO loaded baseline → new emitter.
+                baselineNote = "NEW: not in any baseline";
+            }
+        }
+        // Trigger raw-IQ alert capture when a baseline-exceedance hit fires
+        // (only when comparison is active — baselineNote is non-empty exactly
+        // in that case).  Each new alert pushes the stop time forward so a
+        // burst of hits keeps the recorder running rather than stuttering.
+        if (!baselineNote.empty() && blAlertRecordIQ && !blAlertRecorderName.empty() &&
+            core::modComManager.interfaceExists(blAlertRecorderName)) {
+            if (blAlertRecStopAt == 0.0) {
+                core::modComManager.callInterface(blAlertRecorderName,
+                    RECORDER_IFACE_CMD_START, NULL, NULL);
+            }
+            blAlertRecStopAt = ImGui::GetTime() + (double)blAlertRecordSec;
         }
 
         int hitIndex = -1;
@@ -2667,9 +2898,13 @@ void MainWindow::draw() {
         savePredatorHits(hits);
         if (!suppressEvent) {
             scheduleEventSave();
-            // Fire CoT GeoChat report to configured ATAK endpoint.
+            // Fire CoT GeoChat report to configured ATAK endpoint.  Pass the
+            // baselineNote so hits that came from the baseline-exceedance
+            // path show up in TAK as "BASELINE ALERT: … +X.X dB over '<name>'"
+            // instead of a generic "HIT".
             cotReporter.reportHit(frequency, strengthDb, (float)readJsonDouble(hit, "snrDb", 0.0),
-                                  hitCount, state, readJsonString(hit, "name", ""));
+                                  hitCount, state, readJsonString(hit, "name", ""),
+                                  baselineNote);
         }
         predatorScanStatus = "Hit " + formatFrequency(frequency);
         if (newHit && state == "unknown") { return 2; }
@@ -5270,54 +5505,10 @@ void MainWindow::draw() {
             }
 
             // ── Baseline Comparison ──────────────────────────────────────────
+            // Same panel is mirrored at the top of the Baseline tab so users
+            // don't have to switch tabs to toggle scanning on/off.
             if (ImGui::CollapsingHeader(T("Baseline Comparison"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                float fw = ImGui::GetContentRegionAvail().x;
-                ImGui::Checkbox(T("Scan against baseline##blcomp"), &blCompEnabled);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", T("When enabled, hits within the baseline noise floor are suppressed.\nOnly signals that exceed the baseline by the threshold are recorded."));
-
-                if (blCompEnabled) {
-                    ImGui::Spacing();
-                    ImGui::LeftLabel(T("Threshold##blcomp"));
-                    ImGui::SetNextItemWidth(fw * 0.5f);
-                    ImGui::SliderFloat("##blThresh", &blCompThreshDb, 1.0f, 40.0f, "+%.1f dB");
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", T("Signal must exceed baseline by this many dB to be recorded as a hit."));
-
-                    ImGui::Spacing();
-                    if (blCompLoaded) {
-                        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "%s", T("Baseline loaded:"));
-                        ImGui::TextWrapped("%s", blCompFileName.c_str());
-                        ImGui::TextWrapped("%s", blCompStatus.c_str());
-                        if (ImGui::Button(T("Unload baseline##blcu"), ImVec2(fw, 0))) {
-                            blCompMap.clear();
-                            blCompLoaded   = false;
-                            blCompFilePath = "";
-                            blCompFileName = "";
-                            blCompStatus   = "";
-                        }
-                    } else {
-                        ImGui::TextDisabled("%s", blCompStatus.empty() ? T("No baseline loaded. Open the Baseline tab to record and load one.") : blCompStatus.c_str());
-                        // Inline file picker from saved baselines
-                        double now2 = ImGui::GetTime();
-                        if (now2 - blFileListRefreshedAt > 1.0) {
-                            refreshBaselineFileList();
-                            blFileListRefreshedAt = now2;
-                        }
-                        if (!blFileList.empty()) {
-                            ImGui::Spacing();
-                            ImGui::TextDisabled("%s", T("Select a saved baseline:"));
-                            for (auto& fpath : blFileList) {
-                                std::string fname2 = std::filesystem::path(fpath).filename().string();
-                                ImGui::PushID(fpath.c_str());
-                                if (ImGui::Button(fname2.c_str(), ImVec2(fw, 0))) {
-                                    loadBaseline(fpath, fname2);
-                                }
-                                ImGui::PopID();
-                            }
-                        }
-                    }
-                }
+                drawBaselineComparisonPanel("system");
             }
 
             if (ImGui::CollapsingHeader(T("Search Bands"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -6253,6 +6444,14 @@ void MainWindow::draw() {
             float fw = ImGui::GetContentRegionAvail().x;
             float hw = (fw - 4.0f * style::uiScale) * 0.5f;
 
+            // ── Comparison Status ────────────────────────────────────────────
+            // Mirror of the System-tab Baseline Comparison panel so the user
+            // can toggle scanning, change the threshold, swap baselines, and
+            // arm the IQ-alert recorder without leaving the Baseline tab.
+            if (ImGui::CollapsingHeader(T("Comparison Status"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                drawBaselineComparisonPanel("baseline");
+            }
+
             // ── Frequency Ranges ─────────────────────────────────────────────
             if (ImGui::CollapsingHeader(T("Frequency Ranges"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 // Range name — tap to open keyboard-safe popup above the soft keyboard
@@ -6458,12 +6657,15 @@ void MainWindow::draw() {
                             std::error_code ec2;
                             std::filesystem::remove(fpath, ec2);
                             refreshBaselineFileList();
-                            if (blCompFilePath == fpath) {
-                                blCompMap.clear();
-                                blCompLoaded  = false;
-                                blCompStatus  = "Loaded file was deleted";
-                                blCompFilePath = "";
-                                blCompFileName = "";
+                            // If this file was active in the comparison set,
+                            // drop it so the next scan doesn't reference a
+                            // map that no longer has a file backing it.
+                            for (auto it = blLoadedBaselines.begin();
+                                 it != blLoadedBaselines.end(); ) {
+                                if (it->path == fpath) {
+                                    it = blLoadedBaselines.erase(it);
+                                    blCompStatus = "Loaded file was deleted";
+                                } else { ++it; }
                             }
                         }
                         ImGui::PopID();
@@ -6471,7 +6673,7 @@ void MainWindow::draw() {
                     }
                 }
 
-                if (blCompLoaded) {
+                if (!blLoadedBaselines.empty()) {
                     ImGui::Spacing();
                     ImGui::TextWrapped("%s", blCompStatus.c_str());
                 }
