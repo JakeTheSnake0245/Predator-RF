@@ -109,6 +109,15 @@ private:
     bool predatorSuppressDuplicateHits = true;
     bool predatorExtendDwellOnStrongHit = true;
     bool predatorClassifyAutoMarker = true;
+    // Baseline-comparison + IQ-alert prefs.  Loaded by init() from config and
+    // saved in the periodic config-write block in draw().  All other baseline
+    // state (loaded-baselines vector, status text, file list cache, recorder
+    // stop-time) stays as draw()-local statics since it isn't persisted.
+    bool        blCompEnabled       = false;
+    float       blCompThreshDb      = 10.0f;
+    bool        blAlertRecordIQ     = false;
+    float       blAlertRecordSec    = 10.0f;
+    std::string blAlertRecorderName;
     float predatorPeakSnrDb = 8.0f;
     float predatorStrongHitSnrDb = 18.0f;
     double predatorPeakMinSpacingHz = 12500.0;

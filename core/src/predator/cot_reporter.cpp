@@ -296,7 +296,8 @@ void CotReporter::updateGps(double lat, double lon, float ceMeters, bool hasFix)
 
 void CotReporter::reportHit(double freqHz, float strengthDb, float snrDb,
                              int hitCount, const std::string& state,
-                             const std::string& label) {
+                             const std::string& label,
+                             const std::string& baselineNote) {
     bool enabled;
     {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -305,19 +306,31 @@ void CotReporter::reportHit(double freqHz, float strengthDb, float snrDb,
     if (!enabled) return;
 
     // Build human-readable message.
-    char msg[256];
-    std::string freqStr = formatFreq(freqHz);
+    char msg[384];
+    std::string freqStr  = formatFreq(freqHz);
     const char* stateStr = state.empty() ? "hit" : state.c_str();
-    const char* lbl = label.empty() ? "" : label.c_str();
+    // Prefix the message with [BASELINE ALERT] when this hit specifically came
+    // from the baseline-exceedance path so the operator's TAK chat shows the
+    // alert nature at the very front of the line.
+    const char* prefix = baselineNote.empty() ? "[Predator RF] HIT:"
+                                              : "[Predator RF] BASELINE ALERT:";
 
     if (label.empty()) {
         std::snprintf(msg, sizeof(msg),
-            "[Predator RF] HIT: %s | %.1f dB | SNR: %.1f dB | #%d | %s",
-            freqStr.c_str(), strengthDb, snrDb, hitCount, stateStr);
+            "%s %s | %.1f dB | SNR: %.1f dB | #%d | %s",
+            prefix, freqStr.c_str(), strengthDb, snrDb, hitCount, stateStr);
     } else {
         std::snprintf(msg, sizeof(msg),
-            "[Predator RF] HIT: %s | %.1f dB | SNR: %.1f dB | #%d | %s | %s",
-            freqStr.c_str(), strengthDb, snrDb, hitCount, stateStr, lbl);
+            "%s %s | %.1f dB | SNR: %.1f dB | #%d | %s | %s",
+            prefix, freqStr.c_str(), strengthDb, snrDb, hitCount, stateStr,
+            label.c_str());
+    }
+    if (!baselineNote.empty()) {
+        std::size_t cur = std::strlen(msg);
+        if (cur < sizeof(msg) - 4) {
+            std::snprintf(msg + cur, sizeof(msg) - cur, " | %s",
+                          baselineNote.c_str());
+        }
     }
 
     sendPacket(buildChat(std::string(msg)));
