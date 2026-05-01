@@ -345,6 +345,40 @@ bool SetFreq      (int sockfd, long freq_hz)  { (void)sockfd; (void)freq_hz;   r
 void ncursesOpen (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
 
 /* ============================================================
+ * More stubs for symbols defined in the EXCLUDED files
+ * dsd_ncurses_handler.c / dsd_rigctl.c / dsd_serial.c.  Like the rest
+ * of this file, all of these live behind `if (opts->use_ncurses_terminal)`,
+ * `if (opts->use_rigctl == 1)`, or scanner-control branches that the
+ * Predator build never enters (initOpts forces those flags to 0 and there
+ * is no UI to flip them).  They exist purely to satisfy the linker.
+ * ============================================================ */
+void ncursesPrinter (dsd_opts *opts, dsd_state *state) {
+    (void)opts; (void)state;
+}
+
+/* dsd_rigctl.c — Hamlib client + UDP audio blasters. */
+long int GetCurrentFreq (int sockfd) {
+    (void)sockfd;
+    return 0;
+}
+void udp_socket_blaster (dsd_opts *opts, dsd_state *state, size_t nsam, void *data) {
+    (void)opts; (void)state; (void)nsam; (void)data;
+}
+void udp_socket_blasterA (dsd_opts *opts, dsd_state *state, size_t nsam, void *data) {
+    (void)opts; (void)state; (void)nsam; (void)data;
+}
+void return_to_cc (dsd_opts *opts, dsd_state *state) {
+    (void)opts; (void)state;
+}
+
+/* dsd_serial.c — GPS scanner control.  resumeScan() is called from
+ * trunking decoders after a hang timeout; with no scanner attached it
+ * simply needs to be a no-op. */
+void resumeScan (dsd_opts *opts, dsd_state *state) {
+    (void)opts; (void)state;
+}
+
+/* ============================================================
  * Predator decoder worker (Phase 3b runtime hookup).
  *
  * Wires the SDRPP module wrapper to the vendored DSD-FME decoder loop:

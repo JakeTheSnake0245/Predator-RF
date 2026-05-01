@@ -42,9 +42,19 @@ target_compile_options(predator_mbe PRIVATE -w)
 set_property(TARGET predator_mbe PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # --- DSD-FME core sources, with surgical exclusions ---
-file(GLOB DSD_ALL_SRC ${VENDOR_DIR}/dsd-fme/src/*.c)
+# We need both .c (vendored DSD-FME core) and .cpp (P25 ECC: check_NID,
+# Reed-Solomon 36/20/17 + 24/12/13 + 24/16/9, Hamming 10/6/3, Golay
+# 24/6 + 24/12, ezpwd RS28 FACCH). Without the .cpp glob the link step
+# fails on a flood of undefined `check_and_fix_*` / `encode_*` symbols.
+file(GLOB DSD_ALL_SRC
+    ${VENDOR_DIR}/dsd-fme/src/*.c
+    ${VENDOR_DIR}/dsd-fme/src/*.cpp)
 list(FILTER DSD_ALL_SRC EXCLUDE REGEX
     "/(dsd_ncurses_handler|dsd_ncurses_menu|dsd_ncurses_printer|dsd_rigctl|pa_devs|pulse_devices|dsd_serial|dsd_import)\\.c$")
+# Also exclude rtl_sdr_fm.cpp — it's the upstream RTL-SDR direct-FM
+# command-line tool (not used; we feed samples via predator_dsd_bridge).
+# No kept code calls into its symbols (low_pass / fm_demod / etc.).
+list(FILTER DSD_ALL_SRC EXCLUDE REGEX "/rtl_sdr_fm\\.cpp$")
 
 # --- ezpwd Reed-Solomon ---
 # NOTE: ezpwd is a header-only C++ library; the vendored directory contains
