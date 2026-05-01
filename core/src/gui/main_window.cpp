@@ -223,14 +223,10 @@ void MainWindow::init() {
     gui::waterfall.setFFTHeight(fftHeight);
 
     predatorMissionMode = std::clamp<int>((int)core::configManager.conf["predatorMissionMode"], PREDATOR_MODE_MANUAL, PREDATOR_MODE_QUICKSCAN);
-<<<<<<< HEAD
-    predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_SYSTEM);
+    predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_BASELINE);
     if (core::configManager.conf.contains("predatorWfControlsOpen")) {
         predatorWfControlsOpen = (bool)core::configManager.conf["predatorWfControlsOpen"];
     }
-=======
-    predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_BASELINE);
->>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
     predatorQuickFilter = std::clamp<int>((int)core::configManager.conf["predatorQuickFilter"], 0, 3);
     predatorHitSortMode = std::clamp<int>((int)core::configManager.conf["predatorHitSortMode"], 0, 5);
     predatorEventFilter = std::clamp<int>((int)core::configManager.conf["predatorEventFilter"], 0, 5);
@@ -6518,14 +6514,7 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
-<<<<<<< HEAD
-    ImGuiWindowFlags railFlags = backend::isTouchPrimary()
-        ? ImGuiWindowFlags_AlwaysVerticalScrollbar
-        : ImGuiWindowFlags_None;
-    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, railFlags);
-=======
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
->>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
 
     float tabAvailH = ImGui::GetContentRegionAvail().y;
     float tabSpacingY = ImGui::GetStyle().ItemSpacing.y;
@@ -6557,55 +6546,7 @@ void MainWindow::draw() {
         }
     }
 
-<<<<<<< HEAD
-    // Zoom / Max / Min sliders moved out of the rail and into the
-    // top-right dropdown overlay above the waterfall (see the
-    // "Top-right Zoom/Max/Min dropdown" block earlier in draw()).
-
-    if (backend::isTouchPrimary() && ImGui::GetScrollMaxY() > 0.0f) {
-        static bool  s_dragArmed   = false;
-        static bool  s_dragActive  = false;
-        static float s_scrollStart = 0.0f;
-        const float dragThreshold = 12.0f * style::uiScale;
-
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            bool noActiveItem = (ImGui::GetActiveID() == 0);
-
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                s_dragArmed   = ImGui::IsWindowHovered() && noActiveItem;
-                s_dragActive  = false;
-                s_scrollStart = ImGui::GetScrollY();
-            }
-
-            if (!noActiveItem) {
-                s_dragArmed  = false;
-                s_dragActive = false;
-            }
-
-            if (s_dragArmed && !s_dragActive) {
-                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
-                if (std::fabs(dy) > dragThreshold) s_dragActive = true;
-            }
-
-            if (s_dragActive) {
-                float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
-                float target = s_scrollStart - dy;
-                float maxY = ImGui::GetScrollMaxY();
-                if (target < 0.0f) target = 0.0f;
-                if (target > maxY) target = maxY;
-                ImGui::SetScrollY(target);
-            }
-        }
-        else {
-            s_dragArmed  = false;
-            s_dragActive = false;
-        }
-    }
-
-    ImGui::EndChild();
-=======
     ImGui::EndChild();  // PredatorRightRail
->>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
     ImGui::PopStyleColor();
 
     gui::waterfall.setFFTMin(fftMin);
@@ -6613,7 +6554,6 @@ void MainWindow::draw() {
     gui::waterfall.setWaterfallMin(fftMin);
     gui::waterfall.setWaterfallMax(fftMax);
 
-<<<<<<< HEAD
     // === Soft-keyboard inset compensation ====================================
     // When the Android IME is up, treat the bottom strip of DisplaySize
     // covered by the keyboard as unusable, then ensure the active text
@@ -6752,11 +6692,18 @@ void MainWindow::draw() {
         }
         s_imeLastBottom   = imeBottom;
         s_imeLastActiveId = curActiveId;
-=======
+    }
+
     // ── Text-edit popup ──────────────────────────────────────────────────────
-    // Rendered last so it appears on top of everything.  Positioned in the
+    // Rendered last so it appears on top of everything. Positioned in the
     // upper portion of the content area so the Android software keyboard
-    // (which appears at the bottom) never obscures the input field.
+    // (which appears at the bottom) never obscures the input field. Note
+    // this popup runs IN ADDITION to the IME inset compensation above:
+    // the compensation is a generic safety net for raw InputText sites
+    // anywhere in the UI, while this popup is the explicit "safe place"
+    // routed through the pendEdit struct. Because this popup uses
+    // SetNextWindowPos(..., ImGuiCond_Always), it always wins over the
+    // SetWindowPos that the inset compensation would otherwise apply.
     if (ImGui::IsPopupOpen("##pend_edit")) {
         float popW = winSize.x - 4.0f * pad;
         ImGui::SetNextWindowPos(ImVec2(2.0f * pad, contentTop + pad), ImGuiCond_Always);
@@ -6786,7 +6733,6 @@ void MainWindow::draw() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
->>>>>>> e3e025b39b88e28ab060d21606bd0a769de17448
     }
 
     ImGui::End();
