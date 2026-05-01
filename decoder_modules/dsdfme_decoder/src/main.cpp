@@ -121,7 +121,7 @@ public:
         flog::info("[DSDFME] module instance '{}' constructed", name_);
     }
 
-    ~DsdFmeDecoderModule() override {
+    ~DsdFmeDecoderModule() {
         gui::menu.removeEntry(name_);
         if (enabled_) disable();
         predator_dsd_set_event_cb(nullptr, nullptr);
