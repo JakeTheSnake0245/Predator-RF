@@ -332,13 +332,28 @@ const char *sf_strerror(SNDFILE *s) { (void)s; return "no sndfile in Predator bu
 bool SetModulation(int sockfd, int bandwidth)   { (void)sockfd; (void)bandwidth; return false; }
 bool SetFreq      (int sockfd, long int freq)   { (void)sockfd; (void)freq;      return false; }
 
+/* Additional dsd_rigctl.c stubs — referenced from kept TUs (dmr_csbk.c,
+ * dsd_audio.c, dsd_audio2.c, dsd_symbol.c, edacs-fme.c) but only inside
+ * use_rigctl / udp_in branches we never enter on Android. */
+long int GetCurrentFreq(int sockfd) { (void)sockfd; return 0; }
+void return_to_cc(dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+void udp_socket_blaster (dsd_opts *opts, dsd_state *state, size_t nsam, void *data) {
+    (void)opts; (void)state; (void)nsam; (void)data;
+}
+void udp_socket_blasterA(dsd_opts *opts, dsd_state *state, size_t nsam, void *data) {
+    (void)opts; (void)state; (void)nsam; (void)data;
+}
+
 /* ============================================================
- * Stub for the symbol defined in EXCLUDED dsd_ncurses_printer.c.
- * liveScanner()'s `if (use_ncurses_terminal == 1) ncursesOpen(...)` is
- * additionally gated by `#ifndef PREDATOR_BUILD` in dsd_main.c, but a
- * couple of other TUs (dsd_audio.c diagnostic paths) still reference it.
+ * Stubs for symbols defined in EXCLUDED dsd_ncurses_printer.c and
+ * dsd_serial.c. liveScanner()'s `if (use_ncurses_terminal == 1)` and
+ * `if (use_serial_input == 1)` paths are gated #ifndef PREDATOR_BUILD
+ * in dsd_main.c, but a handful of other TUs (dmr_bs.c, dmr_ms.c,
+ * dsd_frame_sync.c, dsd_frame.c) still reference them.
  * ============================================================ */
-void ncursesOpen (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+void ncursesOpen    (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+void ncursesPrinter (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+void resumeScan     (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
 
 /* ============================================================
  * Predator decoder worker (Phase 3b runtime hookup).

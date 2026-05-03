@@ -42,9 +42,17 @@ target_compile_options(predator_mbe PRIVATE -w)
 set_property(TARGET predator_mbe PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # --- DSD-FME core sources, with surgical exclusions ---
-file(GLOB DSD_ALL_SRC ${VENDOR_DIR}/dsd-fme/src/*.c)
+# IMPORTANT: glob both *.c AND *.cpp/*.cc — the FEC implementations
+# (Reed-Solomon, Golay, Hamming, NID check, ezpwd RS28) live in .cpp
+# files (p25p1_check_hdu.cpp, p25p1_check_ldu.cpp, p25p1_check_nid.cpp,
+# ez.cpp, Hamming.cpp). Globbing only *.c left them out and produced
+# ~14 undefined-symbol linker errors.
+file(GLOB DSD_ALL_SRC
+    ${VENDOR_DIR}/dsd-fme/src/*.c
+    ${VENDOR_DIR}/dsd-fme/src/*.cpp
+    ${VENDOR_DIR}/dsd-fme/src/*.cc)
 list(FILTER DSD_ALL_SRC EXCLUDE REGEX
-    "/(dsd_ncurses_handler|dsd_ncurses_menu|dsd_ncurses_printer|dsd_rigctl|pa_devs|pulse_devices|dsd_serial|dsd_import)\\.c$")
+    "/(dsd_ncurses_handler|dsd_ncurses_menu|dsd_ncurses_printer|dsd_rigctl|pa_devs|pulse_devices|dsd_serial|dsd_import|rtl_sdr_fm)\\.(c|cpp|cc)$")
 
 # --- ezpwd Reed-Solomon ---
 # NOTE: ezpwd is a header-only C++ library; the vendored directory contains

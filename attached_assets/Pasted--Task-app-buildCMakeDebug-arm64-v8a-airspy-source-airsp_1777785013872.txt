@@ -1,0 +1,410 @@
+> Task :app:buildCMakeDebug[arm64-v8a][airspy_source,airspyhf_source,etc]
+C/C++: ninja: Entering directory `C:\Users\cjake\TEMP\Predator-RF\android\app\.cmake\Debug\30691s6m\arm64-v8a'
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/backends/android/backend.cpp:4:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: 1 warning generated.
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/vfo_manager.cpp:1:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/channel/rx_vfo.h:2:
+C/C++: C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+C/C++:             volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+C/C++: extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+C/C++:                                                                                             ^
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/vfo_manager.cpp:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+C/C++: In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/iq_frontend.h:3:
+C/C++: C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+C/C++:         int run() {
+C/C++:             ^
+C/C++: C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+C/C++:     dsp::buffer::Reshaper<dsp::complex_t> reshape;
+C/C++:                                           ^
+C/C++: C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/channel/../buffer/../block.h:65:21: note: overridden virtual function is here
+C/C++:         virtual int run() = 0;
+C/C++:                     ^
+C/C++: 2 warnings generated.
+C/C++: cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+C/C++: ld: error: undefined symbol: ncursesPrinter
+C/C++: >>> referenced by dmr_bs.c:650 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_bs.c:650)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_bs.c.o:(dmrBS)
+C/C++: >>> referenced by dmr_ms.c:346 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_ms.c:346)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_ms.c.o:(dmrMS)
+C/C++: >>> referenced by dsd_frame_sync.c:227 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame_sync.c:227)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame_sync.c.o:(getFrameSync)
+C/C++: >>> referenced 4 more times
+C/C++: ld: error: undefined symbol: GetCurrentFreq
+C/C++: >>> referenced by dmr_csbk.c:422 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_csbk.c:422)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_csbk.c.o:(dmr_cspdu)
+C/C++: >>> referenced by dmr_csbk.c:534 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_csbk.c:534)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_csbk.c.o:(dmr_cspdu)
+C/C++: >>> referenced by dmr_csbk.c:538 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_csbk.c:538)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_csbk.c.o:(dmr_cspdu)
+C/C++: >>> referenced 12 more times
+C/C++: ld: error: undefined symbol: udp_socket_blaster
+C/C++: >>> referenced by dsd_audio.c:750 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_audio.c:750)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_audio.c.o:(playSynthesizedVoice)
+C/C++: >>> referenced by dsd_audio.c:793 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_audio.c:793)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_audio.c.o:(playSynthesizedVoiceR)
+C/C++: >>> referenced by dsd_audio2.c:239 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_audio2.c:239)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_audio2.c.o:(playSynthesizedVoiceFS3)
+C/C++: >>> referenced 40 more times
+C/C++: ld: error: undefined symbol: check_NID
+C/C++: >>> referenced by dsd_frame.c:388 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:388)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+C/C++: ld: error: undefined symbol: resumeScan
+C/C++: >>> referenced by dsd_frame.c:516 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:516)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+C/C++: >>> referenced by dsd_frame.c:558 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:558)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+C/C++: >>> referenced by dsd_frame.c:583 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:583)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+C/C++: ld: error: undefined symbol: udp_socket_blasterA
+C/C++: >>> referenced by dsd_symbol.c:327 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_symbol.c:327)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_symbol.c.o:(getSymbol)
+C/C++: >>> referenced by edacs-fme.c:407 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\edacs-fme.c:407)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/edacs-fme.c.o:(edacs_analog)
+C/C++: >>> referenced by edacs-fme.c:408 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\edacs-fme.c:408)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/edacs-fme.c.o:(edacs_analog)
+C/C++: >>> referenced 1 more times
+C/C++: ld: error: undefined symbol: check_and_fix_golay_24_6
+C/C++: >>> referenced by p25p1_hdu.c:121 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:121)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+C/C++: >>> referenced by p25p1_hdu.c:121 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:121)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+C/C++: ld: error: undefined symbol: check_and_fix_redsolomon_36_20_17
+C/C++: >>> referenced by p25p1_hdu.c:272 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:272)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+C/C++: ld: error: undefined symbol: encode_reedsolomon_36_20_17
+C/C++: >>> referenced by p25p1_hdu.c:297 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:297)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+C/C++: ld: error: undefined symbol: encode_golay_24_6
+C/C++: >>> referenced by p25p1_hdu.c:189 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:189)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(correct_golay_dibits_6)
+C/C++: ld: error: undefined symbol: check_and_fix_hamming_10_6_3
+C/C++: >>> referenced by p25p1_ldu.c:201 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu.c:201)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu.c.o:(read_and_correct_hex_word)
+C/C++: ld: error: undefined symbol: encode_hamming_10_6_3
+C/C++: >>> referenced by p25p1_ldu.c:261 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu.c:261)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu.c.o:(correct_hamming_dibits)
+C/C++: ld: error: undefined symbol: check_and_fix_reedsolomon_24_12_13
+C/C++: >>> referenced by p25p1_ldu1.c:301 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu1.c:301)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu1.c.o:(processLDU1)
+C/C++: >>> referenced by p25p1_tdulc.c:256 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:256)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+C/C++: ld: error: undefined symbol: encode_reedsolomon_24_12_13
+C/C++: >>> referenced by p25p1_ldu1.c:322 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu1.c:322)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu1.c.o:(processLDU1)
+C/C++: >>> referenced by p25p1_tdulc.c:284 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:284)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+C/C++: ld: error: undefined symbol: check_and_fix_reedsolomon_24_16_9
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: ncursesPrinter
+>>> referenced by dmr_bs.c:650 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_bs.c:650)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_bs.c.o:(dmrBS)
+>>> referenced by dmr_ms.c:346 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_ms.c:346)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_ms.c.o:(dmrMS)
+>>> referenced by dsd_frame_sync.c:227 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame_sync.c:227)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame_sync.c.o:(getFrameSync)
+>>> referenced 4 more times
+Ask Gemini
+
+C/C++: >>> referenced by p25p1_ldu2.c:310 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu2.c:310)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu2.c.o:(processLDU2)
+C/C++: ld: error: undefined symbol: encode_reedsolomon_24_16_9
+C/C++: >>> referenced by p25p1_ldu2.c:331 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu2.c:331)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu2.c.o:(processLDU2)
+C/C++: ld: error: undefined symbol: return_to_cc
+C/C++: >>> referenced by p25p1_ldu2.c:719 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu2.c:719)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu2.c.o:(processLDU2)
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: GetCurrentFreq
+>>> referenced by dmr_csbk.c:422 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_csbk.c:422)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_csbk.c.o:(dmr_cspdu)
+>>> referenced by dmr_csbk.c:534 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_csbk.c:534)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_csbk.c.o:(dmr_cspdu)
+>>> referenced by dmr_csbk.c:538 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_csbk.c:538)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_csbk.c.o:(dmr_cspdu)
+>>> referenced 12 more times
+Ask Gemini
+
+C/C++: ld: error: undefined symbol: check_and_fix_golay_24_12
+C/C++: >>> referenced by p25p1_tdulc.c:93 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:93)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+C/C++: >>> referenced by p25p1_tdulc.c:93 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:93)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+C/C++: >>> referenced by p25p1_tdulc.c:93 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:93)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+C/C++: >>> referenced 9 more times
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: udp_socket_blaster
+>>> referenced by dsd_audio.c:750 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_audio.c:750)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_audio.c.o:(playSynthesizedVoice)
+>>> referenced by dsd_audio.c:793 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_audio.c:793)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_audio.c.o:(playSynthesizedVoiceR)
+>>> referenced by dsd_audio2.c:239 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_audio2.c:239)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_audio2.c.o:(playSynthesizedVoiceFS3)
+>>> referenced 40 more times
+Ask Gemini
+
+C/C++: ld: error: undefined symbol: encode_golay_24_12
+C/C++: >>> referenced by p25p1_tdulc.c:162 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:162)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(correct_golay_dibits_12)
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: check_NID
+>>> referenced by dsd_frame.c:388 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:388)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+Ask Gemini
+
+C/C++: ld: error: undefined symbol: ez_rs28_facch
+C/C++: >>> referenced by p25p2_frame.c:181 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p2_frame.c:181)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p2_frame.c.o:(process_FACCHc)
+C/C++: >>> referenced by p25p2_frame.c:235 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p2_frame.c:235)
+C/C++: >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p2_frame.c.o:(process_FACCHs)
+C/C++: ld: error: too many errors emitted, stopping now (use -error-limit=0 to see all errors)
+C/C++: clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: resumeScan
+>>> referenced by dsd_frame.c:516 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:516)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+>>> referenced by dsd_frame.c:558 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:558)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+>>> referenced by dsd_frame.c:583 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame.c:583)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o:(processFrame)
+Ask Gemini
+
+C/C++: ninja: build stopped: subcommand failed.
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: udp_socket_blasterA
+>>> referenced by dsd_symbol.c:327 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_symbol.c:327)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_symbol.c.o:(getSymbol)
+>>> referenced by edacs-fme.c:407 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\edacs-fme.c:407)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/edacs-fme.c.o:(edacs_analog)
+>>> referenced by edacs-fme.c:408 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\edacs-fme.c:408)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/edacs-fme.c.o:(edacs_analog)
+>>> referenced 1 more times
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: check_and_fix_golay_24_6
+>>> referenced by p25p1_hdu.c:121 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:121)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+>>> referenced by p25p1_hdu.c:121 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:121)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: check_and_fix_redsolomon_36_20_17
+>>> referenced by p25p1_hdu.c:272 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:272)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: encode_reedsolomon_36_20_17
+>>> referenced by p25p1_hdu.c:297 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:297)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(processHDU)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: encode_golay_24_6
+>>> referenced by p25p1_hdu.c:189 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_hdu.c:189)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_hdu.c.o:(correct_golay_dibits_6)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: check_and_fix_hamming_10_6_3
+>>> referenced by p25p1_ldu.c:201 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu.c:201)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu.c.o:(read_and_correct_hex_word)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: encode_hamming_10_6_3
+>>> referenced by p25p1_ldu.c:261 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu.c:261)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu.c.o:(correct_hamming_dibits)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: check_and_fix_reedsolomon_24_12_13
+>>> referenced by p25p1_ldu1.c:301 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu1.c:301)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu1.c.o:(processLDU1)
+>>> referenced by p25p1_tdulc.c:256 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:256)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: encode_reedsolomon_24_12_13
+>>> referenced by p25p1_ldu1.c:322 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu1.c:322)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu1.c.o:(processLDU1)
+>>> referenced by p25p1_tdulc.c:284 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:284)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: check_and_fix_reedsolomon_24_16_9
+>>> referenced by p25p1_ldu2.c:310 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu2.c:310)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu2.c.o:(processLDU2)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: encode_reedsolomon_24_16_9
+>>> referenced by p25p1_ldu2.c:331 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu2.c:331)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu2.c.o:(processLDU2)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: return_to_cc
+>>> referenced by p25p1_ldu2.c:719 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_ldu2.c:719)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_ldu2.c.o:(processLDU2)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: check_and_fix_golay_24_12
+>>> referenced by p25p1_tdulc.c:93 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:93)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+>>> referenced by p25p1_tdulc.c:93 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:93)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+>>> referenced by p25p1_tdulc.c:93 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:93)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(processTDULC)
+>>> referenced 9 more times
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: encode_golay_24_12
+>>> referenced by p25p1_tdulc.c:162 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p1_tdulc.c:162)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p1_tdulc.c.o:(correct_golay_dibits_12)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: undefined symbol: ez_rs28_facch
+>>> referenced by p25p2_frame.c:181 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p2_frame.c:181)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p2_frame.c.o:(process_FACCHc)
+>>> referenced by p25p2_frame.c:235 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\p25p2_frame.c:235)
+>>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/p25p2_frame.c.o:(process_FACCHs)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+ld: error: too many errors emitted, stopping now (use -error-limit=0 to see all errors)
+Ask Gemini
+
+cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+Ask Gemini
+
+
+> Task :app:buildCMakeDebug[arm64-v8a][airspy_source,airspyhf_source,etc] FAILED
+Execution failed for task ':app:buildCMakeDebug[arm64-v8a][airspy_source,airspyhf_source,etc]'.
+> com.android.ide.common.process.ProcessException: ninja: Entering directory `C:\Users\cjake\TEMP\Predator-RF\android\app\.cmake\Debug\30691s6m\arm64-v8a'
+  [1/28] Building CXX object core/CMakeFiles/sdrpp_core.dir/backends/android/backend.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/backends/android/backend.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  1 warning generated.
+  [2/28] Building CXX object core/CMakeFiles/sdrpp_core.dir/src/signal_path/vfo_manager.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/vfo_manager.cpp:1:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/vfo_manager.cpp:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src/signal_path/../dsp/channel/../buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [3/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\libsdrpp_core.so
+  [4/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\airspy_source.so
+  [5/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\file_source.so
+  [6/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\hackrf_source.so
+  [7/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\airspyhf_source.so
+  [8/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\rtl_sdr_source.so
+  [9/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\hermes_source.so
+  [10/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\plutosdr_source.so
+  [11/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\rfspace_source.so
+  [12/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\sdrpp_server_source.so
+  [13/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\spectran_http_source.so
+  [14/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\spyserver_source.so
+  [15/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\audio_sink.so
+  [16/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\rtl_tcp_source.so
+  [17/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\network_sink.so
+  [18/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\m17_decoder.so
+  [19/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\rigctl_client.so
+  [20/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\meteor_demodulator.so
+  [21/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\radio.so
+  [22/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\scanner.so
+  [23/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\rigctl_server.so
+  [24/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\frequency_manager.so
+  [25/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\recorder.so
+  [26/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\rtl433_decoder.so
+  [27/28] Building CXX object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/src/main.cpp.o
+  [28/28] Linking CXX shared library ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so
+  FAILED: ../../../../build/intermediates/cxx/Debug/30691s6m/obj/arm64-v8a/dsdfme_decoder.so 
+  cmd.exe /C "cd . && C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang++.exe --target=aarch64-none-linux-android28 --gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64 --sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -fPIC -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  -u ANativeActivity_onCreate -shared -Wl,-soname,dsdfme_decoder.so -o ..\..\..\..\build\intermediates\cxx\Debug\30691s6m\obj\arm64-v8a\dsdfme_decoder.so @CMakeFiles\dsdfme_decoder.rsp  && cd ."
+  ld: error: undefined symbol: ncursesPrinter
+  >>> referenced by dmr_bs.c:650 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_bs.c:650)
+  >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_bs.c.o:(dmrBS)
+  >>> referenced by dmr_ms.c:346 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dmr_ms.c:346)
+  >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dmr_ms.c.o:(dmrMS)
+  >>> referenced by dsd_frame_sync.c:227 (C:/Users/cjake/TEMP/Predator-RF/decoder_modules/dsdfme_decoder/vendor/dsd-fme/src\dsd_frame_sync.c:227)
+  >>>               decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame_sync.c.o:(getFrameSync)
+  >>> referenced 4 more times
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+BUILD FAILED in 3s
+59 actionable tasks: 5 executed, 54 up-to-date
+Ask Gemini
+
