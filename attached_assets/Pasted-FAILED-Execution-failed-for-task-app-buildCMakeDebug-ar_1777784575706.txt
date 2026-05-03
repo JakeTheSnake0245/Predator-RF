@@ -1,0 +1,254 @@
+FAILED
+Execution failed for task ':app:buildCMakeDebug[arm64-v8a][airspy_source,airspyhf_source,etc]'.
+> com.android.ide.common.process.ProcessException: ninja: Entering directory `C:\Users\cjake\TEMP\Predator-RF\android\app\.cmake\Debug\30691s6m\arm64-v8a'
+  [1/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/metric.c.o
+  [2/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/error_buffer.c.o
+  [3/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/lookup.c.o
+  [4/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/convolutional.c.o
+  [5/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/encode.c.o
+  [6/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/encode.c.o
+  [7/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/bit.c.o
+  [8/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/history_buffer.c.o
+  [9/481] Building C object core/libcorrect/src/convolutional/CMakeFiles/correct-convolutional.dir/decode.c.o
+  [10/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/polynomial.c.o
+  [11/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/decode.c.o
+  [12/481] Building C object core/libcorrect/src/reed-solomon/CMakeFiles/correct-reed-solomon.dir/reed-solomon.c.o
+  [13/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/compat_paths.c.o
+  [14/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/compat_time.c.o
+  [15/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/bit_util.c.o
+  [16/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/data_tag.c.o
+  [17/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/bitbuffer.c.o
+  [18/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/confparse.c.o
+  [19/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/decoder_util.c.o
+  [20/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/data.c.o
+  [21/481] Building CXX object decoder_modules/m17_decoder/CMakeFiles/m17_decoder.dir/src/base40.cpp.o
+  [22/481] Linking C static library core\libcorrect\lib\libcorrect.a
+  [23/481] Building CXX object source_modules/rtl_tcp_source/CMakeFiles/rtl_tcp_source.dir/src/rtl_tcp_client.cpp.o
+  [24/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/abuf.c.o
+  [25/481] Building CXX object source_modules/rfspace_source/CMakeFiles/rfspace_source.dir/src/rfspace_client.cpp.o
+  [26/481] Building CXX object decoder_modules/m17_decoder/CMakeFiles/m17_decoder.dir/src/lsf_decode.cpp.o
+  [27/481] Building CXX object source_modules/spyserver_source/CMakeFiles/spyserver_source.dir/src/spyserver_client.cpp.o
+  [28/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/am_analyze.c.o
+  [29/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/badger_water.c.o
+  [30/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/brennenstuhl_rcs_2044.c.o
+  [31/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/baseband.c.o
+  [32/481] Building CXX object source_modules/hermes_source/CMakeFiles/hermes_source.dir/src/hermes.cpp.o
+  [33/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/baldr_rain.c.o
+  [34/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/blyss.c.o
+  [35/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/blueline.c.o
+  [36/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/list.c.o
+  [37/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/fileformat.c.o
+  [38/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/logger.c.o
+  [39/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/jsmn.c.o
+  [40/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/predator_stubs.c.o
+  [41/481] Building CXX object source_modules/spectran_http_source/CMakeFiles/spectran_http_source.dir/src/spectran_http_client.cpp.o
+  [42/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/output_file.c.o
+  [43/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_analyzer.c.o
+  [44/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/optparse.c.o
+  [45/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/output_log.c.o
+  [46/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_detect_fsk.c.o
+  [47/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_detect.c.o
+  [48/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/raw_output.c.o
+  [49/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_data.c.o
+  [50/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/rfraw.c.o
+  [51/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/r_util.c.o
+  [52/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/pulse_slicer.c.o
+  [53/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/acurite_01185m.c.o
+  [54/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/abmt.c.o
+  [55/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/akhan_100F14.c.o
+  [56/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/samp_grab.c.o
+  [57/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/acurite.c.o
+  [58/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ambientweather_tx8300.c.o
+  [59/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ant_antplus.c.o
+  [60/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ambientweather_wh31e.c.o
+  [61/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/alecto.c.o
+  [62/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/ambient_weather.c.o
+  [63/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/arad_ms_meter.c.o
+  [64/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/archos_tbh.c.o
+  [65/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/atech_ws308.c.o
+  [66/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/arexx_ml.c.o
+  [67/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_hg02832.c.o
+  [68/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_ahfl.c.o
+  [69/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_afw2a1.c.o
+  [70/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_4ld5661.c.o
+  [71/481] Building CXX object source_modules/sdrpp_server_source/CMakeFiles/sdrpp_server_source.dir/src/sdrpp_server_client.cpp.o
+  [72/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/devices/auriol_aft77b2.c.o
+  [73/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dpmr_data.c.o
+  [74/481] Building C object decoder_modules/rtl433_decoder/CMakeFiles/rtl433_decoder.dir/vendor/rtl_433/src/r_api.c.o
+  [75/481] Building CXX object source_modules/plutosdr_source/CMakeFiles/plutosdr_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/plutosdr_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/plutosdr_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [76/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_alias.c.o
+  [77/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_audio.c.o
+  [78/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_dibit.c.o
+  [79/481] Building CXX object source_modules/hackrf_source/CMakeFiles/hackrf_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/hackrf_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/hackrf_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [80/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dpmr_voice.c.o
+  [81/481] Building CXX object source_modules/airspy_source/CMakeFiles/airspy_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/airspy_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/airspy_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [82/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame.c.o
+  [83/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_events.c.o
+  [84/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_ks.c.o
+  [85/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_filters.c.o
+  [86/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_frame_sync.c.o
+  [87/481] Building CXX object source_modules/rtl_sdr_source/CMakeFiles/rtl_sdr_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/rtl_sdr_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/rtl_sdr_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [88/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_gps.c.o
+  [89/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_mbe2.c.o
+  [90/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_main.c.o
+  [91/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_time.c.o
+  [92/481] Building CXX object source_modules/airspyhf_source/CMakeFiles/airspyhf_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/airspyhf_source/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/airspyhf_source/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [93/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_upsample.c.o
+  [94/481] Building CXX object sink_modules/android_audio_sink/CMakeFiles/audio_sink.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/sink_modules/android_audio_sink/src/main.cpp:3:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
+  In file included from C:/Users/cjake/TEMP/Predator-RF/sink_modules/android_audio_sink/src/main.cpp:4:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/signal_path.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:3:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/buffer/reshaper.h:61:13: warning: 'run' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
+          int run() {
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/iq_frontend.h:79:43: note: in instantiation of template class 'dsp::buffer::Reshaper<dsp::complex_t>' requested here
+      dsp::buffer::Reshaper<dsp::complex_t> reshape;
+                                            ^
+  C:/Users/cjake/TEMP/Predator-RF/core/src\dsp/buffer/../block.h:65:21: note: overridden virtual function is here
+          virtual int run() = 0;
+                      ^
+  2 warnings generated.
+  [95/481] Building C object decoder_modules/dsdfme_decoder/CMakeFiles/dsdfme_decoder.dir/vendor/dsd-fme/src/dsd_reset.c.o
+  [96/481] Building CXX object source_modules/sdrpp_server_source/CMakeFiles/sdrpp_server_source.dir/src/main.cpp.o
+  In file included from C:/Users/cjake/TEMP/Predator-RF/source_modules/sdrpp_server_source/src/main.cpp:5:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/gui.h:7:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\gui/main_window.h:6:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/vfo_manager.h:2:
+  In file included from C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/rx_vfo.h:2:
+  C:/Users/cjake/TEMP/Predator-RF/core/src\signal_path/../dsp/channel/frequency_xlator.h:44:13: warning: 'volk_32fc_s32fc_x2_rotator_32fc' is deprecated [-Wdeprecated-declarations]
+              volk_32fc_s32fc_x2_rotator_32fc((lv_32fc_t*)out, (lv_32fc_t*)in, phaseDelta, &phase, count);
+              ^
+  C:/Users/cjake/TEMP/Predator-RF/android/sdr-kit/arm64-v8a/include\volk/volk.h:1815:93: note: 'volk_32fc_s32fc_x2_rotator_32fc' has been explicitly marked deprecated here
+  extern VOLK_API p_32fc_s32fc_x2_rotator_32fc volk_32fc_s32fc_x2_rotator_32fc __attribute__((deprecated));
+                                                                                              ^
