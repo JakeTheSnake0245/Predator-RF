@@ -154,7 +154,13 @@ namespace style {
         // double-taps survive the same jitter.
         ImGuiIO& io = ImGui::GetIO();
         io.MouseDragThreshold     = std::max(io.MouseDragThreshold,     20.0f * uiScale);
-        io.MouseDoubleClickMaxDist = std::max(io.MouseDoubleClickMaxDist, 16.0f * uiScale);
+        io.MouseDoubleClickMaxDist = std::max(io.MouseDoubleClickMaxDist, 32.0f * uiScale);
+        // Default is 0.30 s. A natural double-tap on a touchscreen routinely
+        // takes 350-450 ms (much slower than a mouse double-click), and the
+        // bookmark / scheduler editors require a double-tap to enter edit
+        // mode — at the default time the second tap was being treated as a
+        // fresh single click and edit never opened.
+        io.MouseDoubleClickTime    = std::max(io.MouseDoubleClickTime,    0.50f);
     }
 }
 
