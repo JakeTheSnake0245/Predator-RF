@@ -27,6 +27,7 @@ if _project_root not in sys.path:
 
 from backend.config import config
 from backend.fusion.track_manager import TrackManager
+from backend.fusion.proximity_estimator import ProximityEstimator
 from backend.fusion.cross_station_dedup import CrossStationDedup
 from backend.coordination.kujhad_client import KujhadFleetManager
 from backend.intelligence.anomaly_detector import AnomalyDetector
@@ -59,7 +60,8 @@ class PredatorBackend:
             learning_window_hours=config.baseline_learning_window_hours)
         self.anomaly_detector = AnomalyDetector(self.baseline)
         self.decision_engine = DecisionEngine(self.anomaly_detector)
-        self.track_manager = TrackManager()
+        _proximity = (ProximityEstimator() if config.rssi_proximity_enabled else None)
+        self.track_manager = TrackManager(proximity_estimator=_proximity)
         self.fleet_manager = KujhadFleetManager()
 
         # TDOA geolocation — needs ≥2 GPS-synced nodes hearing the same
@@ -338,6 +340,11 @@ class PredatorBackend:
         track.location_method = "tdoa"
         track.location_error_radius_m = 50.0 + (
             1.0 - max(0.0, min(1.0, result.location_confidence))) * 4950.0
+        # Store the actual 1-sigma error ellipse so the Android map can
+        # render it accurately instead of approximating with a circle.
+        track.tdoa_ellipse_a_m = result.ellipse_a_m
+        track.tdoa_ellipse_b_m = result.ellipse_b_m
+        track.tdoa_ellipse_theta_deg = result.ellipse_theta_deg
         logger.info("Track %s located: (%.5f, %.5f) conf=%.2f via %d nodes",
                     emitter_id[:8], result.estimated_lat, result.estimated_lon,
                     result.location_confidence,
