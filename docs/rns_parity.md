@@ -21,6 +21,9 @@ Legend: `✓` = implemented, `–` = not applicable to that platform.
 | `announce_interval_s` | ✓ | ✓ | ✓ |
 | `notes`               | ✓ | ✓ | ✓ |
 | `reliable_cot`        | ✓ | ✓ | ✓ |
+| `ifac_netname`        | ✓ | ✓ | ✓ |
+| `ifac_netkey`         | ✓ | ✓ | ✓ |
+| `ifac_size`           | ✓ | ✓ | ✓ |
 
 Per-type fields (TCP client/server, UDP, I2P, AutoInterface, RNode,
 KISS TNC, AX.25 KISS, Pipe) — every field listed in section B of the
@@ -79,6 +82,9 @@ identity-excluded paths are both verified by `test_rns_token.py`.
 | `announce_interval_s`  | ✓ | iface.announce_interval | int input | via cfg |
 | `notes`                | ✓ | (label only) | text input | via cfg |
 | `reliable_cot`         | ✓ | publish path | checkbox | via cfg |
+| `ifac_netname`         | ✓ | iface.ifac_netname | text input | via cfg |
+| `ifac_netkey`          | ✓ | iface.ifac_netkey | password input | via cfg (in token AEAD) |
+| `ifac_size`            | ✓ | iface.ifac_size  | int input  | via cfg |
 
 ## Per-type advanced-field coverage
 

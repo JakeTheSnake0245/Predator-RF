@@ -608,6 +608,36 @@ class RNSDaemon:
                     setattr(iface, attr, int(entry["announce_interval_s"]))
                 except Exception:
                     pass
+        # IFAC (Interface Access Code) — Reticulum's per-interface
+        # pre-shared-key gate. When `ifac_netname` AND `ifac_netkey`
+        # are both present the iface uses keyed framing so non-keyed
+        # peers can't even parse link-layer packets. `ifac_size` (in
+        # bytes, 8..512) controls the truncation length of the keyed
+        # hash; defaults to RNS's own internal default when absent.
+        # All three writes are best-effort because some interface
+        # subclasses don't expose every attribute.
+        netname = entry.get("ifac_netname")
+        netkey = entry.get("ifac_netkey")
+        if netname and netkey:
+            if "ifac_size" in entry:
+                try:
+                    setattr(iface, "ifac_size", int(entry["ifac_size"]))
+                except Exception:
+                    pass
+            try:
+                setattr(iface, "ifac_netname", str(netname))
+            except Exception:
+                pass
+            try:
+                setattr(iface, "ifac_netkey", str(netkey))
+            except Exception:
+                pass
+            # Some RNS versions only honour IFAC when the iface flag
+            # is set; setting it is a no-op on versions that don't.
+            try:
+                setattr(iface, "ifac_signature", True)
+            except Exception:
+                pass
         try:
             RNS.Transport.interfaces.append(iface)
         except Exception:

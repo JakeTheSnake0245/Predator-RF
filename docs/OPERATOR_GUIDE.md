@@ -785,6 +785,28 @@ Spec section B fields, applied by `_build_rns_interface` to every iface:
 | `announce_interval_s` | unset | How often this node announces itself on the iface. |
 | `notes` | unset | Free-form operator note shown in the panel; not transmitted. |
 | `reliable_cot` | type-default | Per-iface override of the publish reliability mode. |
+| `ifac_netname` | unset | Reticulum **Interface Access Code** network name. Pre-shared identifier that scopes which nodes can talk on this iface — non-keyed nodes see only undecodable framing. Must be set together with `ifac_netkey`. |
+| `ifac_netkey` | unset | Pre-shared **passphrase** that derives the IFAC keyed-hash material. Treat as a secret — minted into replication tokens encrypted under the operator passphrase, never stored or logged in cleartext. |
+| `ifac_size` | unset | Truncation length in bytes of the IFAC keyed hash, range 8..512. Leave unset to use Reticulum's internal default. Larger = more spoofing-resistant, more per-frame overhead. |
+
+##### 20.7.3.1 IFAC — when to use it
+
+IFAC is Reticulum's per-interface pre-shared-key gate. With both `ifac_netname` and `ifac_netkey` set, every Reticulum frame on that interface is hashed with the netkey so nodes that don't share the key can't decode link-layer framing at all — your traffic is invisible to them, not just rejected.
+
+**Use IFAC when:**
+
+- You're sharing a physical link layer with other Reticulum users (e.g. an open LoRa frequency at a hamfest, a public TCP hub) and want operational separation rather than just allowlist filtering.
+- You want the link layer itself to refuse non-mission traffic before any RNS Transport / Identity / allowlist logic runs (defence in depth — IFAC is layer-1.5, the peer allowlist is layer-3).
+- You're running an `auto_interface` on a multi-tenant LAN and want only your team's nodes to discover each other.
+
+**Don't use IFAC when:**
+
+- You're on a dedicated point-to-point link (TCP client to your own hub, AX.25 to a single peer) — the peer allowlist already gates trust and IFAC adds per-frame overhead with no extra security gain.
+- You're operating under amateur radio rules that forbid encryption — IFAC keyed framing **is** a form of obscurement and may not be permitted on Part 97 frequencies. Check your local regs.
+
+**Both fields are required for IFAC to take effect** — setting only `ifac_netname` does nothing. The UI emits the IFAC block to the daemon only when both fields are non-empty (the C++ Save handler in `core/src/gui/main_window.cpp` checks `if (eIfacNetname[0] && eIfacNetkey[0])`); the daemon's `_build_rns_interface` checks the same condition before applying any IFAC attribute to the iface object.
+
+**IFAC fields ride through replication tokens.** Mint a token from one node and the IFAC netname + netkey are bundled inside the AEAD-encrypted payload alongside the rest of the config — no separate out-of-band coordination required. If you'd rather have the receiving operator set their own IFAC (e.g. you're sharing a config but each operator has a different netkey policy), clear the IFAC fields in the UI before clicking **Mint token**.
 
 #### 20.7.4 Adding an interface — UI flow
 
@@ -897,6 +919,8 @@ The allowlist is **synced from the daemon config to the bridge at startup** (`ba
 | `daemon=stub` in status | `rns` Python package not installed. `pip install -r backend/rns/requirements.txt` and restart. |
 | Iface `online=false`, `last_error="..."` | Read the error string. Most common: serial port permissions (`sudo usermod -aG dialout $USER`), wrong port path, port already open by another process. |
 | LoRa peers can hear you but you never see them | Check `announce_interval_s` on **both** sides. Default unset means RNS uses its built-in heuristic; set to 600 (10 min) for a stable mesh. |
+| Iface `online=true` but you and a peer can't see each other and the link looks healthy | One side has IFAC set and the other doesn't, or the `ifac_netname` / `ifac_netkey` differ. With IFAC mismatched the framing is undecodable so the other node looks completely silent — not "rejected", just invisible. Either clear IFAC on both sides or copy the same netname + netkey to both. |
+| You enabled IFAC and now your own restart makes the iface look dead | `ifac_size` outside 8..512 is rejected by `validate_interface`; if you typed a value the schema accepted but RNS doesn't like, check the daemon log for an attribute error. Fall back: clear `ifac_size` (=0) so RNS uses its default. |
 | `cot_bridge.dropped_allowlist > 0` | A peer is announcing but not in your allowlist. Either add their hash or accept that you're filtering them out. |
 | Inbound CoT not appearing in TAK on Android | Check `RNS_ATAK_LOCAL_PORT` (defaults to 4242 on Android, opt-in elsewhere). Make sure ATAK is listening on that UDP port. |
 | `restart_interface` returns `forced_close=true, timed_out=true` | The iface hung in shutdown. RNS occasionally does this on serial USB resets. Re-plug the radio, click **Restart** again. |

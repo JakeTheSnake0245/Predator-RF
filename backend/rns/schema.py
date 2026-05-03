@@ -96,6 +96,15 @@ COMMON_FIELDS: List[Tuple[str, type | tuple, bool, Any]] = [
     ("announce_interval_s", int, False, _positive_int),
     ("notes", str, False, _str_optional),
     ("reliable_cot", bool, False, _bool),
+    # Reticulum Interface Access Code (IFAC) — optional per-interface
+    # gate that hashes every Reticulum frame with a pre-shared netkey
+    # so foreign nodes (without the same netname/netkey) can't even
+    # decode link-layer framing. Three fields, all optional, must be
+    # set together to actually take effect (RNS requires netname AND
+    # netkey; size is the truncation length of the keyed hash).
+    ("ifac_size", int, False, _int_range(8, 512)),
+    ("ifac_netname", str, False, _str_optional),
+    ("ifac_netkey", str, False, _str_optional),
 ]
 
 PER_TYPE_FIELDS: Dict[str, List[Tuple[str, type | tuple, bool, Any]]] = {
