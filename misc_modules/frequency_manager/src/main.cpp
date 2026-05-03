@@ -5,11 +5,16 @@
 #include <gui/style.h>
 #include <core.h>
 #include <thread>
+#include <atomic>
 #include <radio_interface.h>
 #include <signal_path/signal_path.h>
 #include <vector>
 #include <gui/tuner.h>
 #include <gui/file_dialogs.h>
+#ifdef __ANDROID__
+#include "saf_bridge.h"
+#include <filesystem>
+#endif
 #include <utils/freq_formatting.h>
 #include <gui/dialogs/dialog_box.h>
 #include <fstream>
@@ -541,7 +546,18 @@ private:
         ImGui::TableSetColumnIndex(0);
         if (ImGui::Button(("Import##_freq_mgr_imp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0)) && !_this->importOpen) {
             _this->importOpen = true;
+#ifdef __ANDROID__
+            // SAF picker blocks the calling thread → must run off the
+            // render thread. We poll safImportReady in the section below.
+            _this->safImportReady = false;
+            _this->safImportPath.clear();
+            std::thread([_this]{
+                _this->safImportPath = android_saf::pickFileForReadBlocking("application/json");
+                _this->safImportReady = true;
+            }).detach();
+#else
             _this->importDialog = new pfd::open_file("Import bookmarks", "", { "JSON Files (*.json)", "*.json", "All Files", "*" }, true);
+#endif
         }
 
         ImGui::TableSetColumnIndex(1);
@@ -554,7 +570,24 @@ private:
             }
             config.release();
             _this->exportOpen = true;
+#ifdef __ANDROID__
+            // SAF "save as" can only copy from a real file, so we
+            // serialise the JSON to a cache temp first and let the
+            // worker thread launch the picker + copy.
+            std::string tmp = (std::string)core::args["root"] + "/__export_bookmarks.json";
+            try {
+                std::ofstream o(tmp);
+                o << _this->exportedBookmarks.dump(4);
+            } catch (...) { /* fall through; saveFile will error */ }
+            _this->safExportTempPath = tmp;
+            _this->safExportReady = false;
+            std::thread([_this]{
+                android_saf::saveFileBlocking("bookmarks.json", _this->safExportTempPath);
+                _this->safExportReady = true;
+            }).detach();
+#else
             _this->exportDialog = new pfd::save_file("Export bookmarks", "", { "JSON Files (*.json)", "*.json", "All Files", "*" }, true);
+#endif
         }
         if (selectedNames.size() == 0 && _this->selectedListName != "") { style::endDisabled(); }
         ImGui::EndTable();
@@ -635,6 +668,28 @@ private:
         }
 
         // Handle import and export
+#ifdef __ANDROID__
+        if (_this->importOpen && _this->safImportReady.load()) {
+            _this->importOpen = false;
+            _this->safImportReady = false;
+            if (!_this->safImportPath.empty() && _this->listNames.size() > 0) {
+                _this->importBookmarks(_this->safImportPath);
+            }
+            _this->safImportPath.clear();
+        }
+        if (_this->exportOpen && _this->safExportReady.load()) {
+            _this->exportOpen = false;
+            _this->safExportReady = false;
+            // The SAF save path already copied the temp file into the
+            // user-chosen URI on the Java side; we just clean up the
+            // temp here whether it succeeded or was cancelled.
+            if (!_this->safExportTempPath.empty()) {
+                std::error_code ec;
+                std::filesystem::remove(_this->safExportTempPath, ec);
+                _this->safExportTempPath.clear();
+            }
+        }
+#else
         if (_this->importOpen && _this->importDialog->ready()) {
             _this->importOpen = false;
             std::vector<std::string> paths = _this->importDialog->result();
@@ -651,6 +706,7 @@ private:
             }
             delete _this->exportDialog;
         }
+#endif
     }
 
     // ── Auto-marker helpers ──────────────────────────────────────────────────
@@ -984,8 +1040,18 @@ private:
     json exportedBookmarks;
     bool importOpen = false;
     bool exportOpen = false;
+#ifdef __ANDROID__
+    // SAF runs on a worker thread (so the picker's blocking JNI call
+    // doesn't freeze the render loop). The render loop polls these
+    // each frame to pick up the result.
+    std::atomic<bool> safImportReady{false};
+    std::string      safImportPath;       // populated by worker, read by render thread once safImportReady=true
+    std::atomic<bool> safExportReady{false};
+    std::string      safExportTempPath;   // cache file written before SAF picker, removed after
+#else
     pfd::open_file* importDialog;
     pfd::save_file* exportDialog;
+#endif
 
     void importBookmarks(std::string path) {
         std::ifstream fs(path);
