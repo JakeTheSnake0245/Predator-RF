@@ -42,6 +42,7 @@
 #include <backend.h>
 #include "../predator/decoder_ingest.h"
 #include "../predator/kujhad_fleet.h"
+#include "../predator/kujhad_rns.h"
 #include "../predator/native_decoder_registry.h"
 #include "../predator/cot_reporter.h"
 #include <ctime>
@@ -5910,6 +5911,814 @@ void MainWindow::draw() {
                     "Auth = X-Kujhad-Key header. Endpoints: /v1/identify, /v1/state, "
                     "/v1/gps, /v1/events, /v1/command. Command classes: tune, scan, "
                     "mission, identify. The tx.* class is rejected at the wire (RX-only build)."));
+            }
+
+            // ── RNS Interfaces sub-panel (Task #27) ────────────────────
+            // Talks to the predator-rns daemon over a local Unix socket
+            // (/run/predator-rns.sock or ~/.local/state/predator-rns/control.sock).
+            // Wire format = line-delimited JSON. The full method list is
+            // documented in backend/rns/README.md and docs/rns_parity.md.
+            //
+            // Panel state is held in static locals so the operator can
+            // tab away and back without losing the open form. JSON is
+            // parsed with the same `json` helper the rest of the GUI
+            // already uses for Kujhad fleet state.
+            if (ImGui::CollapsingHeader(T("RNS Interfaces (Reticulum)"),
+                                          ImGuiTreeNodeFlags_DefaultOpen)) {
+                using nlohmann::json;
+
+                static std::string rnsBanner;
+                static std::string rnsStatusRaw;
+                static json        rnsStatus = json::object();
+                static json        rnsList   = json::array();
+                static json        rnsLogs   = json::array();
+                static double      rnsLastPoll = 0.0;
+                static bool        rnsAutoRefresh = true;
+                static int         rnsLogLimit = 50;
+                static char        rnsLogLevel[8] = "INFO";
+
+                // Edit / Add modal state.
+                static bool        rnsEditOpen = false;
+                static bool        rnsEditIsNew = false;
+                static std::string rnsEditId;
+                static char        rnsEditName[128] = "";
+                static int         rnsEditTypeIdx = 0;
+                static bool        rnsEditEnabled = true;
+                static bool        rnsEditReliable = false;
+                static char        rnsEditNotes[256] = "";
+                // Per-type field buffers (largest superset; only the
+                // fields valid for the currently-selected type are
+                // rendered + serialized).
+                static char        eHost[128]   = "";
+                static int         ePort        = 4242;
+                static char        eListen[64]  = "0.0.0.0";
+                static char        eFwdHost[128]= "";
+                static int         eFwdPort     = 0;
+                static bool        eKissFraming = false;
+                static bool        eI2pTunnel   = false;
+                static bool        eIpv6        = false;
+                static char        eGroupId[64] = "predatorrf";
+                static int         eDiscoScope  = 0;       // link/admin/site/org/global
+                static char        eRPort[64]   = "/dev/ttyUSB0";
+                static int         eFreq        = 868000000;
+                static int         eBw          = 125000;
+                static int         eTxPwr       = 17;
+                static int         eSf          = 8;
+                static int         eCr          = 5;
+                static int         eBaud        = 115200;
+                static char        eCallsign[16]= "";
+                static int         eSsid        = 0;
+                static char        eAxPort[64]  = "/dev/ttyUSB0";
+                static char        eCmd[256]    = "";
+                static char        eSamAddr[64] = "127.0.0.1:7656";
+                static char        ePeers[512]  = "";       // newline-separated
+                // Common fields (spec section B).
+                static int         eMode        = 0;        // full/gateway/access_point/roaming/boundary
+                static int         eBitrateHint = 0;        // 0 = leave unset
+                static int         eAnnounceInt = 0;        // 0 = leave unset
+                static bool        eOutgoing    = true;
+                // Advanced KISS / AX.25 fields.
+                static int         eDataBits    = 8;
+                static int         eParityIdx   = 0;        // none/even/odd
+                static int         eStopBits    = 1;
+                static int         ePreambleMs  = 150;
+                static int         eTxTailMs    = 10;
+                static int         ePersist     = 200;
+                static int         eSlotMs      = 20;
+                static bool        eFlowCtl     = false;
+                static int         eBeaconInt   = 0;
+                static char        eBeaconData[128] = "";
+                // Advanced RNode fields.
+                static char        eIdCall[16]  = "";
+                static int         eIdInt       = 0;
+                // Advanced AutoInterface fields.
+                static int         eDiscoPort   = 0;
+                static int         eDataPort    = 0;
+                static char        eAllowedIfs[256] = "";   // newline-separated
+                static char        eIgnoredIfs[256] = "";   // newline-separated
+                // Advanced I2P field.
+                static bool        eConnectable = false;
+                // Advanced pipe field.
+                static int         eRespawnDelay = 5;
+
+                // Export / import modal state.
+                static bool        rnsExportOpen = false;
+                static char        rnsExportPass[128] = "";
+                static bool        rnsExportIdent = true;
+                static std::string rnsExportToken;
+                static bool        rnsImportOpen = false;
+                static char        rnsImportToken[1024] = "";
+                static char        rnsImportPass[128] = "";
+
+                // The 9 type names must mirror PER_TYPE_FIELDS in
+                // backend/rns/schema.py (order-stable dict).
+                static const char* kTypeNames[] = {
+                    "tcp_client", "tcp_server", "udp", "i2p",
+                    "auto_interface", "rnode", "kiss_tnc", "ax25_kiss",
+                    "pipe"};
+                static const char* kDiscoScope[] = {
+                    "link", "admin", "site", "organisation", "global"};
+                static const char* kModes[] = {
+                    "full", "gateway", "access_point", "roaming", "boundary"};
+                static const char* kParity[] = {"none", "even", "odd"};
+
+                auto pollDaemon = [&]() {
+                    std::string err;
+                    rnsStatusRaw = predator::kujhadRnsCallStatus(err);
+                    try {
+                        auto resp = json::parse(rnsStatusRaw);
+                        if (resp.contains("ok") && !resp["ok"].get<bool>()) {
+                            rnsBanner = resp.value("error",
+                                                    std::string("daemon error"));
+                            rnsStatus = json::object();
+                        } else if (resp.contains("result")) {
+                            rnsStatus = resp["result"];
+                            rnsList = rnsStatus.value("interfaces",
+                                                       json::array());
+                        } else {
+                            rnsStatus = resp;
+                            rnsList = rnsStatus.value("interfaces",
+                                                       json::array());
+                        }
+                    } catch (...) {
+                        rnsBanner = err.empty()
+                            ? std::string("daemon: invalid JSON response")
+                            : err;
+                        rnsStatus = json::object();
+                    }
+                };
+
+                auto pollLogs = [&]() {
+                    std::string err;
+                    auto raw = predator::kujhadRnsLogs(rnsLogLevel, 0,
+                                                       rnsLogLimit, err);
+                    try {
+                        auto resp = json::parse(raw);
+                        rnsLogs = resp.contains("result")
+                                  ? resp["result"]
+                                  : (resp.is_array() ? resp : json::array());
+                    } catch (...) {
+                        rnsLogs = json::array();
+                    }
+                };
+
+                auto resetEditFields = [&]() {
+                    rnsEditId.clear();
+                    rnsEditName[0] = 0;
+                    rnsEditTypeIdx = 0;
+                    rnsEditEnabled = true;
+                    rnsEditReliable = false;
+                    rnsEditNotes[0] = 0;
+                    eHost[0] = 0; ePort = 4242;
+                    std::strncpy(eListen, "0.0.0.0", sizeof(eListen));
+                    eFwdHost[0] = 0; eFwdPort = 0;
+                    eKissFraming = false; eI2pTunnel = false; eIpv6 = false;
+                    std::strncpy(eGroupId, "predatorrf", sizeof(eGroupId));
+                    eDiscoScope = 0;
+                    std::strncpy(eRPort, "/dev/ttyUSB0", sizeof(eRPort));
+                    eFreq = 868000000; eBw = 125000; eTxPwr = 17;
+                    eSf = 8; eCr = 5; eBaud = 115200;
+                    eCallsign[0] = 0; eSsid = 0;
+                    std::strncpy(eAxPort, "/dev/ttyUSB0", sizeof(eAxPort));
+                    eCmd[0] = 0;
+                    std::strncpy(eSamAddr, "127.0.0.1:7656", sizeof(eSamAddr));
+                    ePeers[0] = 0;
+                    eMode = 0; eBitrateHint = 0; eAnnounceInt = 0;
+                    eOutgoing = true;
+                    eDataBits = 8; eParityIdx = 0; eStopBits = 1;
+                    ePreambleMs = 150; eTxTailMs = 10; ePersist = 200;
+                    eSlotMs = 20; eFlowCtl = false;
+                    eBeaconInt = 0; eBeaconData[0] = 0;
+                    eIdCall[0] = 0; eIdInt = 0;
+                    eDiscoPort = 0; eDataPort = 0;
+                    eAllowedIfs[0] = 0; eIgnoredIfs[0] = 0;
+                    eConnectable = false;
+                    eRespawnDelay = 5;
+                };
+
+                // newline-separated text -> JSON array of trimmed strings
+                auto linesToArray = [](const char* buf) -> json {
+                    json arr = json::array();
+                    std::string s(buf);
+                    size_t p = 0;
+                    while (p < s.size()) {
+                        auto nl = s.find('\n', p);
+                        auto line = s.substr(p, nl == std::string::npos
+                                                 ? s.size() - p
+                                                 : nl - p);
+                        while (!line.empty() && (line.back() == '\r' ||
+                                                  line.back() == ' '))
+                            line.pop_back();
+                        if (!line.empty()) arr.push_back(line);
+                        if (nl == std::string::npos) break;
+                        p = nl + 1;
+                    }
+                    return arr;
+                };
+                auto arrayToLines = [](const json& arr, char* buf, size_t n) {
+                    std::string s;
+                    if (arr.is_array()) {
+                        for (auto& x : arr) s += x.get<std::string>() + "\n";
+                    }
+                    std::strncpy(buf, s.c_str(), n - 1);
+                    buf[n - 1] = 0;
+                };
+
+                auto loadEditFromEntry = [&](const json& entry) {
+                    rnsEditId = entry.value("id", std::string());
+                    std::strncpy(rnsEditName,
+                                 entry.value("name", "").c_str(),
+                                 sizeof(rnsEditName) - 1);
+                    rnsEditName[sizeof(rnsEditName) - 1] = 0;
+                    auto t = entry.value("type", std::string("tcp_client"));
+                    rnsEditTypeIdx = 0;
+                    for (int i = 0; i < (int)(sizeof(kTypeNames) /
+                                               sizeof(kTypeNames[0])); ++i) {
+                        if (t == kTypeNames[i]) { rnsEditTypeIdx = i; break; }
+                    }
+                    rnsEditEnabled = entry.value("enabled", true);
+                    rnsEditReliable = entry.value("reliable_cot", false);
+                    std::strncpy(rnsEditNotes,
+                                 entry.value("notes", "").c_str(),
+                                 sizeof(rnsEditNotes) - 1);
+                    rnsEditNotes[sizeof(rnsEditNotes) - 1] = 0;
+                    // Per-type fields (only those present).
+                    if (entry.contains("target_host"))
+                        std::strncpy(eHost, entry["target_host"]
+                                     .get<std::string>().c_str(), sizeof(eHost) - 1);
+                    if (entry.contains("target_port"))
+                        ePort = entry["target_port"];
+                    if (entry.contains("listen_address"))
+                        std::strncpy(eListen, entry["listen_address"]
+                                     .get<std::string>().c_str(), sizeof(eListen) - 1);
+                    if (entry.contains("listen_port"))
+                        ePort = entry["listen_port"];
+                    if (entry.contains("forward_address"))
+                        std::strncpy(eFwdHost, entry["forward_address"]
+                                     .get<std::string>().c_str(), sizeof(eFwdHost) - 1);
+                    if (entry.contains("forward_port"))
+                        eFwdPort = entry["forward_port"];
+                    if (entry.contains("kiss_framing"))
+                        eKissFraming = entry["kiss_framing"];
+                    if (entry.contains("i2p_tunneled"))
+                        eI2pTunnel = entry["i2p_tunneled"];
+                    if (entry.contains("prefer_ipv6"))
+                        eIpv6 = entry["prefer_ipv6"];
+                    if (entry.contains("group_id"))
+                        std::strncpy(eGroupId, entry["group_id"]
+                                     .get<std::string>().c_str(), sizeof(eGroupId) - 1);
+                    if (entry.contains("discovery_scope")) {
+                        auto ds = entry["discovery_scope"].get<std::string>();
+                        for (int i = 0; i < 5; ++i)
+                            if (ds == kDiscoScope[i]) { eDiscoScope = i; break; }
+                    }
+                    if (entry.contains("port"))
+                        std::strncpy(eRPort, entry["port"]
+                                     .get<std::string>().c_str(), sizeof(eRPort) - 1);
+                    if (entry.contains("frequency_hz")) eFreq = entry["frequency_hz"];
+                    if (entry.contains("bandwidth_hz")) eBw   = entry["bandwidth_hz"];
+                    if (entry.contains("txpower_dbm"))  eTxPwr= entry["txpower_dbm"];
+                    if (entry.contains("spreadingfactor")) eSf = entry["spreadingfactor"];
+                    if (entry.contains("codingrate"))   eCr   = entry["codingrate"];
+                    if (entry.contains("speed_baud"))   eBaud = entry["speed_baud"];
+                    if (entry.contains("callsign"))
+                        std::strncpy(eCallsign, entry["callsign"]
+                                     .get<std::string>().c_str(), sizeof(eCallsign) - 1);
+                    if (entry.contains("ssid")) eSsid = entry["ssid"];
+                    if (entry.contains("axint_port"))
+                        std::strncpy(eAxPort, entry["axint_port"]
+                                     .get<std::string>().c_str(), sizeof(eAxPort) - 1);
+                    if (entry.contains("command"))
+                        std::strncpy(eCmd, entry["command"]
+                                     .get<std::string>().c_str(), sizeof(eCmd) - 1);
+                    if (entry.contains("i2p_sam_address"))
+                        std::strncpy(eSamAddr, entry["i2p_sam_address"]
+                                     .get<std::string>().c_str(), sizeof(eSamAddr) - 1);
+                    if (entry.contains("peers"))
+                        arrayToLines(entry["peers"], ePeers, sizeof(ePeers));
+                    // Common fields.
+                    if (entry.contains("mode")) {
+                        auto m = entry["mode"].get<std::string>();
+                        for (int i = 0; i < 5; ++i)
+                            if (m == kModes[i]) { eMode = i; break; }
+                    }
+                    if (entry.contains("outgoing")) eOutgoing = entry["outgoing"];
+                    if (entry.contains("bitrate_hint_bps"))
+                        eBitrateHint = entry["bitrate_hint_bps"];
+                    if (entry.contains("announce_interval_s"))
+                        eAnnounceInt = entry["announce_interval_s"];
+                    // KISS/AX.25 advanced.
+                    if (entry.contains("databits")) eDataBits = entry["databits"];
+                    if (entry.contains("parity")) {
+                        auto p = entry["parity"].get<std::string>();
+                        for (int i = 0; i < 3; ++i)
+                            if (p == kParity[i]) { eParityIdx = i; break; }
+                    }
+                    if (entry.contains("stopbits")) eStopBits = entry["stopbits"];
+                    if (entry.contains("preamble_ms")) ePreambleMs = entry["preamble_ms"];
+                    if (entry.contains("txtail_ms")) eTxTailMs = entry["txtail_ms"];
+                    if (entry.contains("persistence")) ePersist = entry["persistence"];
+                    if (entry.contains("slottime_ms")) eSlotMs = entry["slottime_ms"];
+                    if (entry.contains("flow_control")) eFlowCtl = entry["flow_control"];
+                    if (entry.contains("beacon_interval_s"))
+                        eBeaconInt = entry["beacon_interval_s"];
+                    if (entry.contains("beacon_data"))
+                        std::strncpy(eBeaconData, entry["beacon_data"]
+                                     .get<std::string>().c_str(), sizeof(eBeaconData) - 1);
+                    // RNode advanced.
+                    if (entry.contains("id_callsign"))
+                        std::strncpy(eIdCall, entry["id_callsign"]
+                                     .get<std::string>().c_str(), sizeof(eIdCall) - 1);
+                    if (entry.contains("id_interval_s")) eIdInt = entry["id_interval_s"];
+                    // AutoInterface advanced.
+                    if (entry.contains("discovery_port")) eDiscoPort = entry["discovery_port"];
+                    if (entry.contains("data_port")) eDataPort = entry["data_port"];
+                    if (entry.contains("allowed_interfaces"))
+                        arrayToLines(entry["allowed_interfaces"], eAllowedIfs, sizeof(eAllowedIfs));
+                    if (entry.contains("ignored_interfaces"))
+                        arrayToLines(entry["ignored_interfaces"], eIgnoredIfs, sizeof(eIgnoredIfs));
+                    // I2P advanced.
+                    if (entry.contains("connectable")) eConnectable = entry["connectable"];
+                    // Pipe advanced.
+                    if (entry.contains("respawn_delay_s")) eRespawnDelay = entry["respawn_delay_s"];
+                };
+
+                auto buildCfgJson = [&]() -> json {
+                    json e = json::object();
+                    e["name"] = std::string(rnsEditName);
+                    e["type"] = std::string(kTypeNames[rnsEditTypeIdx]);
+                    e["enabled"] = rnsEditEnabled;
+                    e["reliable_cot"] = rnsEditReliable;
+                    if (rnsEditNotes[0]) e["notes"] = std::string(rnsEditNotes);
+                    // Common fields (spec section B).
+                    e["mode"] = std::string(kModes[eMode]);
+                    e["outgoing"] = eOutgoing;
+                    if (eBitrateHint > 0) e["bitrate_hint_bps"] = eBitrateHint;
+                    if (eAnnounceInt > 0) e["announce_interval_s"] = eAnnounceInt;
+                    const std::string t = kTypeNames[rnsEditTypeIdx];
+                    if (t == "tcp_client") {
+                        e["target_host"] = std::string(eHost);
+                        e["target_port"] = ePort;
+                        e["kiss_framing"] = eKissFraming;
+                        e["i2p_tunneled"] = eI2pTunnel;
+                    } else if (t == "tcp_server") {
+                        e["listen_address"] = std::string(eListen);
+                        e["listen_port"] = ePort;
+                        e["prefer_ipv6"] = eIpv6;
+                        e["i2p_tunneled"] = eI2pTunnel;
+                    } else if (t == "udp") {
+                        e["listen_address"] = std::string(eListen);
+                        e["listen_port"] = ePort;
+                        if (eFwdHost[0]) e["forward_address"] = std::string(eFwdHost);
+                        if (eFwdPort > 0) e["forward_port"] = eFwdPort;
+                    } else if (t == "i2p") {
+                        e["peers"] = linesToArray(ePeers);
+                        e["i2p_sam_address"] = std::string(eSamAddr);
+                        e["connectable"] = eConnectable;
+                    } else if (t == "auto_interface") {
+                        e["group_id"] = std::string(eGroupId);
+                        e["discovery_scope"] = std::string(kDiscoScope[eDiscoScope]);
+                        if (eDiscoPort > 0) e["discovery_port"] = eDiscoPort;
+                        if (eDataPort  > 0) e["data_port"] = eDataPort;
+                        if (eAllowedIfs[0])
+                            e["allowed_interfaces"] = linesToArray(eAllowedIfs);
+                        if (eIgnoredIfs[0])
+                            e["ignored_interfaces"] = linesToArray(eIgnoredIfs);
+                    } else if (t == "rnode") {
+                        e["port"] = std::string(eRPort);
+                        e["frequency_hz"] = eFreq;
+                        e["bandwidth_hz"] = eBw;
+                        e["txpower_dbm"] = eTxPwr;
+                        e["spreadingfactor"] = eSf;
+                        e["codingrate"] = eCr;
+                        e["flow_control"] = eFlowCtl;
+                        if (eIdCall[0]) e["id_callsign"] = std::string(eIdCall);
+                        if (eIdInt > 0) e["id_interval_s"] = eIdInt;
+                    } else if (t == "kiss_tnc") {
+                        e["port"] = std::string(eRPort);
+                        e["speed_baud"] = eBaud;
+                        e["databits"] = eDataBits;
+                        e["parity"]   = std::string(kParity[eParityIdx]);
+                        e["stopbits"] = eStopBits;
+                        e["preamble_ms"] = ePreambleMs;
+                        e["txtail_ms"]   = eTxTailMs;
+                        e["persistence"] = ePersist;
+                        e["slottime_ms"] = eSlotMs;
+                        e["flow_control"] = eFlowCtl;
+                        if (eBeaconInt > 0) e["beacon_interval_s"] = eBeaconInt;
+                        if (eBeaconData[0]) e["beacon_data"] = std::string(eBeaconData);
+                    } else if (t == "ax25_kiss") {
+                        e["port"] = std::string(eRPort);
+                        e["speed_baud"] = eBaud;
+                        e["callsign"] = std::string(eCallsign);
+                        e["ssid"] = eSsid;
+                        e["axint_port"] = std::string(eAxPort);
+                        e["databits"] = eDataBits;
+                        e["parity"]   = std::string(kParity[eParityIdx]);
+                        e["stopbits"] = eStopBits;
+                        e["preamble_ms"] = ePreambleMs;
+                        e["txtail_ms"]   = eTxTailMs;
+                        e["persistence"] = ePersist;
+                        e["slottime_ms"] = eSlotMs;
+                        e["flow_control"] = eFlowCtl;
+                        if (eBeaconInt > 0) e["beacon_interval_s"] = eBeaconInt;
+                        if (eBeaconData[0]) e["beacon_data"] = std::string(eBeaconData);
+                    } else if (t == "pipe") {
+                        e["command"] = std::string(eCmd);
+                        if (eRespawnDelay > 0) e["respawn_delay_s"] = eRespawnDelay;
+                    }
+                    return e;
+                };
+
+                // Auto-poll once per second so the live counters update
+                // even when the operator isn't clicking buttons.
+                double now = ImGui::GetTime();
+                if (rnsAutoRefresh && now - rnsLastPoll > 1.0) {
+                    pollDaemon();
+                    pollLogs();
+                    rnsLastPoll = now;
+                }
+
+                // Top action row.
+                if (ImGui::Button(T("Refresh##rns"))) {
+                    pollDaemon();
+                    pollLogs();
+                }
+                ImGui::SameLine();
+                ImGui::Checkbox(T("Auto-refresh##rns"), &rnsAutoRefresh);
+                ImGui::SameLine();
+                if (ImGui::Button(T("Restart all##rns"))) {
+                    rnsBanner = predator::kujhadRnsRestartAll();
+                    pollDaemon();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(T("+ Add interface##rns"))) {
+                    resetEditFields();
+                    rnsEditIsNew = true;
+                    rnsEditOpen = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(T("Export##rns"))) {
+                    rnsExportPass[0] = 0; rnsExportIdent = true;
+                    rnsExportToken.clear();
+                    rnsExportOpen = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(T("Import##rns"))) {
+                    rnsImportToken[0] = 0; rnsImportPass[0] = 0;
+                    rnsImportOpen = true;
+                }
+
+                // Live status header.
+                std::string daemonState = rnsStatus.value("daemon",
+                                                          std::string("?"));
+                std::string ident = rnsStatus.value("identity_hash",
+                                                    std::string(""));
+                ImGui::Text("%s %s   %s %s", T("Daemon:"), daemonState.c_str(),
+                            T("ID:"), ident.c_str());
+                if (!rnsBanner.empty()) {
+                    ImGui::TextWrapped("%s", rnsBanner.c_str());
+                }
+
+                // Per-interface live table.
+                if (ImGui::BeginTable("rns_iface_table", 8,
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                        ImGuiTableFlags_SizingStretchProp)) {
+                    ImGui::TableSetupColumn(T("Name"));
+                    ImGui::TableSetupColumn(T("Type"));
+                    ImGui::TableSetupColumn(T("Up"));
+                    ImGui::TableSetupColumn(T("Peers"));
+                    ImGui::TableSetupColumn(T("In/Out"));
+                    ImGui::TableSetupColumn(T("Last error"));
+                    ImGui::TableSetupColumn(T("On"));
+                    ImGui::TableSetupColumn(T("Actions"));
+                    ImGui::TableHeadersRow();
+                    for (auto& row : rnsList) {
+                        ImGui::TableNextRow();
+                        std::string id = row.value("id", "");
+                        std::string nm = row.value("name", "");
+                        std::string tp = row.value("type", "");
+                        bool en = row.value("enabled", true);
+                        bool up = row.value("up", false);
+                        ImGui::TableSetColumnIndex(0); ImGui::Text("%s", nm.c_str());
+                        ImGui::TableSetColumnIndex(1); ImGui::Text("%s", tp.c_str());
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::TextColored(up ? ImVec4(0.4f,1,0.4f,1)
+                                              : ImVec4(1,0.4f,0.4f,1),
+                                            "%s", up ? "UP" : "DOWN");
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::Text("%d", row.value("peers", 0));
+                        ImGui::TableSetColumnIndex(4);
+                        ImGui::Text("%lld/%lld",
+                                    (long long)row.value("bytes_in", 0),
+                                    (long long)row.value("bytes_out", 0));
+                        ImGui::TableSetColumnIndex(5);
+                        ImGui::TextWrapped("%s",
+                            row.value("last_error", "").c_str());
+                        ImGui::TableSetColumnIndex(6);
+                        std::string toggleId = "##en_" + id;
+                        bool newEn = en;
+                        if (ImGui::Checkbox(toggleId.c_str(), &newEn)) {
+                            std::string err;
+                            predator::kujhadRnsSetEnabled(id, newEn, err);
+                            if (!err.empty()) rnsBanner = err;
+                            pollDaemon();
+                        }
+                        ImGui::TableSetColumnIndex(7);
+                        std::string editId = T("Edit") + std::string("##e_") + id;
+                        std::string restId = T("Restart") + std::string("##r_") + id;
+                        std::string delId  = T("Delete") + std::string("##d_") + id;
+                        if (ImGui::SmallButton(editId.c_str())) {
+                            std::string err;
+                            auto raw = predator::kujhadRnsGetInterface(id, err);
+                            try {
+                                auto resp = json::parse(raw);
+                                json entry = resp.contains("result")
+                                             ? resp["result"] : resp;
+                                resetEditFields();
+                                loadEditFromEntry(entry);
+                                rnsEditIsNew = false;
+                                rnsEditOpen = true;
+                            } catch (...) {
+                                rnsBanner = err.empty()
+                                    ? std::string("get_interface: bad JSON")
+                                    : err;
+                            }
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton(restId.c_str())) {
+                            std::string err;
+                            predator::kujhadRnsRestartInterface(id, err);
+                            if (!err.empty()) rnsBanner = err;
+                            pollDaemon();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton(delId.c_str())) {
+                            std::string err;
+                            predator::kujhadRnsRemoveInterface(id, err);
+                            if (!err.empty()) rnsBanner = err;
+                            pollDaemon();
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+                if (rnsList.empty()) {
+                    ImGui::TextDisabled("%s", T(
+                        "No interfaces configured yet. Click '+ Add "
+                        "interface' to create one (TCP, UDP, AutoInterface, "
+                        "RNode/LoRa, KISS TNC, AX.25, I2P, or Pipe)."));
+                }
+
+                // Edit / Add modal.
+                if (rnsEditOpen) {
+                    ImGui::OpenPopup(rnsEditIsNew ? T("Add RNS interface")
+                                                  : T("Edit RNS interface"));
+                }
+                if (ImGui::BeginPopupModal(
+                        rnsEditIsNew ? T("Add RNS interface")
+                                     : T("Edit RNS interface"),
+                        nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::InputText(T("Name##rns_e"), rnsEditName,
+                                     sizeof(rnsEditName));
+                    if (rnsEditIsNew) {
+                        ImGui::Combo(T("Type##rns_e"), &rnsEditTypeIdx,
+                                     "tcp_client\0tcp_server\0udp\0i2p\0"
+                                     "auto_interface\0rnode\0kiss_tnc\0"
+                                     "ax25_kiss\0pipe\0\0");
+                    } else {
+                        ImGui::Text("%s %s", T("Type:"),
+                                    kTypeNames[rnsEditTypeIdx]);
+                    }
+                    ImGui::Checkbox(T("Enabled##rns_e"), &rnsEditEnabled);
+                    ImGui::SameLine();
+                    ImGui::Checkbox(T("Reliable CoT##rns_e"),
+                                    &rnsEditReliable);
+                    ImGui::InputText(T("Notes##rns_e"), rnsEditNotes,
+                                     sizeof(rnsEditNotes));
+                    // Common settings (spec section B): apply to every
+                    // interface type. `mode` selects RNS interface mode;
+                    // `outgoing` gates outbound packets; the two hint
+                    // values are leave-unset when 0 so RNS can fall back
+                    // to its own auto-estimates.
+                    ImGui::Combo(T("Mode##rns_e"), &eMode,
+                                 "full\0gateway\0access_point\0roaming\0boundary\0\0");
+                    ImGui::SameLine();
+                    ImGui::Checkbox(T("Outgoing##rns_e"), &eOutgoing);
+                    ImGui::InputInt(T("Bitrate hint bps (0=auto)##rns_e"),
+                                    &eBitrateHint);
+                    ImGui::InputInt(T("Announce interval s (0=default)##rns_e"),
+                                    &eAnnounceInt);
+                    ImGui::Separator();
+                    const std::string t = kTypeNames[rnsEditTypeIdx];
+                    if (t == "tcp_client") {
+                        ImGui::InputText(T("Target host##rns_e"), eHost, sizeof(eHost));
+                        ImGui::InputInt (T("Target port##rns_e"), &ePort);
+                        ImGui::Checkbox (T("KISS framing##rns_e"), &eKissFraming);
+                        ImGui::Checkbox (T("I2P tunneled##rns_e"), &eI2pTunnel);
+                    } else if (t == "tcp_server") {
+                        ImGui::InputText(T("Listen address (device-local)##rns_e"),
+                                         eListen, sizeof(eListen));
+                        ImGui::InputInt (T("Listen port##rns_e"), &ePort);
+                        ImGui::Checkbox (T("Prefer IPv6##rns_e"), &eIpv6);
+                        ImGui::Checkbox (T("I2P tunneled##rns_e"), &eI2pTunnel);
+                    } else if (t == "udp") {
+                        ImGui::InputText(T("Listen address (device-local)##rns_e"),
+                                         eListen, sizeof(eListen));
+                        ImGui::InputInt (T("Listen port##rns_e"), &ePort);
+                        ImGui::InputText(T("Forward address##rns_e"),
+                                         eFwdHost, sizeof(eFwdHost));
+                        ImGui::InputInt (T("Forward port##rns_e"), &eFwdPort);
+                    } else if (t == "i2p") {
+                        ImGui::InputTextMultiline(T("Peers (.b32.i2p, one per line)##rns_e"),
+                                                   ePeers, sizeof(ePeers),
+                                                   ImVec2(0, 80));
+                        ImGui::InputText(T("I2P SAM address (device-local)##rns_e"),
+                                         eSamAddr, sizeof(eSamAddr));
+                        ImGui::Checkbox(T("Connectable (accept inbound)##rns_e"),
+                                        &eConnectable);
+                    } else if (t == "auto_interface") {
+                        ImGui::InputText(T("Group ID##rns_e"),
+                                         eGroupId, sizeof(eGroupId));
+                        ImGui::Combo(T("Discovery scope##rns_e"), &eDiscoScope,
+                                     "link\0admin\0site\0organisation\0global\0\0");
+                        ImGui::InputInt(T("Discovery port (0=default)##rns_e"),
+                                        &eDiscoPort);
+                        ImGui::InputInt(T("Data port (0=default)##rns_e"),
+                                        &eDataPort);
+                        ImGui::InputTextMultiline(
+                            T("Allowed NICs (device-local, one per line)##rns_e"),
+                            eAllowedIfs, sizeof(eAllowedIfs), ImVec2(0, 60));
+                        ImGui::InputTextMultiline(
+                            T("Ignored NICs (device-local, one per line)##rns_e"),
+                            eIgnoredIfs, sizeof(eIgnoredIfs), ImVec2(0, 60));
+                    } else if (t == "rnode") {
+                        ImGui::InputText(T("Serial port (device-local)##rns_e"),
+                                         eRPort, sizeof(eRPort));
+                        ImGui::InputInt (T("Frequency Hz##rns_e"), &eFreq);
+                        ImGui::InputInt (T("Bandwidth Hz##rns_e"), &eBw);
+                        ImGui::InputInt (T("TX power dBm##rns_e"), &eTxPwr);
+                        ImGui::InputInt (T("Spreading factor (7-12)##rns_e"), &eSf);
+                        ImGui::InputInt (T("Coding rate (5-8)##rns_e"), &eCr);
+                        ImGui::Checkbox (T("Hardware flow control##rns_e"), &eFlowCtl);
+                        ImGui::InputText(T("ID callsign (regulatory)##rns_e"),
+                                         eIdCall, sizeof(eIdCall));
+                        ImGui::InputInt (T("ID interval s (0=off)##rns_e"), &eIdInt);
+                    } else if (t == "kiss_tnc" || t == "ax25_kiss") {
+                        ImGui::InputText(T("Serial port (device-local)##rns_e"),
+                                         eRPort, sizeof(eRPort));
+                        ImGui::InputInt (T("Baud##rns_e"), &eBaud);
+                        if (t == "ax25_kiss") {
+                            ImGui::InputText(T("AX.25 port (device-local)##rns_e"),
+                                             eAxPort, sizeof(eAxPort));
+                            ImGui::InputText(T("Callsign##rns_e"),
+                                             eCallsign, sizeof(eCallsign));
+                            ImGui::InputInt (T("SSID (0-15)##rns_e"), &eSsid);
+                        }
+                        ImGui::InputInt (T("Data bits (5-8)##rns_e"), &eDataBits);
+                        ImGui::Combo    (T("Parity##rns_e"), &eParityIdx,
+                                         "none\0even\0odd\0\0");
+                        ImGui::InputInt (T("Stop bits (1-2)##rns_e"), &eStopBits);
+                        ImGui::InputInt (T("Preamble ms##rns_e"), &ePreambleMs);
+                        ImGui::InputInt (T("TX tail ms##rns_e"), &eTxTailMs);
+                        ImGui::InputInt (T("Persistence (0-255)##rns_e"), &ePersist);
+                        ImGui::InputInt (T("Slot time ms##rns_e"), &eSlotMs);
+                        ImGui::Checkbox (T("Hardware flow control##rns_e"), &eFlowCtl);
+                        ImGui::InputInt (T("Beacon interval s (0=off)##rns_e"), &eBeaconInt);
+                        ImGui::InputText(T("Beacon data##rns_e"),
+                                         eBeaconData, sizeof(eBeaconData));
+                    } else if (t == "pipe") {
+                        ImGui::InputText(T("Subprocess command##rns_e"),
+                                         eCmd, sizeof(eCmd));
+                        ImGui::InputInt (T("Respawn delay s##rns_e"), &eRespawnDelay);
+                    }
+                    ImGui::Separator();
+                    if (ImGui::Button(T("Validate##rns_e"))) {
+                        json cfg = buildCfgJson();
+                        std::string err;
+                        auto resp = predator::kujhadRnsValidate(cfg.dump(), err);
+                        rnsBanner = err.empty()
+                            ? (std::string(T("Validate OK: ")) + resp)
+                            : err;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Save##rns_e"))) {
+                        json cfg = buildCfgJson();
+                        std::string err;
+                        std::string resp = rnsEditIsNew
+                            ? predator::kujhadRnsAddInterface(cfg.dump(), err)
+                            : predator::kujhadRnsUpdateInterface(rnsEditId,
+                                                                  cfg.dump(), err);
+                        rnsBanner = err.empty()
+                            ? (std::string(T("Saved: ")) + resp)
+                            : err;
+                        pollDaemon();
+                        if (err.empty()) {
+                            rnsEditOpen = false;
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Cancel##rns_e"))) {
+                        rnsEditOpen = false;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                // Export modal.
+                if (rnsExportOpen) ImGui::OpenPopup(T("Export RNS config"));
+                if (ImGui::BeginPopupModal(T("Export RNS config"), nullptr,
+                                            ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::InputText(T("Passphrase##rns_x"),
+                                     rnsExportPass, sizeof(rnsExportPass),
+                                     ImGuiInputTextFlags_Password);
+                    ImGui::Checkbox(T("Include identity##rns_x"),
+                                    &rnsExportIdent);
+                    if (ImGui::Button(T("Mint token##rns_x"))) {
+                        std::string err;
+                        auto raw = predator::kujhadRnsExport(rnsExportPass,
+                                                              rnsExportIdent, err);
+                        try {
+                            auto resp = json::parse(raw);
+                            json r = resp.contains("result") ? resp["result"]
+                                                             : resp;
+                            rnsExportToken = r.value("token", std::string());
+                        } catch (...) {
+                            rnsBanner = err.empty()
+                                ? std::string("export: bad JSON")
+                                : err;
+                        }
+                    }
+                    if (!rnsExportToken.empty()) {
+                        ImGui::Separator();
+                        ImGui::TextWrapped("%s", rnsExportToken.c_str());
+                    }
+                    if (ImGui::Button(T("Close##rns_x"))) {
+                        rnsExportOpen = false;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                // Import modal.
+                if (rnsImportOpen) ImGui::OpenPopup(T("Import RNS config"));
+                if (ImGui::BeginPopupModal(T("Import RNS config"), nullptr,
+                                            ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::InputTextMultiline(T("Token##rns_i"),
+                                               rnsImportToken,
+                                               sizeof(rnsImportToken),
+                                               ImVec2(420, 80));
+                    ImGui::InputText(T("Passphrase##rns_i"),
+                                     rnsImportPass, sizeof(rnsImportPass),
+                                     ImGuiInputTextFlags_Password);
+                    if (ImGui::Button(T("Apply##rns_i"))) {
+                        std::string err;
+                        auto raw = predator::kujhadRnsImport(rnsImportToken,
+                                                              rnsImportPass,
+                                                              "{}", err);
+                        rnsBanner = err.empty()
+                            ? (std::string(T("Imported: ")) + raw)
+                            : err;
+                        pollDaemon();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Close##rns_i"))) {
+                        rnsImportOpen = false;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                // Log tail.
+                ImGui::Separator();
+                ImGui::Text("%s", T("Log tail"));
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80);
+                ImGui::InputText("##rns_loglevel", rnsLogLevel,
+                                  sizeof(rnsLogLevel));
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80);
+                ImGui::InputInt("##rns_loglimit", &rnsLogLimit);
+                ImGui::SameLine();
+                if (ImGui::Button(T("Pull##rns_l"))) pollLogs();
+                if (ImGui::BeginChild("##rns_log_pane",
+                                      ImVec2(0, 140), true,
+                                      ImGuiWindowFlags_HorizontalScrollbar)) {
+                    for (auto& row : rnsLogs) {
+                        long long ts = row.value("ts", (long long)0);
+                        std::string lv = row.value("level", "");
+                        std::string ms = row.value("msg", "");
+                        ImGui::TextWrapped("[%lld %s] %s",
+                                           ts, lv.c_str(), ms.c_str());
+                    }
+                }
+                ImGui::EndChild();
+
+                ImGui::TextDisabled("%s", T(
+                    "Schema = backend/rns/schema.py. Field/method/UI parity "
+                    "matrix = docs/rns_parity.md. Wire = JSON-line over "
+                    "Unix socket (control.sock) on Linux, HTTP via "
+                    "/api/v1/rns/* on Android."));
             }
         }
         else if (predatorTab == PREDATOR_TAB_SYSTEM) {

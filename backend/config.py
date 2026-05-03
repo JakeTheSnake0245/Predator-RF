@@ -96,6 +96,47 @@ class BackendConfig:
     cot_multicast_ttl: int = field(
         default_factory=lambda: _env_int("COT_MULTICAST_TTL", 1))
 
+    # ── RNS transport bridge ───────────────────────────────────────────────
+    # Off by default (RX-only posture is preserved). When enabled, the
+    # backend spins up an in-process RNS daemon that publishes the same
+    # CoT XML the TAK UDP path emits over the `predatorrf/cot.v1` RNS
+    # Destination, and forwards inbound RNS-CoT to the local pipeline
+    # tagged source_transport="rns". State (identity + interface config)
+    # lives under `rns_state_dir`.
+    rns_enabled: bool = field(
+        default_factory=lambda: _env_bool("RNS_ENABLED", False))
+    rns_state_dir: str = field(
+        default_factory=lambda: _env("RNS_STATE_DIR", ""))
+    # Per spec section C: inbound CoT received over RNS is NOT echoed
+    # back over the TAK UDP/TCP feed unless the operator explicitly
+    # opts in (default off). This breaks the IP↔RNS bridge loop.
+    rns_to_ip_relay: bool = field(
+        default_factory=lambda: _env_bool("RNS_TO_IP_RELAY", False))
+    # Reliable mode default for the CoT bridge. Spec: false on LoRa
+    # (we leave it unset per-interface in schema, default false), true
+    # on TCP/UDP/I2P/Auto/Pipe — operators flip per-interface in the
+    # Kujhad UI; this is just the bridge-wide fallback when no per-
+    # interface flag is set.
+    rns_reliable_default: bool = field(
+        default_factory=lambda: _env_bool("RNS_RELIABLE_DEFAULT", True))
+    # Forward inbound RNS CoT XML to a local ATAK app over UDP. On
+    # Android the ATAK Civ build listens on 127.0.0.1:4242 by default;
+    # operators set RNS_ATAK_LOCAL_PORT=4242 (or any other port) to
+    # have peer-relayed CoT shown on the device's local TAK map.
+    # Disabled (0) by default so headless / desktop deployments don't
+    # spew UDP at a port nothing is listening on.
+    rns_atak_local_port: int = field(
+        # On Android (detected via the standard ANDROID_ROOT env var
+        # exported by the Bionic init) the spec requires inbound RNS
+        # CoT to reach the local ATAK app by default, so we ship 4242
+        # (ATAK Civ's standard local UDP CoT input) as the platform
+        # default. Desktop/headless deployments stay opt-in (0=off).
+        default_factory=lambda: _env_int(
+            "RNS_ATAK_LOCAL_PORT",
+            4242 if os.environ.get("ANDROID_ROOT") else 0))
+    rns_atak_local_host: str = field(
+        default_factory=lambda: _env("RNS_ATAK_LOCAL_HOST", "127.0.0.1"))
+
     # ── AutoTasker ─────────────────────────────────────────────────────────
     # When the DecisionEngine recommends a closer look (focus_all_nodes /
     # increase_dwell_time), AutoTasker re-tunes the recommended sensor
