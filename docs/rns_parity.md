@@ -82,9 +82,10 @@ identity-excluded paths are both verified by `test_rns_token.py`.
 | `announce_interval_s`  | ✓ | iface.announce_interval | int input | via cfg |
 | `notes`                | ✓ | (label only) | text input | via cfg |
 | `reliable_cot`         | ✓ | publish path | checkbox | via cfg |
-| `ifac_netname`         | ✓ | iface.ifac_netname | text input | via cfg |
-| `ifac_netkey`          | ✓ | iface.ifac_netkey | password input | via cfg (in token AEAD) |
+| `ifac_netname`         | ✓ | iface.ifac_netname | text input + status tooltip | via cfg |
+| `ifac_netkey`          | ✓ | iface.ifac_netkey | password input (write-only) | via cfg (in token AEAD) |
 | `ifac_size`            | ✓ | iface.ifac_size  | int input  | via cfg |
+| `ifac_active` (status) | derived | derived in status | green `[IFAC]` badge column | derived in status |
 
 ## Per-type advanced-field coverage
 

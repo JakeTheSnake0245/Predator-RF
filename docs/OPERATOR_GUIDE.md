@@ -862,7 +862,9 @@ The allowlist is **synced from the daemon config to the bridge at startup** (`ba
 |---|---|
 | `daemon` | `running` / `stub` (the latter when the `rns` Python package isn't importable) |
 | `identity_hash16` | This node's RNS hash (16 hex chars) |
-| `interfaces[]` | Per-iface live: `online`, `rxb` (bytes), `txb`, `bitrate` (current measured), `clients` (remote count), `last_error`, `forced_close`, `timed_out` |
+| `interfaces[]` | Per-iface live: `online`, `rxb` (bytes), `txb`, `bitrate` (current measured), `clients` (remote count), `last_error`, `forced_close`, `timed_out`, `ifac_active` (bool), `ifac_netname` (echoed back when active so the UI can render a tooltip; netkey is **never** echoed in status) |
+
+In the Kujhad live-status table this surfaces as a dedicated **IFAC** column — `[IFAC]` in green when the daemon reports `ifac_active=true`, dash otherwise. Hovering the badge shows the IFAC netname tooltip; the netkey itself is not sent back over the control plane and so is never visible in the UI after the initial save.
 | `cot_bridge` | Stats from the bridge: `published`, `received`, `dropped_dedupe`, `dropped_loop`, `dropped_allowlist`, `dropped_invalid` |
 | `peer_allowlist_size` | Count of allowlisted peers |
 
