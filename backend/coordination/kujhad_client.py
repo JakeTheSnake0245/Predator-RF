@@ -1,21 +1,27 @@
 """
-KujhadClient — Python bridge to the C++ Predator-SDR Kujhad Fleet HTTP API.
+KujhadClient — Python bridge to the C++ Predator-RF Kujhad Fleet HTTP API.
 
 The C++ app (running on each sensor node) exposes:
-  GET  /v1/identify      → device info
-  GET  /v1/gps           → GPS fix
-  GET  /v1/state         → VFOs, markers, hits, decoders
-  GET  /v1/events?since= → event stream (long-poll friendly)
-  POST /v1/command       → issue tune/scan/mission commands
+  GET  /v1/identify      → {device, version, role, hwProfile}
+  GET  /v1/gps           → {hasFix, lat, lon, accuracy}
+  GET  /v1/state         → {vfos, markers, mission, decoders, hits}
+  GET  /v1/events?since= → {events:[{serial,time,type,frequency,strengthDb,
+                                     label,protocol,networkId,talkgroup,
+                                     radioId,decoder,hitState,lat,lon,
+                                     accuracyM,gpsFix,encrypted?,raw,...}],
+                            lastId}
+  POST /v1/command       → {ok, error?}  body: {class, action, args}
 
-This client polls /v1/events continuously and converts Kujhad events
-into RFEvent objects for the Python fusion backend.
+Wire schema verified against core/src/gui/main_window.cpp event-row builders
+(appendPredatorEvent ~L1334, RTL433 ~L1490, native ~L1545, ADSB ~L1620, P25
+~L1714) and kujhad_fleet.h dispatcher (L1062-1194). v1.
 """
 
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Callable
+from datetime import datetime, timezone
+from typing import Dict, Optional, Callable
 
 try:
     import aiohttp
@@ -30,10 +36,44 @@ logger = logging.getLogger(__name__)
 
 EventCallback = Callable[[RFEvent], None]
 
+# C++ /v1/events `type` values we treat as RF detections.
+# - "hit"     : auto-marker / threshold crossing (appendPredatorEvent path)
+# - "decoder" : decoded protocol event (RTL433 / P25 / ADSB / native rtl_433)
+# - "detection","peak" : reserved for future Python-side detector pushes
+_RF_EVENT_TYPES = frozenset({"hit", "decoder", "detection", "peak"})
+
+
+def _parse_iso_to_ns(s: str) -> Optional[int]:
+    """Parse C++ `time` ISO-8601 string into UNIX nanoseconds.
+
+    The C++ side emits `currentTimestamp()` which is a local-civil ISO string
+    (e.g. "2026-05-03 12:34:56" or "2026-05-03T12:34:56Z"). Be tolerant of
+    both Z-suffix UTC and naive local. On failure return None so the caller
+    can fall back to receive-time."""
+    if not s or not isinstance(s, str):
+        return None
+    # Normalise common separators
+    candidate = s.strip().replace(" ", "T")
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(candidate)
+        if dt.tzinfo is None:
+            # Naive: treat as local civil time. mktime returns int seconds;
+            # add microsecond → ns separately (no double counting).
+            return (int(time.mktime(dt.timetuple())) * 1_000_000_000
+                    + dt.microsecond * 1000)
+        # Aware: dt.timestamp() already includes the microseconds. Multiply
+        # straight to ns and int(); we lose only sub-µs which datetime
+        # itself doesn't carry. (Fixes architect-reported double-count.)
+        return int(dt.timestamp() * 1_000_000_000)
+    except (ValueError, OverflowError):
+        return None
+
 
 class KujhadClient:
     """
-    Async client for one C++ Predator-SDR node via the Kujhad HTTP API.
+    Async client for one C++ Predator-RF node via the Kujhad HTTP API.
 
     Usage:
         client = KujhadClient(node)
@@ -62,16 +102,33 @@ class KujhadClient:
                                "Install it: pip install aiohttp")
         self._on_event = on_event
         self._running = True
+
+        # Create the session BEFORE returning so callers may immediately call
+        # send_tune_command / send_scan_command / send_mission_command without
+        # racing the poll loop. (Architect-reported race fixed.)
+        import aiohttp
+        # TLS verification: opt-out only; insecure_skip_verify defaults to
+        # False on SensorNodeTrust so self-signed fleets must explicitly set
+        # it on each node. Plain HTTP nodes are unaffected.
+        skip_verify = bool(getattr(self.node,
+                                   'kujhad_tls_insecure_skip_verify', False))
+        ssl_param = False if (self.node.kujhad_tls and skip_verify) else None
+        connector = aiohttp.TCPConnector(ssl=ssl_param)
+        self._session = aiohttp.ClientSession(connector=connector,
+                                               headers=self._headers)
+
         self._task = asyncio.create_task(self._poll_loop(),
                                          name=f"kujhad_{self.node.node_id}")
-        logger.info("KujhadClient started for %s at %s",
-                    self.node.node_id, self._base_url)
+        logger.info("KujhadClient started for %s at %s (tls=%s verify=%s)",
+                    self.node.node_id, self._base_url,
+                    self.node.kujhad_tls, not skip_verify)
 
     async def stop(self):
         self._running = False
         if self._task:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+            self._task = None
         if self._session:
             await self._session.close()
             self._session = None
@@ -79,14 +136,8 @@ class KujhadClient:
     # ── Polling loop ──────────────────────────────────────────────────────────
 
     async def _poll_loop(self):
-        import aiohttp
-        connector = aiohttp.TCPConnector(ssl=False)  # SSL handled by TLS option
-        self._session = aiohttp.ClientSession(connector=connector,
-                                               headers=self._headers)
         try:
-            # Initial identify
             await self._identify()
-
             while self._running:
                 try:
                     await self._poll_events()
@@ -98,9 +149,8 @@ class KujhadClient:
                     logger.warning("KujhadClient %s: poll error: %s — reconnecting in %ss",
                                    self.node.node_id, exc, self.RECONNECT_DELAY_S)
                     await asyncio.sleep(self.RECONNECT_DELAY_S)
-        finally:
-            await self._session.close()
-            self._session = None
+        except asyncio.CancelledError:
+            pass
 
     async def _identify(self):
         """Fetch device identity and populate node metadata."""
@@ -112,8 +162,7 @@ class KujhadClient:
                     data = await resp.json()
                     logger.info("Node %s identified: %s",
                                 self.node.node_id, data.get('device', '?'))
-                    # Update hardware info from device if available
-                    hw = data.get('hwProfile', {})
+                    hw = data.get('hwProfile', {}) or {}
                     if hw.get('hardware') and not self.node.hardware_code:
                         self.node.hardware_code = hw['hardware']
                 elif resp.status == 401:
@@ -129,18 +178,23 @@ class KujhadClient:
                 return
             data = await resp.json()
 
-        events = data.get('events', [])
+        events = data.get('events', []) or []
         last_id = data.get('lastId', self._last_event_id)
 
         for raw in events:
             rf_event = self._kujhad_event_to_rf(raw)
             if rf_event and self._on_event:
-                self._on_event(rf_event)
+                try:
+                    self._on_event(rf_event)
+                except Exception as exc:
+                    logger.exception("on_event callback raised on %s: %s",
+                                     self.node.node_id, exc)
 
-        self._last_event_id = last_id
+        if isinstance(last_id, int) and last_id > self._last_event_id:
+            self._last_event_id = last_id
 
     async def _poll_gps(self):
-        """Update node GPS location from /v1/gps."""
+        """Update node GPS location from /v1/gps (per-node fallback)."""
         async with self._session.get(
                 f"{self._base_url}/v1/gps", timeout=5.0) as resp:
             if resp.status != 200:
@@ -148,71 +202,144 @@ class KujhadClient:
             gps = await resp.json()
 
         if gps.get('hasFix'):
-            lat = float(gps.get('lat', 0))
-            lon = float(gps.get('lon', 0))
-            acc = float(gps.get('accuracy', 10))
-            self.node.location_gps = (lat, lon)
-            self.node.location_accuracy_m = acc
+            try:
+                lat = float(gps.get('lat', 0))
+                lon = float(gps.get('lon', 0))
+                acc = float(gps.get('accuracy', 10))
+                self.node.location_gps = (lat, lon)
+                self.node.location_accuracy_m = acc
+            except (TypeError, ValueError):
+                pass
 
-    # ── Event conversion ──────────────────────────────────────────────────────
+    # ── Event conversion (verified against C++ wire schema) ──────────────────
 
     def _kujhad_event_to_rf(self, raw: dict) -> Optional[RFEvent]:
-        """
-        Convert a Kujhad JSON event record (from /v1/events) to RFEvent.
+        """Convert a C++ Kujhad event row into an RFEvent.
 
-        The C++ app emits events like:
-          {"id": 123, "type": "hit", "frequency": 154.1e6, "strength": -75.3,
-           "snr": 12.1, "ts_ns": 1714200000000000000, "label": "P25 voice",
-           "protocol": "P25", "modulation": "C4FM"}
-        """
+        See module docstring for the full wire schema and docs/2 for the
+        contract reference."""
+        if not isinstance(raw, dict):
+            return None
+
         event_type = raw.get('type', '')
-        if event_type not in ('hit', 'detection', 'peak'):
-            return None  # Only RF detection events
+        if event_type not in _RF_EVENT_TYPES:
+            return None
 
-        freq = raw.get('frequency', 0.0)
+        try:
+            freq = float(raw.get('frequency', 0.0))
+        except (TypeError, ValueError):
+            return None
         if freq <= 0:
             return None
 
-        strength = raw.get('strength', raw.get('power', -80.0))
-        snr = raw.get('snr', 0.0)
-        ts = raw.get('ts_ns', time.time_ns())
+        # Power: C++ emits `strengthDb` (canonical). Accept `strength` /
+        # `power` for forward-compat with future Python-side producers.
+        strength_raw = raw.get('strengthDb',
+                       raw.get('strength',
+                       raw.get('power', None)))
+        try:
+            strength = float(strength_raw) if strength_raw is not None else -80.0
+        except (TypeError, ValueError):
+            strength = -80.0
 
+        # SNR not on the C++ wire today; default 0. Forward-compat.
+        try:
+            snr = float(raw.get('snr', raw.get('snrDb', 0.0)))
+        except (TypeError, ValueError):
+            snr = 0.0
+
+        # Timestamp: prefer C++ ISO `time`, then `ts_ns`, then receive-time.
+        ts_ns = None
+        if 'ts_ns' in raw:
+            try:
+                ts_ns = int(raw['ts_ns'])
+            except (TypeError, ValueError):
+                ts_ns = None
+        if ts_ns is None and 'time' in raw:
+            ts_ns = _parse_iso_to_ns(raw.get('time', ''))
+        if ts_ns is None:
+            ts_ns = time.time_ns()
+
+        # GPS: prefer per-event coords (captured at event time on the device)
+        # before falling back to the 1 Hz-polled node position.
         lat = lon = None
-        if self.node.location_gps:
+        if raw.get('gpsFix') and 'lat' in raw and 'lon' in raw:
+            try:
+                lat = float(raw['lat'])
+                lon = float(raw['lon'])
+            except (TypeError, ValueError):
+                lat = lon = None
+        if lat is None and self.node.location_gps:
             lat, lon = self.node.location_gps
 
+        # Detector tag: use the C++ decoder name when present so downstream
+        # confidence weighting can distinguish RTL433 from a P25 trunk hit.
+        decoder = raw.get('decoder') or 'kujhad_bridge'
+        detector_tag = f"kujhad:{decoder.lower()}"
+
+        # Decoded payload: prefer label, fall back to talkgroup/networkId
+        # so the operator UI has *something* per-event even on bare hits.
+        payload = raw.get('label') or None
+        protocol = raw.get('protocol') or None
+
         return RFEvent(
-            frequency=float(freq),
-            power_dbfs=float(strength),
-            snr_db=float(snr),
-            timestamp_ns=int(ts),
+            frequency=freq,
+            power_dbfs=strength,
+            snr_db=snr,
+            timestamp_ns=ts_ns,
             node_id=self.node.node_id,
             node_trust_score=self.node.compute_trust_score(),
             hardware_id=self.node.hardware_serial,
-            detector="kujhad_bridge",
+            detector=detector_tag,
             modulation=raw.get('modulation'),
-            protocol=raw.get('protocol'),
-            decoded_payload=raw.get('label'),
+            protocol=protocol,
+            decoded_payload=payload,
             node_lat=lat,
             node_lon=lon,
         )
 
-    # ── Commands ──────────────────────────────────────────────────────────────
+    # ── Commands (matches C++ KujhadDeviceCommand: class+action+args) ────────
 
-    async def send_tune_command(self, frequency_hz: float, vfo: str = "VFO A") -> bool:
-        """Task the C++ node to tune to a frequency."""
-        payload = {"class": "tune", "vfo": vfo, "frequency": frequency_hz}
+    async def send_tune_command(self, frequency_hz: float,
+                                vfo: str = "VFO A") -> bool:
+        """Task the node to tune to a frequency.
+
+        Wire shape (verified against main_window.cpp:1936):
+          {"class":"tune","action":"set","args":{"frequencyHz":Hz,"vfo":...}}
+        """
+        payload = {
+            "class": "tune",
+            "action": "set",
+            "args": {"frequencyHz": float(frequency_hz), "vfo": vfo},
+        }
         return await self._post_command(payload)
 
     async def send_scan_command(self, freq_start_hz: float,
-                                 freq_end_hz: float, dwell_ms: int = 500) -> bool:
-        """Task the C++ node to run a frequency scan."""
+                                freq_end_hz: float,
+                                dwell_ms: int = 500,
+                                start: bool = True) -> bool:
+        """Task the node to start (or stop) a frequency scan.
+
+        Wire shape (verified against main_window.cpp:1972):
+          {"class":"scan","action":"start"|"stop","args":{...}}
+        """
         payload = {
             "class": "scan",
-            "start": freq_start_hz,
-            "end": freq_end_hz,
-            "dwellMs": dwell_ms,
+            "action": "start" if start else "stop",
+            "args": {
+                "startHz": float(freq_start_hz),
+                "endHz":   float(freq_end_hz),
+                "dwellMs": int(dwell_ms),
+            },
         }
+        return await self._post_command(payload)
+
+    async def send_mission_command(self, action: str, args: dict) -> bool:
+        """Task the node with a mission.* command.
+
+        action ∈ {setMode, setSearchBands, setTargets, setExcludes, setSettings}
+        See main_window.cpp:1941-1967 for per-action arg requirements."""
+        payload = {"class": "mission", "action": action, "args": args}
         return await self._post_command(payload)
 
     async def _post_command(self, payload: dict) -> bool:
@@ -221,7 +348,12 @@ class KujhadClient:
                     f"{self._base_url}/v1/command",
                     json=payload, timeout=5.0) as resp:
                 data = await resp.json()
-                return bool(data.get('ok', False))
+                ok = bool(data.get('ok', False))
+                if not ok:
+                    logger.warning("Command rejected on %s: %s — %s",
+                                   self.node.node_id, payload.get('class'),
+                                   data.get('error', 'no reason'))
+                return ok
         except Exception as exc:
             logger.warning("Command failed on %s: %s", self.node.node_id, exc)
             return False
@@ -267,3 +399,6 @@ class KujhadFleetManager:
 
     def node_count(self) -> int:
         return len(self._clients)
+
+    def get_client(self, node_id: str) -> Optional[KujhadClient]:
+        return self._clients.get(node_id)

@@ -1,8 +1,68 @@
-# Predator SDR
+# Predator RF
 
 ## Overview
 
-Predator SDR is a fork of [SDR++](https://github.com/AlexandreRouma/SDRPlusPlus), a high-performance Software Defined Radio application. This project aims to provide a cleaner, more mission-focused interface for working in the electromagnetic environment (EME).
+Predator RF is a joint sensing platform for one solo SIGINT operator + a couple
+dozen RPi/SDR/GPS sensors + an optional Linux TOC. **RX-only, log-and-map-only.**
+The C++ side started as a fork of [SDR++](https://github.com/AlexandreRouma/SDRPlusPlus)
+and has grown a Predator-specific shell, mission system, hits/events workflow,
+a Kujhad Fleet hub-and-spoke peer protocol (TLS), ATAK CoT export, native
+RTL433/P25/ADS-B ingesters, and a Baseline tab. The repo also contains a
+Python intelligence backend (`backend/`, ~3.6k LOC) that consumes the Kujhad
+HTTP API as its wire contract.
+
+## Architecture (Path 1 — what's actually built)
+
+Two-tier system, **Python backend on top of the Kujhad Fleet HTTP API**:
+
+```
+[ C++ Predator-RF nodes ]                    [ Python backend (one-per-fleet) ]
+  - DSP / decoders / hits        ──HTTP──▶     KujhadClient (async poller)
+  - Kujhad HTTP server (TLS)         /v1/*       │
+  - per-node API key                             ▼
+  - Native: RTL433, P25(DSD-FME),              TrackManager
+            ADS-B, future POCSAG/AIS             │   ▼
+                                                 ▼   AnomalyDetector (6 methods)
+                                              EmitterTracks      │
+                                                 │               ▼
+                                                 ▼          DecisionEngine
+                                              FastAPI: /api/v1/{tracks,nodes,
+                                                              events,assessments}
+```
+
+- **Wire contract** is `core/src/predator/kujhad_fleet.h` (header-only HTTP/TLS
+  server with `X-Kujhad-Key` auth). Endpoints: `GET /v1/identify`, `/v1/state`,
+  `/v1/gps`, `/v1/events?since=`, `POST /v1/command`. Command schema is
+  class+action+args; `tx.*` is hard-rejected at the wire (RX-only build).
+- **Python client** is `backend/coordination/kujhad_client.py`. Schema verified
+  against C++ event-row builders in `core/src/gui/main_window.cpp`
+  (appendPredatorEvent ~L1334, RTL433 ~L1490, native ~L1545, ADSB ~L1620,
+  P25 ~L1714). Wire fields used: `serial, time(ISO), type∈{hit,decoder},
+  frequency, strengthDb, label, protocol, networkId, talkgroup, radioId,
+  decoder, hitState, lat, lon, accuracyM, gpsFix, encrypted?, raw`.
+- **Multi-transport (RNS/LoRa) is post-MVP**, not v1. Slots in *under* the
+  Kujhad HTTP layer in a future release. v1 ships TCP/TLS over IP only.
+- **CoT export** is operator-initiated only in v1 (`escalate_to_atak=True`
+  flag from `DecisionEngine` is advisory; transmission is manual).
+- See `docs/1_conops.md` §1.5 for the full implementation-status snapshot.
+
+## Project Type
+
+Two halves, **one repo**:
+
+1. **C++ Android/desktop application** — CMake build, Dear ImGui UI, OpenGL/GLES,
+   FFTW3+Volk DSP, Kotlin/JNI Android wrapper. The shippable end-user artifact.
+2. **Python intelligence backend** (`backend/`) — FastAPI + asyncio, consumes
+   the Kujhad HTTP API. Optional but recommended for fleets ≥ 2 nodes; the
+   C++ side is fully functional standalone (lone-wolf vignette).
+
+## Replit Environment
+
+Since the C++ application is built and run elsewhere (Android via Gradle on
+Windows, Linux via CMake), the Replit workflow only serves an unrelated
+informational landing page. **Port 5000 = `server.py` static HTML, not the
+Predator backend.** Do not attempt to run the Android build or the Python
+backend in this Repl; it's a code workspace.
 
 ## Project Type
 

@@ -28,6 +28,11 @@ class SensorNodeTrust:
     kujhad_port: int = 5259
     kujhad_api_key: str = ""
     kujhad_tls: bool = False
+    # TLS cert verification: default-secure. Set True only on internal
+    # self-signed-cert fleets where you've assessed the trust posture and
+    # cannot install the fleet CA on the backend host. No effect when
+    # kujhad_tls is False (plain HTTP).
+    kujhad_tls_insecure_skip_verify: bool = False
 
     # Location
     location_gps: Optional[Tuple[float, float]] = None   # (lat, lon)
