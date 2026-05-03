@@ -1,8 +1,12 @@
 #include <gui/widgets/file_select.h>
 #include <regex>
 #include <filesystem>
-#include <gui/file_dialogs.h>
 #include <core.h>
+#ifdef __ANDROID__
+#include "saf_bridge.h"
+#else
+#include <gui/file_dialogs.h>
+#endif
 
 FileSelect::FileSelect(std::string defaultPath, std::vector<std::string> filter) {
     _filter = filter;
@@ -64,6 +68,24 @@ bool FileSelect::pathIsValid() {
 }
 
 void FileSelect::worker() {
+#ifdef __ANDROID__
+    // On Android the pfd library has no native backend, so we route
+    // through the Storage Access Framework. The picked file is copied
+    // into the app cache and we receive a real filesystem path that
+    // existing std::ifstream consumers can read normally.
+    // Map the first pfd filter entry to a MIME type best-effort: the
+    // pfd convention is { "Description", "*.ext;*.ext2", ... }. SAF
+    // wants real MIMEs, so we just request "*/*" and let the user
+    // narrow it down in the picker UI.
+    std::string picked = android_saf::pickFileForReadBlocking("*/*");
+    if (!picked.empty()) {
+        path = picked;
+        strncpy(strPath, path.c_str(), sizeof(strPath) - 1);
+        strPath[sizeof(strPath) - 1] = '\0';
+        pathChanged = true;
+    }
+    pathValid = std::filesystem::is_regular_file(expandString(path));
+#else
     auto file = pfd::open_file("Open File", pathValid ? std::filesystem::path(expandString(path)).parent_path().string() : "", _filter);
     std::vector<std::string> res = file.result();
 
@@ -74,5 +96,6 @@ void FileSelect::worker() {
     }
 
     pathValid = std::filesystem::is_regular_file(expandString(path));
+#endif
     dialogOpen = false;
 }

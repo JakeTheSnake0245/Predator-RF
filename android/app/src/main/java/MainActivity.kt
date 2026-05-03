@@ -14,9 +14,11 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.Manifest;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
+import android.provider.OpenableColumns;
 import android.view.View;
 import android.view.KeyEvent;
 import android.view.WindowInsets;
@@ -24,6 +26,8 @@ import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.util.Log;
 import android.content.res.AssetManager;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import androidx.core.app.ActivityCompat;
 
@@ -372,6 +376,169 @@ class MainActivity : NativeActivity() {
         runOnUiThread {
             startActivity(Intent(this, MapActivity::class.java))
         }
+    }
+
+    // ── Storage Access Framework bridge ─────────────────────────────────
+    // Replaces the desktop pfd (portable_file_dialogs) calls that silently
+    // failed on Android because pfd has no Android backend. Each method
+    // here BLOCKS the calling (native worker) thread until the user picks
+    // or cancels — never call from the UI thread or from the main render
+    // loop, only from a dedicated worker. The actual SAF intent dispatch
+    // is marshalled to the UI thread internally, so we don't deadlock.
+    //
+    // Result conventions:
+    //   safPickFileForRead  → empty string on cancel; else local cache
+    //                          path containing a copy of the picked file
+    //                          (so existing std::ifstream code Just Works)
+    //   safPickFolder       → empty string on cancel; else the SAF tree
+    //                          URI as a string (NOT a filesystem path —
+    //                          callers that fopen(path) will fail; this is
+    //                          intentional and surfaced upstream)
+    //   safSaveFile         → false on cancel/error; true on success.
+    //                          On success the contents of sourceCachePath
+    //                          have been copied to the user-chosen URI.
+    private val SAF_RC_PICK_FILE   = 0x5AF01
+    private val SAF_RC_PICK_FOLDER = 0x5AF02
+    private val SAF_RC_SAVE_FILE   = 0x5AF03
+
+    private var safLatch: CountDownLatch? = null
+    private val safResult = AtomicReference<String>("")
+    // Source cache path for the in-flight save operation. Captured when
+    // the caller invokes safSaveFile, read in onActivityResult.
+    @Volatile private var safSaveSource: String = ""
+
+    fun safPickFileForRead(mimeFilter: String): String {
+        val latch = CountDownLatch(1)
+        safLatch = latch
+        safResult.set("")
+        runOnUiThread {
+            try {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = if (mimeFilter.isEmpty()) "*/*" else mimeFilter
+                }
+                startActivityForResult(intent, SAF_RC_PICK_FILE)
+            } catch (e: Exception) {
+                Log.e(TAG, "safPickFileForRead launch failed", e)
+                safResult.set("")
+                latch.countDown()
+            }
+        }
+        latch.await()
+        return safResult.get()
+    }
+
+    fun safPickFolder(): String {
+        val latch = CountDownLatch(1)
+        safLatch = latch
+        safResult.set("")
+        runOnUiThread {
+            try {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                startActivityForResult(intent, SAF_RC_PICK_FOLDER)
+            } catch (e: Exception) {
+                Log.e(TAG, "safPickFolder launch failed", e)
+                safResult.set("")
+                latch.countDown()
+            }
+        }
+        latch.await()
+        return safResult.get()
+    }
+
+    fun safSaveFile(suggestedName: String, sourceCachePath: String): Boolean {
+        val latch = CountDownLatch(1)
+        safLatch = latch
+        safResult.set("")
+        safSaveSource = sourceCachePath
+        runOnUiThread {
+            try {
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_TITLE, suggestedName)
+                }
+                startActivityForResult(intent, SAF_RC_SAVE_FILE)
+            } catch (e: Exception) {
+                Log.e(TAG, "safSaveFile launch failed", e)
+                safResult.set("")
+                latch.countDown()
+            }
+        }
+        latch.await()
+        val ok = safResult.get() == "OK"
+        safSaveSource = ""
+        return ok
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        when (requestCode) {
+            SAF_RC_PICK_FILE -> {
+                val uri = if (resultCode == RESULT_OK) data?.data else null
+                safResult.set(if (uri != null) copyUriToCache(uri) else "")
+                safLatch?.countDown()
+            }
+            SAF_RC_PICK_FOLDER -> {
+                val uri = if (resultCode == RESULT_OK) data?.data else null
+                if (uri != null) {
+                    try {
+                        contentResolver.takePersistableUriPermission(uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "takePersistableUriPermission failed", e)
+                    }
+                }
+                safResult.set(uri?.toString() ?: "")
+                safLatch?.countDown()
+            }
+            SAF_RC_SAVE_FILE -> {
+                val uri = if (resultCode == RESULT_OK) data?.data else null
+                val src = safSaveSource
+                var ok = false
+                if (uri != null && src.isNotEmpty()) {
+                    try {
+                        contentResolver.openOutputStream(uri)?.use { out ->
+                            FileInputStream(src).use { it.copyTo(out) }
+                        }
+                        ok = true
+                    } catch (e: Exception) {
+                        Log.e(TAG, "safSaveFile copy failed", e)
+                    }
+                }
+                safResult.set(if (ok) "OK" else "")
+                safLatch?.countDown()
+            }
+            else -> { /* not ours */ }
+        }
+        // The IME / system bars may have hidden during the picker; restore.
+        hideSystemBars()
+    }
+
+    private fun copyUriToCache(uri: Uri): String {
+        return try {
+            val name = queryDisplayName(uri) ?: "saf_${System.currentTimeMillis()}.bin"
+            val outDir = File(cacheDir, "saf_picked")
+            outDir.mkdirs()
+            val out = File(outDir, name)
+            contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(out).use { input.copyTo(it) }
+            } ?: return ""
+            out.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "copyUriToCache failed for $uri", e)
+            ""
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME),
+                                  null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        } catch (e: Exception) { null }
     }
 
     fun getGpsLatitude(): Double {
