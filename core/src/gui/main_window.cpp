@@ -6511,9 +6511,35 @@ void MainWindow::draw() {
         // window's screen position so the popup appears INSIDE the safe
         // area instead of partially under a notch on landscape phones.
         ImVec2 wp = ImGui::GetWindowPos();
-        ImGui::SetNextWindowPos(ImVec2(wp.x + 2.0f * pad, wp.y + contentTop + pad), ImGuiCond_Always);
-        // Force the width; height auto-sizes around the label + input + buttons.
-        ImGui::SetNextWindowSizeConstraints(ImVec2(popW, 0.0f), ImVec2(popW, winSize.y * 0.45f));
+        // Anchor the popup as high as possible — just below the device's
+        // top safe-area inset (notch / status bar). On landscape phones
+        // the soft keyboard eats the bottom ~60-70% of the screen, so
+        // every pixel above it counts. We deliberately ignore the menu
+        // bar / control-bar height here (those are still visible BEHIND
+        // the modal, but the popup itself wants the highest possible
+        // anchor so its OK/Cancel row stays visible above the IME).
+        float popX = wp.x + 2.0f * pad;
+        float popY = wp.y + pad;
+        // The Android soft keyboard does NOT shrink our DisplaySize because
+        // the activity is fullscreen + immersive-sticky (which together
+        // override windowSoftInputMode="adjustResize"). So we MUST query
+        // the IME inset directly and clamp the popup's max height so its
+        // bottom — and especially its OK/Cancel row — stays above the
+        // keyboard top. On desktop / when no keyboard is up this is 0
+        // and we fall back to the 45%-of-window-height cap.
+        float screenH       = ImGui::GetIO().DisplaySize.y;
+        float imeBottom     = (float)backend::getImeBottomInset();
+        float keyboardTopY  = (imeBottom > 0.0f) ? (screenH - imeBottom) : screenH;
+        float maxBottomY    = keyboardTopY - pad;          // safety gap above IME
+        float maxHeightFit  = std::max<float>(maxBottomY - popY, 120.0f * style::uiScale);
+        float maxHeightCap  = winSize.y * 0.45f;
+        float popMaxH       = (imeBottom > 0.0f)
+                                  ? std::min(maxHeightFit, maxHeightCap)
+                                  : maxHeightCap;
+        ImGui::SetNextWindowPos(ImVec2(popX, popY), ImGuiCond_Always);
+        // Force the width; height auto-sizes around the label + input + buttons,
+        // but is capped so the OK/Cancel row never disappears under the keyboard.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(popW, 0.0f), ImVec2(popW, popMaxH));
     }
     if (ImGui::BeginPopupModal("##pend_edit", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |

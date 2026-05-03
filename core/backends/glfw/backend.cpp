@@ -252,6 +252,11 @@ namespace backend {
         return false;
     }
 
+    int getImeBottomInset() {
+        // Desktop has no soft keyboard; nothing ever covers the popup.
+        return 0;
+    }
+
     int renderLoop() {
         // Main loop
         while (!glfwWindowShouldClose(window)) {
