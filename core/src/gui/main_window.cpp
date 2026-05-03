@@ -6559,7 +6559,8 @@ void MainWindow::draw() {
                     // pre-shared-key gate. Both netname and netkey
                     // must be set for it to take effect; size in
                     // bytes 8..512 (0 = RNS default).
-                    ImGui::TextDisabled(T("IFAC (pre-shared, both fields required)"));
+                    ImGui::TextDisabled("%s",
+                        T("IFAC (pre-shared, both fields required)"));
                     ImGui::InputText(T("IFAC netname##rns_e"),
                                      eIfacNetname, sizeof(eIfacNetname));
                     ImGui::InputText(T("IFAC netkey (passphrase)##rns_e"),
