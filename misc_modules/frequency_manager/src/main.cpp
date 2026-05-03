@@ -150,7 +150,7 @@ private:
             ImGui::TableSetColumnIndex(0);
             ImGui::LeftLabel("Name");
             ImGui::TableSetColumnIndex(1);
-            ImGui::SetNextItemWidth(200);
+            ImGui::SetNextItemWidth(std::min(200.0f * style::uiScale, ImGui::GetContentRegionAvail().x));
             if (ImGui::InputText(("##freq_manager_edit_name" + name).c_str(), nameBuf, 1023)) {
                 editedBookmarkName = nameBuf;
             }
@@ -159,21 +159,21 @@ private:
             ImGui::TableSetColumnIndex(0);
             ImGui::LeftLabel("Frequency");
             ImGui::TableSetColumnIndex(1);
-            ImGui::SetNextItemWidth(200);
+            ImGui::SetNextItemWidth(std::min(200.0f * style::uiScale, ImGui::GetContentRegionAvail().x));
             ImGui::InputDouble(("##freq_manager_edit_freq" + name).c_str(), &editedBookmark.frequency);
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::LeftLabel("Bandwidth");
             ImGui::TableSetColumnIndex(1);
-            ImGui::SetNextItemWidth(200);
+            ImGui::SetNextItemWidth(std::min(200.0f * style::uiScale, ImGui::GetContentRegionAvail().x));
             ImGui::InputDouble(("##freq_manager_edit_bw" + name).c_str(), &editedBookmark.bandwidth);
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::LeftLabel("Mode");
             ImGui::TableSetColumnIndex(1);
-            ImGui::SetNextItemWidth(200);
+            ImGui::SetNextItemWidth(std::min(200.0f * style::uiScale, ImGui::GetContentRegionAvail().x));
 
             ImGui::Combo(("##freq_manager_edit_mode" + name).c_str(), &editedBookmark.mode, demodModeListTxt);
 
