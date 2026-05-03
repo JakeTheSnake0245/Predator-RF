@@ -81,7 +81,21 @@ namespace {
     constexpr float  kTapSlopFloorPx    = 24.0f;
     constexpr float  kPinchDeadZonePx   = 12.0f;
     constexpr float  kPinchScaleDivisor = 60.0f;   // raw px per wheel tick
-    constexpr double kLongPressSec      = 0.5;
+    constexpr double kLongPressSec      = 0.70;    // Android-style; 500 ms
+                                                   // was tripping on normal
+                                                   // slow taps and silently
+                                                   // turning them into right
+                                                   // clicks.
+    // Tap-vs-drag time gate. For this many seconds after ACTION_DOWN we
+    // refuse to promote any pointer to "moved past slop" no matter how far
+    // the finger drifts. This matches Android's ViewConfiguration.
+    // getTapTimeout() / getScaledTouchSlop() pairing: a fast lift, even
+    // with significant finger drift, is always a tap; only a sustained
+    // hold-then-move becomes a drag. Without this, normal thumb taps on
+    // 3x-scaled menus drifted ~12 mm during the press-and-lift, exceeded
+    // the 60 px slop, committed as a drag, and then the menu scroll
+    // handler ate the gesture instead of the tapped widget firing.
+    constexpr double kTapTimeoutSec     = 0.18;
 
     struct TouchPointer {
         int32_t id   = -1;          // -1 = slot empty
@@ -378,6 +392,7 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(AInputEvent* input_event)
             // threshold.
             const float slop = effective_tap_slop_px();
             const float slopSq = slop * slop;
+            const double now  = monotonic_now_sec();
             const int sampleCount = AMotionEvent_getPointerCount(input_event);
             for (int i = 0; i < sampleCount; ++i) {
                 int32_t pid = AMotionEvent_getPointerId(input_event, i);
@@ -387,6 +402,13 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(AInputEvent* input_event)
                 float y = AMotionEvent_getY(input_event, i);
                 s_Pointers[slot].curX = x;
                 s_Pointers[slot].curY = y;
+                // Time gate: during the tap-timeout window, ignore drift
+                // entirely. Only after the finger has been down longer than
+                // kTapTimeoutSec do we start checking slop for drag promotion.
+                // This is what makes thumb taps on small widgets actually
+                // register — see kTapTimeoutSec comment up top.
+                if (now - s_Pointers[slot].downTime < kTapTimeoutSec)
+                    continue;
                 float dx = x - s_Pointers[slot].downX;
                 float dy = y - s_Pointers[slot].downY;
                 if (dx*dx + dy*dy > slopSq)
