@@ -842,6 +842,25 @@ void MainWindow::draw() {
         // captured ActiveId — the hover check silently returns false even though
         // the finger is clearly over the window.  Instead, compare io.MousePos
         // against the actual window rect and apply the per-frame delta directly.
+        //
+        // CRITICAL: vertical-only. Horizontal pan was actively *creating* the
+        // "menu slides left/right under my finger" bug the operator keeps
+        // reporting. Even after the menuWidth floor + hit-list fix, ImGui's
+        // GetScrollMaxX() can still return a few pixels positive whenever any
+        // widget overflows by a hair (long combo preview, Hz string, plugin
+        // SetNextItemWidth in raw px, etc) — and this branch then panned the
+        // entire menu sideways on the slightest finger drift. Sub-menus must
+        // never scroll horizontally; if a widget overflows, fix the widget,
+        // do not paper over it with finger panning.
+        //
+        // Only Android suppresses horizontal pan; vertical pan is essential
+        // for long menus that don't fit on screen.
+        //
+        // Suppress panning entirely while a widget owns ActiveId (slider in
+        // mid-drag, text input being typed in, etc) so finger movement edits
+        // the widget instead of scrolling the panel out from under it.
+        if (ImGui::IsAnyItemActive()) return;
+
         ImVec2 wpos  = ImGui::GetWindowPos();
         ImVec2 wsize = ImGui::GetWindowSize();
         if (io.MouseDown[0] &&
@@ -851,10 +870,7 @@ void MainWindow::draw() {
                 float next = ImGui::GetScrollY() - io.MouseDelta.y;
                 ImGui::SetScrollY(std::clamp(next, 0.0f, ImGui::GetScrollMaxY()));
             }
-            if (std::fabs(io.MouseDelta.x) > 0.5f && ImGui::GetScrollMaxX() > 0.0f) {
-                float next = ImGui::GetScrollX() - io.MouseDelta.x;
-                ImGui::SetScrollX(std::clamp(next, 0.0f, ImGui::GetScrollMaxX()));
-            }
+            // Horizontal pan intentionally removed — see note above.
         }
 #endif
     };

@@ -2,7 +2,9 @@
 #include <sched_action.h>
 #include <utils/freq_formatting.h>
 #include <gui/tuner.h>
+#include <gui/style.h>
 #include <signal_path/signal_path.h>
+#include <algorithm>
 
 namespace sched_action {
 
@@ -76,15 +78,15 @@ namespace sched_action {
 
         bool showEditMenu(bool& valid) {
             ImGui::LeftLabel("VFO");
-            ImGui::SetNextItemWidth(250 - ImGui::GetCursorPosX());
+            ImGui::SetNextItemWidth(std::max(60.0f, std::min(250.0f * style::uiScale, ImGui::GetContentRegionAvail().x) - ImGui::GetCursorPosX()));
             ImGui::Combo("##scheduler_action_tunevfo_edit_vfo", &vfoNameId, vfoNamesTxt.c_str());
 
             ImGui::LeftLabel("Frequency");
-            ImGui::SetNextItemWidth(250 - ImGui::GetCursorPosX());
+            ImGui::SetNextItemWidth(std::max(60.0f, std::min(250.0f * style::uiScale, ImGui::GetContentRegionAvail().x) - ImGui::GetCursorPosX()));
             ImGui::InputDouble("Hz##scheduler_action_tunevfo_edit_freq", &tmpFrequency);
 
             ImGui::LeftLabel("Tuning Mode");
-            ImGui::SetNextItemWidth(250 - ImGui::GetCursorPosX());
+            ImGui::SetNextItemWidth(std::max(60.0f, std::min(250.0f * style::uiScale, ImGui::GetContentRegionAvail().x) - ImGui::GetCursorPosX()));
             ImGui::Combo("##scheduler_action_tunevfo_edit_tmode", &tuningModeId, tuningModesTxt.c_str());
 
             if (ImGui::Button("Apply")) {
