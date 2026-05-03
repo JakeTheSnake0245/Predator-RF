@@ -328,8 +328,9 @@ const char *sf_strerror(SNDFILE *s) { (void)s; return "no sndfile in Predator bu
  * never enter (initOpts sets use_rigctl=0 and there's no UI to flip it).
  * They exist purely to satisfy the linker.
  * ============================================================ */
-void SetModulation(int sockfd, int bw)        { (void)sockfd; (void)bw;        }
-void SetFreq      (int sockfd, long freq_hz)  { (void)sockfd; (void)freq_hz;   }
+/* Signatures must match dsd.h: return bool, not void. */
+bool SetModulation(int sockfd, int bandwidth)   { (void)sockfd; (void)bandwidth; return false; }
+bool SetFreq      (int sockfd, long int freq)   { (void)sockfd; (void)freq;      return false; }
 
 /* ============================================================
  * Stub for the symbol defined in EXCLUDED dsd_ncurses_printer.c.
