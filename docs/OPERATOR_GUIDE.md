@@ -728,6 +728,181 @@ Configure its Kujhad **Listen** address + port + API key. Add it to `FLEET_NODES
 
 Set `COC_MODE_ENABLED=true` + `COC_UPSTREAM_URLS=http://station-alpha:8000,http://station-bravo:8000` and this backend additionally consumes events from those upstream backends' `/api/v1/events/stream` SSE feed. Every aggregated event is tagged with `_upstream` so you know which station originated it, and `CrossStationDedup` coalesces tracks where freq + location agree (default tolerances: ±5 kHz, ±500 m, ±30 s co-occurrence). Two purely-local tracks never get merged here — that's `TrackAssociator`'s job.
 
+### 20.7 RNS Layers (Reticulum transport for CoT)
+
+The RNS layer is a **parallel** transport that pushes the same CoT/XML traffic Predator RF already sends to TAK over the existing UDP/TCP path *and* over Reticulum (RNS) at the same time — RNS handles its own path selection across whatever interfaces you've brought up. This is what gets your CoT to TAK over LoRa, packet radio, I2P, or a long-range mesh when the regular IP transport is unavailable or untrusted.
+
+The daemon ships in the Python backend (`backend/rns/`). It binds upstream RNS **1.2.0** exactly. Crypto stack: `cbor2` envelopes, Argon2id (t=3, m=64MiB, p=1) KDF, XChaCha20-Poly1305 IETF AEAD with the version byte bound as AAD (downgrade-resistant).
+
+**RX-side note:** inbound CoT XML received over RNS is auto-forwarded to a local TAK app over UDP. On Linux it's opt-in (`RNS_ATAK_LOCAL_PORT` env var); on Android the port defaults to **4242** so peer-relayed CoT shows on the device's TAK map without operator action.
+
+#### 20.7.1 Where to access it
+
+The RNS panel lives inside the Kujhad Fleet view of the Predator RF GUI on **both** Linux and Android:
+
+| Platform | How to open it | How it talks to the daemon |
+|---|---|---|
+| **Linux** (Kujhad GUI on the backend host) | Kujhad panel → "RNS Interfaces (Reticulum)" section | Unix socket (`ControlServer`), uid-checked, no network exposure |
+| **Android** (Predator RF app, Tier 2+ deployment) | Same Kujhad panel — the C++ UI is rendered through `NativeActivity` so the layout is identical | `android.net.LocalSocket` against the same Unix-socket path |
+
+There is **no HTTP control plane**. The HTTP routes in `backend/api/routes/rns.py` exist as importable scaffolding but are deliberately not mounted in `backend/api/server.py` — the daemon control plane is local-only on every platform. If you need to script it, use the daemon's Unix socket directly or the helpers in `core/src/predator/kujhad_rns.h` (Linux) / `RnsBridge.kt` (Android).
+
+The panel auto-refreshes at 1 Hz. Each row in the live status table shows the interface's `online` state, current RX/TX bytes, live bitrate, connected client count, and `last_error` if any.
+
+#### 20.7.2 The nine interface types — when to use each
+
+| Type | When to use it | Per-type required fields |
+|---|---|---|
+| **`tcp_client`** | Reach a remote RNS node by dialing its TCP listener (e.g. an RNS hub on the public internet, or another backend across an overlay) | `target_host`, `target_port`; optional `kiss_framing`, `i2p_tunneled` |
+| **`tcp_server`** | Let other RNS nodes dial *you* on TCP (run a local RNS hub) | `listen_port`; optional `listen_address`, `prefer_ipv6`, `i2p_tunneled` |
+| **`udp`** | Cheap stateless UDP transport, useful for LAN multicast-ish setups | `listen_port`; optional `listen_address`, `forward_address`, `forward_port` |
+| **`i2p`** | Anonymized transport over I2P; the SAM bridge handles routing | optional `peers`, `connectable`, `i2p_sam_address` |
+| **`auto_interface`** | Discover other Reticulum nodes on the same LAN automatically | `group_id`; optional `discovery_scope` (`link`/`admin`/`site`/`organisation`/`global`), `discovery_port`, `data_port`, `allowed_interfaces`, `ignored_interfaces` |
+| **`rnode`** | LoRa via an RNode (the most common long-range field setup) | `port` (e.g. `/dev/ttyUSB0`), `frequency_hz`, `bandwidth_hz`, `txpower_dbm` (−10…30), `spreadingfactor` (7…12), `codingrate` (5…8); optional `flow_control`, `id_callsign`, `id_interval_s` |
+| **`kiss_tnc`** | Generic packet-radio TNC running KISS | `port`, `speed_baud`; optional `databits`, `parity`, `stopbits`, `preamble_ms`, `txtail_ms`, `persistence` (0…255), `slottime_ms`, `flow_control`, `beacon_interval_s`, `beacon_data` |
+| **`ax25_kiss`** | Amateur AX.25 packet radio (callsign-required) | everything `kiss_tnc` has plus `callsign`, `ssid` (0…15), `axint_port` |
+| **`pipe`** | Wrap an arbitrary external process as an RNS interface (advanced) | `command`; optional `respawn_delay_s` |
+
+**`reliable_cot` defaults by type (spec section C):**
+- **`rnode` → False** (LoRa airtime is precious; Link/Resource overhead defeats the point — packets are sent unconfirmed)
+- **everything else → True** (TCP/UDP/I2P/Auto/Pipe/KISS variants get reliable mode by default — Link/Resource is cheap on those links, so CoT escalations are confirmed)
+
+You can override per-interface in the UI.
+
+#### 20.7.3 Common fields (every interface, regardless of type)
+
+Spec section B fields, applied by `_build_rns_interface` to every iface:
+
+| Field | Default | Purpose |
+|---|---|---|
+| `id` | auto (UUID4) | Stable identifier; never changes after creation. |
+| `name` | required | Human label shown in the panel. Must be unique. |
+| `type` | required | One of the nine types above. |
+| `enabled` | `true` | Toggle without deleting. Disabled interfaces don't bind. |
+| `mode` | `full` | `full` / `gateway` / `access_point` / `roaming` / `boundary` — RNS routing role. Use `full` unless you've read the RNS docs. |
+| `outgoing` | `true` | Whether RNS may originate transmissions on this iface. RX-only nodes set `false`. |
+| `bitrate_hint_bps` | unset | Hint for RNS scheduler; LoRa typically 1200, TCP 10⁶, etc. |
+| `announce_interval_s` | unset | How often this node announces itself on the iface. |
+| `notes` | unset | Free-form operator note shown in the panel; not transmitted. |
+| `reliable_cot` | type-default | Per-iface override of the publish reliability mode. |
+
+#### 20.7.4 Adding an interface — UI flow
+
+1. Open the Kujhad panel → "RNS Interfaces (Reticulum)".
+2. Click **Add interface**.
+3. Pick a `type` from the combo. The form below regenerates with the COMMON section + the per-type fields for the chosen type.
+4. Fill in the required fields (the form validates inline before letting you save — same `validate_interface` function the daemon uses, so a UI-accepted config will not be rejected by the daemon).
+5. Click **Save**. The daemon writes the new entry to its config and brings the interface up. Watch the live status row for `online=true`. If `last_error` populates, fix the field and click **Restart** on the row.
+
+#### 20.7.5 Restart behavior
+
+When you click **Restart** (or call `restart_interface`), the daemon:
+
+1. **Drains** the current iface for `drain_timeout_s` (default 5 s). Pending packets either flush or are dropped.
+2. **Spawns** the new iface from the current config.
+3. **Waits up to `start_timeout_s`** for the iface to report `up`.
+4. Returns `{forced_close, timed_out, last_error}`. A forced teardown (a hung iface that wouldn't drain) surfaces as `last_error="forced"` per spec section G.
+5. Per-interface peer entries are purged on teardown (rebuilt as remote nodes re-announce).
+
+**Restart all** does the same in sequence across every iface.
+
+#### 20.7.6 Replication tokens — moving a config between nodes
+
+A replication token is a passphrase-encrypted bundle of the daemon's config (and optionally its identity) that you can mint on one node and import on another to clone the RNS posture without retyping every field.
+
+**Mint (Kujhad → Mint token):**
+1. Click **Mint token** in the panel.
+2. Choose `include_identity` (yes = the importer becomes "you" on RNS — same node hash; no = importer keeps its own identity).
+3. Enter a strong passphrase. Argon2id derives the AEAD key.
+4. Copy the resulting `prf-rns-v1.*` string. Share it out-of-band.
+
+**Device-local placeholders:** fields marked `DEVICE_LOCAL_FIELDS` in `schema.py` (e.g. `tcp_server.listen_address`, `udp.listen_address`, `i2p.i2p_sam_address`, `rnode.port`, `kiss_tnc.port`, `ax25_kiss.{port,axint_port}`, `auto_interface.{allowed_interfaces,ignored_interfaces}`) are replaced with `{"$placeholder": "<field_path>"}` markers during mint. The importer is re-prompted for them. **This is how you avoid leaking `/dev/ttyUSB0` paths or LAN IPs across an op.**
+
+**Import (Kujhad → Import token):**
+1. Click **Import token**, paste the string, enter the passphrase.
+2. The importer prompts for every device-local placeholder. Provide the local-to-this-machine value for each (`/dev/ttyUSB1`, `192.168.5.10`, etc.).
+3. Daemon validates the resulting config; refuses to apply if any field is invalid.
+4. If `include_identity` was set at mint time, the importer also writes `identity.prv` (mode 0600), reloads `RNS.Identity`, rebuilds the IN destination, and re-syncs `bridge.own_hash16`. The node hash is preserved.
+
+**Scripted import** (Linux): `deploy/rns-setup.sh` accepts a token + a `PRF_RNS_PLACEHOLDERS_JSON` env var (or prompts on `/dev/tty`, retrying up to 5 times). `--non-interactive` fast-fails with the missing list. Env var encoding: `__` → `.` (so `interfaces__0__listen_address=192.168.5.10` maps to `interfaces.0.listen_address`).
+
+#### 20.7.7 Peer allowlist — gating who can announce in
+
+`peer_allowlist` (a list of identity hashes in the daemon config) restricts which announces the bridge accepts. An announce from an identity not in the allowlist is dropped at the announce handler — that peer's OUT destination is never built, so envelopes are never fanned to it. Leave it empty to accept any peer that announces on `predatorrf.cot.v1` (default — fine for closed deployments). Populate it for higher-trust ops.
+
+The allowlist is **synced from the daemon config to the bridge at startup** (`backend/main.py` line 103). Changes via UI take effect on the next config reload.
+
+#### 20.7.8 Status fields (what the panel shows live)
+
+`status()` returns:
+
+| Field | Meaning |
+|---|---|
+| `daemon` | `running` / `stub` (the latter when the `rns` Python package isn't importable) |
+| `identity_hash16` | This node's RNS hash (16 hex chars) |
+| `interfaces[]` | Per-iface live: `online`, `rxb` (bytes), `txb`, `bitrate` (current measured), `clients` (remote count), `last_error`, `forced_close`, `timed_out` |
+| `cot_bridge` | Stats from the bridge: `published`, `received`, `dropped_dedupe`, `dropped_loop`, `dropped_allowlist`, `dropped_invalid` |
+| `peer_allowlist_size` | Count of allowlisted peers |
+
+#### 20.7.9 Logs
+
+`get_logs(level, since_seq)` returns from the daemon's in-memory log buffer (last N entries). The Kujhad panel renders this as a tail at the bottom — filter by level (`DEBUG`/`INFO`/`WARN`/`ERROR`).
+
+#### 20.7.10 Identity & state files (Linux)
+
+| Path | Purpose |
+|---|---|
+| `/var/lib/predator-rf/rns/identity.prv` | RNS identity private key (mode 0600) |
+| `/var/lib/predator-rf/rns/config.json` | Daemon config — `interfaces[]`, `cot_bridge`, `peer_allowlist`, `schema_version` |
+| `/var/lib/predator-rf/rns/control.sock` | Unix control socket (uid-checked) |
+| `/var/lib/predator-rf/rns/logs/` | Rotating daemon logs |
+
+**Backup the identity file before any major change.** Losing `identity.prv` means losing your node's hash — every peer that allowlisted you needs to re-add the new hash.
+
+#### 20.7.11 Common field workflows
+
+**A. Bring up a 2-node LoRa mesh between two RNodes (915 MHz ISM)**
+- Both nodes: add an `rnode` iface — `port=/dev/ttyUSB0`, `frequency_hz=915000000`, `bandwidth_hz=125000`, `txpower_dbm=17`, `spreadingfactor=8`, `codingrate=5`, `id_callsign=YOURCALL` if licensed.
+- Wait ~1 announce interval. Each panel's status table should show the other node under `clients`.
+- CoT publishes from either node's backend reach the other's TAK app over LoRa (with `reliable_cot=false` — single-pass, unconfirmed).
+
+**B. Bridge to a remote RNS hub over the public internet**
+- Local: `tcp_client` → `target_host=hub.example.com`, `target_port=4242`, `mode=full`.
+- Hub: typically already running `tcp_server`. Mint a replication token *without* identity, import on local with the hub's address as the placeholder.
+
+**C. AX.25 packet-radio gateway with a real callsign**
+- `ax25_kiss` iface — `port=/dev/ttyUSB0`, `speed_baud=9600`, `callsign=YOURCALL`, `ssid=7`, `axint_port=ax0` (the kernel AX.25 interface name).
+- Set `id_callsign` if you want periodic `ID` beacons.
+- `reliable_cot=true` makes sense here (AX.25 is slow but reliable enough that Link/Resource works).
+
+**D. RX-only listening node**
+- Set `outgoing=false` on every iface. The node will receive announces and inbound CoT but will not originate transmissions.
+
+#### 20.7.12 Security posture
+
+| Threat | Mitigation |
+|---|---|
+| Remote attacker reaches the daemon control plane | **Not possible.** The control plane is a Unix socket; HTTP routes are not mounted. Linux uses uid checks; Android uses `LocalSocket` (kernel-enforced same-app boundary). |
+| Replication token sniffed on the wire | Argon2id+XChaCha20-Poly1305-IETF; AAD-bound version byte blocks downgrade. The token is useless without the passphrase. |
+| Importing a leaked token | Use a strong passphrase; mint with `include_identity=false` if you don't trust the recipient with your node hash. |
+| Hostile peer floods the bridge | `peer_allowlist` keeps fanout O(allowlisted peers). Per-peer LRU dedup (4096 entries / peer) drops repeated CoT. |
+| LoRa replay / loop | Bridge-level loop suppression on own `src` tag; per-peer dedupe LRU. |
+| RNS interface hangs and blocks shutdown | Restart drains for `drain_timeout_s`, then forces close — `last_error="forced"` shows in the panel. |
+| TX-class command injected via Kujhad | Dispatcher unconditionally rejects any `tx`-class command; the module never opens a transmit path beyond what you configure on RNS interfaces directly. |
+
+#### 20.7.13 Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `daemon=stub` in status | `rns` Python package not installed. `pip install -r backend/rns/requirements.txt` and restart. |
+| Iface `online=false`, `last_error="..."` | Read the error string. Most common: serial port permissions (`sudo usermod -aG dialout $USER`), wrong port path, port already open by another process. |
+| LoRa peers can hear you but you never see them | Check `announce_interval_s` on **both** sides. Default unset means RNS uses its built-in heuristic; set to 600 (10 min) for a stable mesh. |
+| `cot_bridge.dropped_allowlist > 0` | A peer is announcing but not in your allowlist. Either add their hash or accept that you're filtering them out. |
+| Inbound CoT not appearing in TAK on Android | Check `RNS_ATAK_LOCAL_PORT` (defaults to 4242 on Android, opt-in elsewhere). Make sure ATAK is listening on that UDP port. |
+| `restart_interface` returns `forced_close=true, timed_out=true` | The iface hung in shutdown. RNS occasionally does this on serial USB resets. Re-plug the radio, click **Restart** again. |
+| Token import re-prompts for fields you don't recognise | Those are device-local placeholders from the source config. Provide the appropriate value for your machine (e.g. your serial port, your LAN IP). |
+| Identity hash changed after `import_config` | Token was minted with `include_identity=true`. By design — you now share that node's identity. If you wanted to keep your own, re-import a token minted *without* identity. |
+
 ---
 
 ## 21. Hardware capability table (every supported SDR)
