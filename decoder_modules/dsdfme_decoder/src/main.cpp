@@ -91,7 +91,8 @@ public:
                                               0, VFO_BANDWIDTH, VFO_SAMPLE_RATE,
                                               VFO_BANDWIDTH, VFO_BANDWIDTH, true);
         fmDemod_.init(vfo_->output, FM_DEVIATION, VFO_SAMPLE_RATE);
-        floatToShort_.init(&fmDemod_.out, sampleHandler, this, 1024);
+        // Handler<T>::init(stream<T>*, void(*)(T*,int,void*), void*) — 3 args.
+        floatToShort_.init(&fmDemod_.out, sampleHandler, this);
 
         // ----- Audio sink chain (voice output side) -----
         // rawVoice_ is a hand-pumped stream (no Processor feeding it). We pre-
@@ -107,8 +108,10 @@ public:
         sigpath::sinkManager.registerStream(name_, &stream_);
 
         // ----- Metadata events: register with native decoder registry -----
+        // NativeDrainFn returns std::vector<DecoderIngestEvent>; the registry
+        // tags each batch with the sourceKey ("DSDFME") on its own.
         predator::registerNativeDecoder(this, "DSDFME",
-            [this](size_t maxItems) -> predator::NativeDrainBatch {
+            [this](std::size_t maxItems) -> std::vector<predator::DecoderIngestEvent> {
                 return drainEvents(maxItems);
             });
         predator_dsd_set_event_cb(&DsdFmeDecoderModule::onDsdEvent, this);
@@ -265,30 +268,42 @@ private:
         auto* self = static_cast<DsdFmeDecoderModule*>(userdata);
         if (!self) return;
 
+        // DecoderIngestEvent fields: decoder, protocol, networkId, talkgroup,
+        // radioId, label, frequencyHz, strengthDb, raw (nlohmann::json).
+        // We fold kind/timestamp/serial/payload into `raw` since the canonical
+        // struct doesn't carry them as first-class fields.
+        const char* kindStr = kind ? kind : "info";
+        const char* protoStr = protocol ? protocol : "DSDFME";
+        const char* payloadStr = payload_json ? payload_json : "{}";
+        const auto nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::system_clock::now().time_since_epoch()).count();
+        const uint64_t serial = ++self->serial_;
+
         predator::DecoderIngestEvent ev;
-        ev.timestampUs = predator::nowMicros();
-        ev.serial      = ++self->serial_;
         ev.decoder     = "DSDFME";
-        ev.eventType   = kind ? kind : "info";
-        ev.protocol    = protocol ? protocol : "DSDFME";
-        ev.frequencyHz = 0;
-        ev.strengthDb  = 0;
-        ev.label       = std::string(protocol ? protocol : "DSDFME") + ":" + ev.eventType;
-        ev.rawPayload  = payload_json ? payload_json : "{}";
+        ev.protocol    = protoStr;
+        ev.frequencyHz = 0.0;
+        ev.strengthDb  = 0.0f;
+        ev.label       = std::string(protoStr) + ":" + kindStr;
+        ev.raw = {
+            {"kind",        kindStr},
+            {"timestampUs", static_cast<int64_t>(nowUs)},
+            {"serial",      serial},
+            {"payload",     payloadStr},
+        };
 
         std::lock_guard<std::mutex> lk(self->queueMutex_);
         if (self->queue_.size() >= 256) self->queue_.pop_front();
         self->queue_.push_back(std::move(ev));
     }
 
-    predator::NativeDrainBatch drainEvents(size_t maxItems) {
-        predator::NativeDrainBatch out;
-        out.sourceKey = "DSDFME";
+    std::vector<predator::DecoderIngestEvent> drainEvents(std::size_t maxItems) {
+        std::vector<predator::DecoderIngestEvent> out;
         std::lock_guard<std::mutex> lk(queueMutex_);
-        size_t n = std::min(maxItems, queue_.size());
-        out.events.reserve(n);
-        for (size_t i = 0; i < n; i++) {
-            out.events.push_back(std::move(queue_.front()));
+        const std::size_t n = std::min(maxItems, queue_.size());
+        out.reserve(n);
+        for (std::size_t i = 0; i < n; i++) {
+            out.push_back(std::move(queue_.front()));
             queue_.pop_front();
         }
         return out;
