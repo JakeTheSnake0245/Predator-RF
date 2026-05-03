@@ -321,8 +321,23 @@ namespace backend {
                 beginFrame();
                 
                 if (dsize.x > 0 && dsize.y > 0) {
-                    ImGui::SetNextWindowPos(ImVec2(0, 0));
-                    ImGui::SetNextWindowSize(ImVec2(dsize.x, dsize.y));
+                    // Inset the main window inside the system safe area
+                    // (status bar / nav bar / camera cutout) AND above the
+                    // soft keyboard if it's visible. Without these the
+                    // top-row menus can fall under a notch and the focused
+                    // InputText can hide under the IME.
+                    SafeAreaInsets sa = getSafeAreaInsets();
+                    int imeBot = getImeBottomInset();
+                    float left   = (float)sa.left;
+                    float top    = (float)sa.top;
+                    float right  = (float)sa.right;
+                    float bottom = (float)((sa.bottom > imeBot) ? sa.bottom : imeBot);
+                    float winW = dsize.x - left - right;
+                    float winH = dsize.y - top  - bottom;
+                    if (winW < 1.0f) winW = 1.0f;
+                    if (winH < 1.0f) winH = 1.0f;
+                    ImGui::SetNextWindowPos(ImVec2(left, top));
+                    ImGui::SetNextWindowSize(ImVec2(winW, winH));
                     gui::mainWindow.draw();
                 }
                 render();
@@ -466,6 +481,63 @@ namespace backend {
             return -5;
 
         return 0;
+    }
+
+    // ── JNI helpers for window insets / thermal status ──────────────────
+    // All these getters share the same Attach → GetMethodID → Call → Detach
+    // pattern. Failure modes return zero-valued defaults so callers don't
+    // have to special-case "JNI not ready" every frame.
+
+    SafeAreaInsets getSafeAreaInsets() {
+        SafeAreaInsets out;
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+        if (java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6) == JNI_ERR) return out;
+        if (java_vm->AttachCurrentThread(&java_env, NULL) != JNI_OK)        return out;
+
+        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (clazz) {
+            jmethodID t = java_env->GetMethodID(clazz, "getSafeAreaTop",    "()I");
+            jmethodID b = java_env->GetMethodID(clazz, "getSafeAreaBottom", "()I");
+            jmethodID l = java_env->GetMethodID(clazz, "getSafeAreaLeft",   "()I");
+            jmethodID r = java_env->GetMethodID(clazz, "getSafeAreaRight",  "()I");
+            if (t) out.top    = java_env->CallIntMethod(app->activity->clazz, t);
+            if (b) out.bottom = java_env->CallIntMethod(app->activity->clazz, b);
+            if (l) out.left   = java_env->CallIntMethod(app->activity->clazz, l);
+            if (r) out.right  = java_env->CallIntMethod(app->activity->clazz, r);
+        }
+        java_vm->DetachCurrentThread();
+        return out;
+    }
+
+    int getImeBottomInset() {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+        if (java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6) == JNI_ERR) return 0;
+        if (java_vm->AttachCurrentThread(&java_env, NULL) != JNI_OK)        return 0;
+        int v = 0;
+        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (clazz) {
+            jmethodID m = java_env->GetMethodID(clazz, "getImeBottomInset", "()I");
+            if (m) v = java_env->CallIntMethod(app->activity->clazz, m);
+        }
+        java_vm->DetachCurrentThread();
+        return v;
+    }
+
+    int getThermalStatus() {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+        if (java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6) == JNI_ERR) return 0;
+        if (java_vm->AttachCurrentThread(&java_env, NULL) != JNI_OK)        return 0;
+        int v = 0;
+        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (clazz) {
+            jmethodID m = java_env->GetMethodID(clazz, "getThermalStatus", "()I");
+            if (m) v = java_env->CallIntMethod(app->activity->clazz, m);
+        }
+        java_vm->DetachCurrentThread();
+        return v;
     }
 
     std::string getAppFilesDir() {

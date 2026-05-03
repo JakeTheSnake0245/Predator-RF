@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  USB device filter for Predator RF.
+
+  Listed here so Android shows the "Open Predator RF when this device is
+  attached?" dialog AND fires USB_DEVICE_ATTACHED to MainActivity, which
+  is what lets the operator hot-plug an SDR after the app is already
+  running. Without this filter, USB devices attached post-launch are
+  silently ignored — the user has to fully restart the app every time.
+
+  vendor-id / product-id are DECIMAL (Android requirement). Hex is in
+  the trailing comment.
+-->
+<resources>
+    <!-- ── RTL-SDR (RTL2832U based dongles) ── -->
+    <usb-device vendor-id="3034"  product-id="10296" /> <!-- 0x0bda / 0x2838  generic RTL2832U -->
+    <usb-device vendor-id="3034"  product-id="10500" /> <!-- 0x0bda / 0x2784  Astrometa, Hama -->
+    <usb-device vendor-id="3034"  product-id="10299" /> <!-- 0x0bda / 0x283b  -->
+    <usb-device vendor-id="1554"  product-id="21847" /> <!-- 0x0612 / 0x5557  Pinnacle 320cx -->
+    <usb-device vendor-id="6822"  product-id="7717"  /> <!-- 0x1aa6 / 0x1e25  -->
+
+    <!-- ── HackRF (One / Jawbreaker / Rad1o) ── -->
+    <usb-device vendor-id="7504"  product-id="24713" /> <!-- 0x1d50 / 0x6089  HackRF One -->
+    <usb-device vendor-id="7504"  product-id="24651" /> <!-- 0x1d50 / 0x604b  Jawbreaker -->
+    <usb-device vendor-id="7504"  product-id="52245" /> <!-- 0x1d50 / 0xcc15  Rad1o -->
+
+    <!-- ── Airspy R2 / Mini ── -->
+    <usb-device vendor-id="7504"  product-id="24737" /> <!-- 0x1d50 / 0x60a1  -->
+
+    <!-- ── Airspy HF+ / HF+ Discovery ── -->
+    <usb-device vendor-id="1003"  product-id="32780" /> <!-- 0x03eb / 0x800c  -->
+
+    <!-- ── LimeSDR USB / Mini ── -->
+    <usb-device vendor-id="7504"  product-id="24840" /> <!-- 0x1d50 / 0x6108  LimeSDR-USB -->
+    <usb-device vendor-id="11881" product-id="24587" /> <!-- 0x2e6f / 0x600b  LimeSDR Mini -->
+
+    <!-- ── bladeRF (x40/x115 + 2.0 micro) ── -->
+    <usb-device vendor-id="11504" product-id="21062" /> <!-- 0x2cf0 / 0x5246  bladeRF1 -->
+    <usb-device vendor-id="11504" product-id="21072" /> <!-- 0x2cf0 / 0x5250  bladeRF2 micro -->
+
+    <!-- ── ADALM-PlutoSDR ── -->
+    <usb-device vendor-id="1110"  product-id="46707" /> <!-- 0x0456 / 0xb673  PlutoSDR -->
+
+    <!-- ── SDRplay RSP1A / RSPdx ── -->
+    <usb-device vendor-id="7671"  product-id="12288" /> <!-- 0x1df7 / 0x3000  RSP1A -->
+    <usb-device vendor-id="7671"  product-id="12544" /> <!-- 0x1df7 / 0x3100  RSPdx -->
+</resources>
