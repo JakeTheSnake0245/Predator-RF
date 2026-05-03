@@ -26,10 +26,57 @@ The headline metric we optimize for is:
 > **Operator-hours per actionable, time-sensitive SIGINT report
 > delivered to the commander or fires/maneuver pipeline.**
 
-Lower is better. Every architectural choice — Rust agent for transport
-multiplexing, role-composable nodes, priority-weighted retention,
-deferred PKI, manual selective exfil — is justified by its impact on
-that ratio.
+Lower is better. Every architectural choice — Kujhad HTTP wire
+contract, role-composable nodes, priority-weighted retention,
+deferred in-app PKI, manual selective exfil — is justified by its
+impact on that ratio.
+
+---
+
+## 1.5 Implementation Status (snapshot)
+
+This is what already exists in the repo as of this revision. Use it
+as the baseline; do not re-plan around features that ship.
+
+**C++ Android (in `core/`, `decoder_modules/`, `android/`)**
+- Predator RF rebrand, spectrum-first shell, mission tabs, hits/events
+  workflow, baseline tab + scan-against-baseline (v1.3.0)
+- Kujhad Fleet console (7th tab) — hub-and-spoke peer linking with TLS
+- ATAK CoT export (v1.2.0)
+- Live spectrum mirroring + hit/marker overlays between fleet peers
+- Native RTL433 ingestion (`predator::Rtl433Ingester`)
+- DSD-FME P25 decoder bridge with always-on DSP chain (freeze fix)
+- Decoder Bridges shell (P25 P1+P2, RTL433, POCSAG/FLEX, ADS-B, AIS)
+
+**Python backend (in `backend/`, ~3.6k LOC)**
+- `models/`: `RFEvent`, `EmitterTrack`, `SensorNodeTrust`
+- `fusion/`: `HardwareAwareAssociator`, `TrackManager`,
+  `ConfidenceEngine`, `TDOACoordinator`
+- `intelligence/`: 6-method `AnomalyDetector`, `RFBaseline`
+  (24 h learning), `DecisionEngine`
+- `sensor/`: `HardwareAdaptiveDSP`, RTL/HackRF/Soapy interfaces,
+  `HardwareCapabilities` registry, calibration scaffolding
+- `coordination/`: `KujhadClient` async fleet poller
+- `api/`: FastAPI server with `/tracks`, `/nodes`, `/events`,
+  `/assessments`, `/health`
+- `main.py`: orchestrator wiring it all together
+
+**Build / deploy**
+- `build_linux.sh` — Ubuntu/Debian/Fedora/Arch turnkey installer
+- `Dockerfile.backend` + `docker-compose.yml` (backend + Postgres + InfluxDB)
+
+**Known gaps to fill (candidates for next code commits)**
+- `decoder_registry` / `detector_registry` are abstract bases only;
+  no concrete decoder/detector implementations registered yet
+- No end-to-end smoke test of the backend pipeline
+- Backend has not been booted against a real or mocked Kujhad node
+- C++ side does not yet emit `/v1/events` in the schema the Python
+  `KujhadClient` expects (needs verification)
+- No `replit.md` section yet describing path-1 architecture for
+  future agents
+- Calibration module is scaffolded but not exercised
+- Multi-baseline support on the Python side (matches the C++ Baseline
+  tab v1.3.0 work)
 
 ---
 
@@ -165,14 +212,36 @@ resources. Common configurations:
 | Vehicle TOC laptop                  | OPERATOR + RELAY (+ SENSOR optional) |
 | Headless aggregation server         | RELAY                      |
 
-### 4.2 Cross-Cutting: the Predator Agent
+### 4.2 Cross-Cutting: the Kujhad Fleet API + Python Backend
 
-Every node — regardless of which roles it carries — runs an instance
-of the Predator agent (Rust, separate process). The agent is the
-*only* component that touches the network. The C++ core, the UI, and
-any role-specific service all talk to their **local** agent over a
-loopback / Unix socket and are unaware of which transports are in
-play. Document 2 details this.
+Every C++ node (phone or Pi) exposes the **Kujhad Fleet HTTP API**
+(`/v1/identify`, `/v1/gps`, `/v1/state`, `/v1/events?since=`,
+`/v1/command`) over TLS with a per-node API key. This is the wire
+contract between sensors and any operator-side intelligence layer.
+
+A **Python intelligence backend** (FastAPI + asyncio, in `backend/`)
+runs on the operator's device or vehicle TOC and:
+
+- polls every fleet node's `/v1/events` over `KujhadClient`
+- fuses incoming `RFEvent`s into `EmitterTrack`s via
+  `HardwareAwareAssociator` and `TrackManager`
+- runs the 6-method `AnomalyDetector` against each updated track
+- produces `AssessmentReport`s via `DecisionEngine`
+- exposes everything to the operator UI over its own REST/SSE API
+  (`/api/v1/tracks`, `/nodes`, `/events`, `/assessments`)
+
+Optional persistence: PostgreSQL (track history) and InfluxDB
+(time-series RF events, 30 d retention) via the shipped
+`docker-compose.yml`. Persistence is opt-in — the backend works
+in-memory for lone-wolf and tactical deployments.
+
+Multi-transport (RNS/LoRa, mesh failover) is a future addition that
+sits **under** the Kujhad HTTP layer (e.g., a transport-multiplexer
+agent that exposes the same HTTP surface over alternate carriers).
+v1 ships with TCP/TLS over IP only.
+
+Document 2 details the wire protocol, SensorNodeTrust model, and the
+backend's internal architecture.
 
 ---
 
@@ -304,37 +373,49 @@ explicitly out of MVP scope (see section 9).
 These are non-negotiable for the v1 platform release. They derive
 directly from the vignettes and from customer requirements.
 
-1. **Multi-transport agent (RTAK-V2 model).** Auto-discovery and
-   transport-multiplexing across IP first, RNS second. The operator
-   never configures transports manually beyond initial setup.
+1. **Kujhad Fleet API is the wire contract.** Every SENSOR node
+   exposes `/v1/identify`, `/v1/gps`, `/v1/state`, `/v1/events?since=`,
+   `/v1/command` over TLS with per-node API key. The Python backend
+   is the canonical client; third-party clients are welcome to use
+   the same API. v1 ships TCP/TLS over IP only; multi-transport
+   (RNS/LoRa) is post-MVP and slots in **under** the HTTP layer.
 2. **Phone runs without an SDR.** The OPERATOR role is fully
    functional with no local DSP. Vignette 3.3 must work end to end.
 3. **Manual selective exfil to higher.** Operator can tag any marker
    or out-of-baseline hit and push it to a CoT destination in 30 s
-   or less. Audit trail is automatic.
+   or less. Audit trail is automatic. (CoT export already shipped
+   on the C++ side in v1.2.0.)
 4. **CoT export.** First-class output format for both interactive
    exfil and bulk file dumps. Compatibility validated against at
    least one real TAK federate.
-5. **Priority-weighted retention.** RELAY nodes age events out by
-   priority class first, wall-clock second. High-value signals
+5. **Priority-weighted retention.** When persistence is enabled
+   (PostgreSQL + InfluxDB via `docker-compose.yml`), events age out
+   by priority class first, wall-clock second. High-value signals
    (encrypted P25, mil air, anomalous emitters, manually flagged)
    persist far longer than routine traffic (commercial ADS-B,
-   broadcast FM, NOAA wx). Class weights are config-driven, not
-   code-driven. Defaults shipped per `docs/5_retention_policy.md`.
+   broadcast FM, NOAA wx). Class weights are config-driven. Defaults
+   shipped per `docs/5_retention_policy.md`. In-memory mode (no
+   docker stack) is the default for lone-wolf / tactical deployments.
 6. **Heterogeneous sensor fleet.** A deployment may mix RTL-SDR and
    HackRF, Pi 4 and Pi 5 and Zero 2W, with and without GPS HATs, and
    the platform handles it without manual per-node tuning.
+   `SensorNodeTrust` carries hardware-aware sensitivity, frequency
+   stability, and timing trust factors derived from the
+   `HardwareCapabilities` registry.
 7. **Position and time on every event.** No event leaves a SENSOR
    without `(lat, lon, alt, t_utc, pos_uncertainty_m,
-   t_uncertainty_us, node_id)`.
-8. **Trust deferred to overlay.** v1 ships without per-node PKI; the
-   operator's "Accept" at enrollment plus the chosen network overlay
-   (none / VLAN / RNS) is the trust boundary. The platform makes this
-   explicit and auditable.
+   t_uncertainty_us, node_id)`. `RFEvent` already carries
+   `node_lat/node_lon/node_alt_m/timestamp_ns/node_id`.
+8. **Trust at two layers.** Per-node API key + TLS at the Kujhad
+   layer (already shipped). Network overlay (none / VLAN / RNS /
+   ZeroTier) chosen per deployment. v1 ships **without** an in-app
+   certificate authority; enrollment is operator "Accept" + key
+   exchange. Document 2 details the threat model.
 9. **Graceful degradation.** Loss of any single node — including the
    operator phone, including any RELAY — must not take down the
    platform. Lone-wolf vignette is a corollary: zero peers = a
-   working platform.
+   working platform. Backend runs in-memory with no docker stack;
+   degrades to Android-only standalone if the backend is offline.
 
 ---
 
@@ -344,16 +425,17 @@ These are deliberately out of scope. Each may become in-scope later,
 but only after the MVP commitments are concrete and tested.
 
 - **Auto-exfil.** Algorithmic decisions to push a marker to higher
-  without operator involvement. Operator-in-the-loop is a customer
-  requirement.
-- **In-app PKI / certificate authority.** Trust is at the overlay
-  layer in v1. App-layer per-node certs come in v2.
-- **Six-method anomaly detection / RF baseline learning.** Interesting
-  but premature. The operator's manual flag is the v1 anomaly
-  signal. Algorithmic anomaly auto-flag is purely additive later.
-- **TDOA geolocation.** Designed for (GPS HAT spec is in BOM Tier 2)
-  but not implemented in v1. Requires multi-node PPS time sync that
-  is realistic only for Pi-class nodes; phone GPS NMEA is too coarse.
+  without operator involvement. The `DecisionEngine` produces
+  `AssessmentReport`s and may set `escalate_to_atak=True`, but actual
+  CoT transmission is always operator-initiated in v1.
+- **In-app PKI / certificate authority.** Per-node API keys + TLS are
+  the v1 trust mechanism. An app-managed CA with rotation/revocation
+  is v2.
+- **TDOA geolocation in production.** `TDOACoordinator` exists in
+  the backend and the BOM hedges for it (GPS HAT spec in Tier 2),
+  but production-grade multi-node TDOA needs PPS time sync that is
+  realistic only for Pi-class nodes. v1 ships TDOA as **opt-in
+  experimental**, not a default workflow.
 - **TX / direction-finding / jamming / EW.** Predator is RX-only,
   log-and-map-only. Any TX capability of carried hardware (HackRF)
   is disabled in firmware-equivalent fashion.
@@ -362,6 +444,9 @@ but only after the MVP commitments are concrete and tested.
   if a customer asks for it explicitly.
 - **Decoder algorithm research.** We adapt existing decoders
   (DSD-FME, RTL433, dump1090, etc.). New decoder R&D is out of scope.
+- **Multi-transport agent (RNS / LoRa).** Wire contract is HTTP/TLS
+  over IP in v1. Alternate transports slot in below the Kujhad API
+  in a later release.
 
 ---
 
@@ -374,12 +459,17 @@ but only after the MVP commitments are concrete and tested.
 | AO              | Area of operations.                                                       |
 | Higher          | The echelon above the operator: TOC, fires cell, intel section, etc.     |
 | TAK / CoT       | Team Awareness Kit / Cursor on Target — open tactical comms ecosystem.   |
-| RTAK-V2         | Reticulum-TAK V2 (FAU C2A2). Reference for multi-transport plug-in model.|
-| RNS             | Reticulum Network Stack — transport-agnostic mesh networking.            |
+| Kujhad Fleet API| The HTTP/TLS contract every C++ node exposes. See section 4.2 + doc 2.   |
+| Backend         | The Python intelligence layer in `backend/`. See section 4.2 + doc 2.    |
+| RFEvent         | Atomic detection from one node: freq, power, SNR, time, position, IDs.   |
+| EmitterTrack    | Time-aggregated emitter formed by associating RFEvents.                  |
+| SensorNodeTrust | Backend's hardware-aware trust model for one node. See `backend/models/`.|
+| AnomalyDetector | Six-method anomaly screen on each updated track.                         |
+| AssessmentReport| `DecisionEngine` output: threat level, confidence, recommended action.   |
 | OPERATOR        | Predator role: UI + tasking + exfil. See section 4.                      |
 | SENSOR          | Predator role: DSP + decoders + event publish. See section 4.            |
 | RELAY           | Predator role: store-and-forward + federation + retention. See section 4.|
-| Agent           | The Rust process on every node that handles all networking. See doc 2.   |
 | Marker          | Promoted track presented to the operator on the map.                     |
 | Selective exfil | Operator-initiated push of a marker / hit to higher.                     |
 | Tier 1/2/3 BOM  | Hardware shopping lists. See section 5.                                  |
+| RTAK-V2 / RNS   | *Post-MVP reference for multi-transport.* Not in v1.                     |
