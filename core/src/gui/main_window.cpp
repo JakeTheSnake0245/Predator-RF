@@ -6141,9 +6141,15 @@ void MainWindow::draw() {
 
             // ── Frequency Ranges ─────────────────────────────────────────────
             if (ImGui::CollapsingHeader(T("Frequency Ranges"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                // Range name — tap to open keyboard-safe popup above the soft keyboard
+                // Range name — tap to open keyboard-safe popup above the soft keyboard.
+                // CRITICAL: each button's ID is hashed from its visible label. The
+                // Start/Stop previews both render as "0 Hz" in the cleared state,
+                // which produces an ID COLLISION between the two buttons (taps fire
+                // the wrong widget or nothing at all). PushID with a stable string
+                // pins the IDs so the dynamic label is for display only.
                 ImGui::TextDisabled("%s", T("Range Name"));
                 {
+                    ImGui::PushID("##bl_range_name_btn");
                     char* nameDst = blNewRangeName; int nameSz = (int)sizeof(blNewRangeName);
                     const char* namePreview = strlen(blNewRangeName) > 0 ? blNewRangeName : T("(tap to set name)");
                     if (ImGui::Button(namePreview, ImVec2(fw, 0))) {
@@ -6152,10 +6158,12 @@ void MainWindow::draw() {
                                 snprintf(nameDst, nameSz, "%s", s.c_str());
                             });
                     }
+                    ImGui::PopID();
                 }
                 // Start / Stop Hz — use popup so the keyboard doesn't cover the field
                 ImGui::TextDisabled("%s", T("Start Hz"));
                 {
+                    ImGui::PushID("##bl_range_start_btn");
                     double* startDst = &blNewRangeStart;
                     char startPreview[48];
                     snprintf(startPreview, sizeof(startPreview), "%.0f Hz", blNewRangeStart);
@@ -6166,10 +6174,12 @@ void MainWindow::draw() {
                                 try { *startDst = std::stod(s); } catch (...) {}
                             });
                     }
+                    ImGui::PopID();
                 }
                 ImGui::SameLine(0, 4.0f * style::uiScale);
                 ImGui::TextDisabled("%s", T("Stop Hz"));
                 {
+                    ImGui::PushID("##bl_range_stop_btn");
                     double* stopDst = &blNewRangeStop;
                     char stopPreview[48];
                     snprintf(stopPreview, sizeof(stopPreview), "%.0f Hz", blNewRangeStop);
@@ -6180,6 +6190,7 @@ void MainWindow::draw() {
                                 try { *stopDst = std::stod(s); } catch (...) {}
                             });
                     }
+                    ImGui::PopID();
                 }
                 if (ImGui::Button(T("From Current View##bl"), ImVec2(fw, 0))) {
                     double ctr = gui::waterfall.getCenterFrequency();
@@ -6239,6 +6250,11 @@ void MainWindow::draw() {
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", T("Output filename (leave blank for auto)"));
                 {
+                    // Same dynamic-label-collision class as the Range
+                    // Name/Start/Stop buttons above — pin the ID so the
+                    // displayed text can change without thrashing ImGui's
+                    // per-frame widget state.
+                    ImGui::PushID("##bl_custom_name_btn");
                     char* cnameDst = blCustomName; int cnameSz = (int)sizeof(blCustomName);
                     const char* cnamePreview = strlen(blCustomName) > 0 ? blCustomName : T("(tap to set custom filename)");
                     if (ImGui::Button(cnamePreview, ImVec2(fw, 0))) {
@@ -6247,6 +6263,7 @@ void MainWindow::draw() {
                                 snprintf(cnameDst, cnameSz, "%s", s.c_str());
                             });
                     }
+                    ImGui::PopID();
                 }
                 if (strlen(blCustomName) == 0) {
                     std::string hint = "  " + blDefaultFilename();
