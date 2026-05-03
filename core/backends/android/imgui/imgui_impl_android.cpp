@@ -70,7 +70,15 @@ static char                                     g_LogTag[] = "ImGuiExample";
 // ImGui context and one input thread on Android.
 namespace {
     constexpr int    kMaxPointers       = 2;
-    constexpr float  kTapSlopPx         = 24.0f;   // ≈ 6 mm at 160 dpi base
+    // Floor for tap-vs-drag slop in raw pixels. The actual slop used at
+    // runtime is max(this, ImGui::GetIO().MouseDragThreshold) so we stay
+    // in lockstep with style::applyTouchFriendlyTweaks() which sets the
+    // ImGui drag threshold to 20*uiScale (≈60 px on Android). Without
+    // syncing, our synthesizer commits a "drag" at 24 px while ImGui
+    // itself would still call it a click — so a tap inside a sub-menu
+    // panel gets eaten by the parent window's scroll handler before the
+    // child widget ever sees a click.
+    constexpr float  kTapSlopFloorPx    = 24.0f;
     constexpr float  kPinchDeadZonePx   = 12.0f;
     constexpr float  kPinchScaleDivisor = 60.0f;   // raw px per wheel tick
     constexpr double kLongPressSec      = 0.5;
@@ -122,6 +130,10 @@ namespace {
         for (int i = 0; i < kMaxPointers; ++i) s_Pointers[i] = TouchPointer{};
         s_PinchActive       = false;
         s_LastPinchDistance = 0.f;
+    }
+    inline float effective_tap_slop_px() {
+        float t = ImGui::GetIO().MouseDragThreshold;
+        return (t > kTapSlopFloorPx) ? t : kTapSlopFloorPx;
     }
 }
 
@@ -361,7 +373,11 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(AInputEvent* input_event)
         }
 
         case AMOTION_EVENT_ACTION_MOVE: {
-            // Update every active pointer using the latest sample.
+            // Slop is dynamic — see kTapSlopFloorPx note. Sampled once per
+            // event so all pointers in the same MotionEvent see the same
+            // threshold.
+            const float slop = effective_tap_slop_px();
+            const float slopSq = slop * slop;
             const int sampleCount = AMotionEvent_getPointerCount(input_event);
             for (int i = 0; i < sampleCount; ++i) {
                 int32_t pid = AMotionEvent_getPointerId(input_event, i);
@@ -373,7 +389,7 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(AInputEvent* input_event)
                 s_Pointers[slot].curY = y;
                 float dx = x - s_Pointers[slot].downX;
                 float dy = y - s_Pointers[slot].downY;
-                if (dx*dx + dy*dy > kTapSlopPx * kTapSlopPx)
+                if (dx*dx + dy*dy > slopSq)
                     s_Pointers[slot].movedPastSlop = true;
             }
 

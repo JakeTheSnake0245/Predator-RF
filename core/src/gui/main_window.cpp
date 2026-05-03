@@ -216,6 +216,17 @@ void MainWindow::init() {
     gui::waterfall.selectFirstVFO();
 
     menuWidth = core::configManager.conf["menuWidth"];
+    // The default menuWidth (300) is tuned for a desktop with uiScale=1.
+    // On Android uiScale=3 makes every widget inside the menu panel 3x
+    // larger, so a 300-px panel forces labels/sliders/dropdowns to spill
+    // off the right edge — which is exactly what makes the operator have
+    // to swipe the panel left to reach controls. Floor it at 300*uiScale
+    // (≈900 px on a 3x phone) so the panel always fits its scaled-up
+    // contents. Users can still drag it wider; this is a minimum.
+    if (backend::isTouchPrimary() || style::uiScale > 1.0001f) {
+        int touchMin = (int)(300.0f * style::uiScale);
+        if (menuWidth < touchMin) menuWidth = touchMin;
+    }
     newWidth = menuWidth;
 
     fftHeight = core::configManager.conf["fftHeight"];
@@ -3656,7 +3667,10 @@ void MainWindow::draw() {
                     float hitListH = std::min<float>((float)hitOrder.size(), 5.0f) *
                                      (ImGui::GetTextLineHeightWithSpacing() * 4.5f + 6.0f * style::uiScale);
                     hitListH = std::max(hitListH, 120.0f * style::uiScale);
-                    ImGui::BeginChild("##hit_list_scroll", ImVec2(0, hitListH), false, ImGuiWindowFlags_HorizontalScrollbar);
+                    // No HorizontalScrollbar flag — long hit labels truncate
+                    // / wrap rather than forcing the operator to swipe the
+                    // child sideways. Vertical scroll is always allowed.
+                    ImGui::BeginChild("##hit_list_scroll", ImVec2(0, hitListH), false, 0);
                     std::sort(hitOrder.begin(), hitOrder.end(), [&](int a, int b) {
                         switch (predatorHitSortMode) {
                         case 1:
