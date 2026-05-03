@@ -32,6 +32,14 @@ class RFEvent:
 
     event_id: str = field(default_factory=lambda: _gen_id())
 
+    # CoC provenance: when set, this event was relayed from an upstream
+    # backend (typically a field station that the local CoC workstation
+    # is aggregating). Carried end-to-end through TrackManager,
+    # persistence, SSE, and CoT so the operator can tell origin and so
+    # downstream dedup can avoid double-counting an emitter heard by
+    # both the local fleet and a peer station.
+    upstream_source: Optional[str] = None
+
     def to_dict(self) -> dict:
         return {
             "event_id": self.event_id,
@@ -48,6 +56,7 @@ class RFEvent:
             "protocol": self.protocol,
             "node_lat": self.node_lat,
             "node_lon": self.node_lon,
+            "upstream_source": self.upstream_source,
         }
 
 

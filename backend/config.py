@@ -115,6 +115,23 @@ class BackendConfig:
     shutdown_drain_timeout_s: float = field(
         default_factory=lambda: _env_float("SHUTDOWN_DRAIN_TIMEOUT_S", 5.0))
 
+    # ── CoC (Center of Control) mode ───────────────────────────────────────
+    # When enabled, the backend additionally consumes events from one or
+    # more upstream Predator-RF backends via their SSE feed. Lets a TOC
+    # workstation aggregate SIGINT from several deployed field stations.
+    # Off by default — a normal field deployment doesn't need it.
+    coc_mode_enabled: bool = field(
+        default_factory=lambda: _env_bool("COC_MODE_ENABLED", False))
+    # CSV of upstream base URLs (no trailing /api/v1).
+    # Example: "http://station-alpha:8000,http://station-bravo:8000"
+    coc_upstream_urls: str = field(
+        default_factory=lambda: _env("COC_UPSTREAM_URLS", ""))
+    coc_reconnect_delay_s: float = field(
+        default_factory=lambda: _env_float("COC_RECONNECT_DELAY_S", 5.0))
+
+    def parse_coc_upstream_urls(self):
+        return [u.strip() for u in self.coc_upstream_urls.split(",") if u.strip()]
+
     def parse_fleet_nodes(self):
         """Parse FLEET_NODES CSV into SensorNodeTrust objects."""
         from backend.models.sensor_node import SensorNodeTrust
