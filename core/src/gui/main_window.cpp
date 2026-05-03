@@ -5977,6 +5977,12 @@ void MainWindow::draw() {
                 static int         eBitrateHint = 0;        // 0 = leave unset
                 static int         eAnnounceInt = 0;        // 0 = leave unset
                 static bool        eOutgoing    = true;
+                // Reticulum Interface Access Code (IFAC). Only takes
+                // effect when both eIfacNetname and eIfacNetkey are
+                // non-empty; eIfacSize=0 means leave at RNS default.
+                static int         eIfacSize    = 0;
+                static char        eIfacNetname[64]  = "";
+                static char        eIfacNetkey[128]  = "";
                 // Advanced KISS / AX.25 fields.
                 static int         eDataBits    = 8;
                 static int         eParityIdx   = 0;        // none/even/odd
@@ -6085,6 +6091,8 @@ void MainWindow::draw() {
                     ePeers[0] = 0;
                     eMode = 0; eBitrateHint = 0; eAnnounceInt = 0;
                     eOutgoing = true;
+                    eIfacSize = 0;
+                    eIfacNetname[0] = 0; eIfacNetkey[0] = 0;
                     eDataBits = 8; eParityIdx = 0; eStopBits = 1;
                     ePreambleMs = 150; eTxTailMs = 10; ePersist = 200;
                     eSlotMs = 20; eFlowCtl = false;
@@ -6207,6 +6215,15 @@ void MainWindow::draw() {
                         eBitrateHint = entry["bitrate_hint_bps"];
                     if (entry.contains("announce_interval_s"))
                         eAnnounceInt = entry["announce_interval_s"];
+                    if (entry.contains("ifac_size")) eIfacSize = entry["ifac_size"];
+                    if (entry.contains("ifac_netname"))
+                        std::strncpy(eIfacNetname, entry["ifac_netname"]
+                                     .get<std::string>().c_str(),
+                                     sizeof(eIfacNetname) - 1);
+                    if (entry.contains("ifac_netkey"))
+                        std::strncpy(eIfacNetkey, entry["ifac_netkey"]
+                                     .get<std::string>().c_str(),
+                                     sizeof(eIfacNetkey) - 1);
                     // KISS/AX.25 advanced.
                     if (entry.contains("databits")) eDataBits = entry["databits"];
                     if (entry.contains("parity")) {
@@ -6255,6 +6272,13 @@ void MainWindow::draw() {
                     e["outgoing"] = eOutgoing;
                     if (eBitrateHint > 0) e["bitrate_hint_bps"] = eBitrateHint;
                     if (eAnnounceInt > 0) e["announce_interval_s"] = eAnnounceInt;
+                    // IFAC: only emit when netname AND netkey are
+                    // both set (RNS requires both to take effect).
+                    if (eIfacNetname[0] && eIfacNetkey[0]) {
+                        if (eIfacSize > 0) e["ifac_size"] = eIfacSize;
+                        e["ifac_netname"] = std::string(eIfacNetname);
+                        e["ifac_netkey"] = std::string(eIfacNetkey);
+                    }
                     const std::string t = kTypeNames[rnsEditTypeIdx];
                     if (t == "tcp_client") {
                         e["target_host"] = std::string(eHost);
@@ -6508,6 +6532,18 @@ void MainWindow::draw() {
                                     &eBitrateHint);
                     ImGui::InputInt(T("Announce interval s (0=default)##rns_e"),
                                     &eAnnounceInt);
+                    // IFAC (Interface Access Code) — Reticulum
+                    // pre-shared-key gate. Both netname and netkey
+                    // must be set for it to take effect; size in
+                    // bytes 8..512 (0 = RNS default).
+                    ImGui::TextDisabled(T("IFAC (pre-shared, both fields required)"));
+                    ImGui::InputText(T("IFAC netname##rns_e"),
+                                     eIfacNetname, sizeof(eIfacNetname));
+                    ImGui::InputText(T("IFAC netkey (passphrase)##rns_e"),
+                                     eIfacNetkey, sizeof(eIfacNetkey),
+                                     ImGuiInputTextFlags_Password);
+                    ImGui::InputInt(T("IFAC size bytes (0=default, 8..512)##rns_e"),
+                                    &eIfacSize);
                     ImGui::Separator();
                     const std::string t = kTypeNames[rnsEditTypeIdx];
                     if (t == "tcp_client") {
