@@ -40,6 +40,7 @@ class AssessmentReport:
             "anomaly_flags": [f.description for f in self.anomaly_flags],
             "summary": self.summary,
             "recommended_action": self.recommended_action,
+            "recommended_nodes": list(self.recommended_nodes),
             "escalate_to_atak": self.escalate_to_atak,
         }
 

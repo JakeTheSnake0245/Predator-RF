@@ -1230,7 +1230,9 @@
       while (el.children.length > 8) el.removeChild(el.lastChild);
     }
     pushEvent(); pushEvent(); pushEvent();
-    setInterval(pushEvent, 2000);
+    // Capture handle so the live wire-up (below) can replace the mock
+    // ticker with a real EventSource subscription when the backend is up.
+    window.__mockEventTimer = setInterval(pushEvent, 2000);
 
     // -------- mode buttons --------
     document.querySelectorAll('.mode-btn').forEach(b => {
@@ -1239,6 +1241,247 @@
         b.classList.add('active');
       });
     });
+  </script>
+
+  <!--
+    ════════════════════════════════════════════════════════════════════════
+    LIVE WIRE-UP — replaces the mock data above with real data from the
+    Python backend (FastAPI on /api/v1/*) when reachable. If the backend
+    isn't running or returns an error, the original mock demo keeps going,
+    so this file remains usable as a standalone design preview.
+
+    Configurable backend URL:
+      * Default: same-origin (works behind a reverse proxy)
+      * Override: append ?backend=http://host:port to the URL
+                  or set window.PREDATOR_BACKEND before this script runs
+    ════════════════════════════════════════════════════════════════════════
+  -->
+  <script>
+  (function () {
+    const params = new URLSearchParams(window.location.search);
+    const BACKEND = (params.get('backend')
+                      || window.PREDATOR_BACKEND
+                      || '').replace(/\/+$/, '');
+    const API = (path) => `${BACKEND}/api/v1${path}`;
+    const POLL_MS = 3000;
+    const EV_MAX = 12;
+
+    const tagFor = (ev) => {
+      if (ev.protocol) return 'DEC';
+      if (ev.detector === 'fft_peak') return 'HIT';
+      return 'EVT';
+    };
+    const colors = { HIT: 'var(--accent)', DEC: 'var(--cyan)',
+                     EVT: 'var(--magenta)', SCAN: 'var(--warn)' };
+    const fmtMHz = (hz) => (Number(hz) / 1e6).toFixed(4) + ' MHz';
+    const fmtTs = (ns) => {
+      try { return new Date(Number(ns) / 1e6).toTimeString().slice(0, 8); }
+      catch (_) { return '--:--:--'; }
+    };
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    function pushLiveEvent(ev) {
+      const el = document.getElementById('liveEvents');
+      if (!el) return;
+      const tag = tagFor(ev);
+      const t = fmtTs(ev.timestamp_ns);
+      const detail = `${fmtMHz(ev.frequency)} · ${Number(ev.power_dbfs).toFixed(0)} dBFS`
+        + (ev.modulation ? ` · ${esc(ev.modulation)}` : '')
+        + (ev.protocol ? ` · ${esc(ev.protocol)}` : '')
+        + (ev.node_id ? ` · ${esc(ev.node_id)}` : '');
+      const row = document.createElement('div');
+      row.className = 'ev-row';
+      row.innerHTML = `<span class="t">${t}</span>`
+        + `<span class="e"><b style="color:${colors[tag]}">${tag}</b> ${detail}</span>`;
+      el.insertBefore(row, el.firstChild);
+      while (el.children.length > EV_MAX) el.removeChild(el.lastChild);
+    }
+
+    function renderHits(tracks) {
+      const body = document.querySelector('[data-panel="hits"] .panel-body');
+      if (!body) return;
+      const sub = document.querySelector('[data-panel="hits"] .panel-head .subtitle');
+      if (sub) sub.textContent =
+        `${tracks.length} tracks · sorted by last seen · live`;
+      const stateClass = (lvl) => ({
+        critical: 'exclude', high: 'exclude', medium: 'unknown',
+        low: 'unknown', unknown: 'unknown'
+      })[lvl] || 'target';
+      const head = `<div class="hit-row head">
+        <div></div><div>EMITTER</div><div>FREQ</div><div>RSSI</div>
+        <div>STATE</div><div>ACTIONS</div></div>`;
+      const rows = tracks.slice(0, 50).map(t => `
+        <div class="hit-row">
+          <div class="state ${stateClass(t.threat_level)}"></div>
+          <div>${esc(t.emitter_id).slice(0, 8)}
+            <span style="color:var(--text-faint)">— ${esc(t.modulation || 'unknown')} ·
+              ${t.observation_count || 0} obs · conf ${(t.confidence || 0).toFixed(2)}</span></div>
+          <div class="freq">${fmtMHz(t.primary_frequency)}</div>
+          <div class="rssi">${Number(t.last_power_dbfs || 0).toFixed(0)} dBFS</div>
+          <div class="dec">${esc(t.state || '-')}</div>
+          <div class="actions">
+            <button class="btn" data-tune="${esc(t.primary_frequency)}">Tune</button>
+            <button class="btn">View</button>
+          </div>
+        </div>`).join('');
+      body.innerHTML = head + (rows
+        || '<div style="padding:24px;color:var(--text-faint)">No tracks yet — backend connected, waiting for emitters.</div>');
+    }
+
+    function renderNetwork(tracks) {
+      const body = document.querySelector('[data-panel="network"] .panel-body');
+      if (!body) return;
+      // Group tracks by modulation (proxy for protocol)
+      const groups = {};
+      tracks.forEach(t => {
+        const k = t.modulation || t.protocol || 'unknown';
+        (groups[k] = groups[k] || []).push(t);
+      });
+      const protos = Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+      const sub = document.querySelector('[data-panel="network"] .panel-head .subtitle');
+      if (sub) sub.textContent =
+        `${protos.length} protocols · ${tracks.length} tracks · live`;
+      body.innerHTML = `<div class="tree">${protos.map(([p, ts]) => `
+        <div class="tree-node">
+          <div class="row">
+            <span class="twist">▼</span>
+            <span class="dot on"></span>
+            <span class="label proto">${esc(p).toUpperCase()}</span>
+            <span class="meta">${ts.length} track${ts.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="tree-children">
+            ${ts.slice(0, 12).map(t => `
+              <div class="tree-node">
+                <div class="row">
+                  <span class="twist">·</span>
+                  <span class="label tg">${esc(t.emitter_id).slice(0, 8)}</span>
+                  <span class="meta">${fmtMHz(t.primary_frequency)} ·
+                    ${Number(t.last_power_dbfs || 0).toFixed(0)} dBFS ·
+                    ${t.observation_count || 0} obs ·
+                    ${esc(t.threat_level || 'unknown')}</span>
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>`).join('') || '<div style="padding:24px;color:var(--text-faint)">No protocols observed yet.</div>'}</div>`;
+    }
+
+    function renderKujhad(nodes) {
+      const body = document.querySelector('[data-panel="kujhad"] .panel-body');
+      if (!body) return;
+      const sub = document.querySelector('[data-panel="kujhad"] .panel-head .subtitle');
+      if (sub) sub.textContent = `${nodes.length} node${nodes.length === 1 ? '' : 's'} in fleet · live`;
+      const cards = nodes.map(n => `
+        <div style="border:1px solid var(--line-2);background:var(--bg-1);
+                    padding:12px 14px;margin-bottom:10px;border-radius:4px;">
+          <div style="display:flex;align-items:baseline;gap:12px;">
+            <b style="color:var(--accent)">${esc(n.node_id || '?')}</b>
+            <span style="color:var(--text-faint)">${esc(n.hardware_code || 'unknown')}</span>
+            <span class="pill">trust ${Number(n.trust_score || 0).toFixed(2)}</span>
+            ${n.location_gps ? `<span class="pill">GPS</span>` : ''}
+            ${n.can_do_tdoa ? `<span class="pill">TDOA</span>` : ''}
+            <div style="flex:1"></div>
+            <span style="color:var(--text-faint);font-size:11px;">
+              ${esc(n.kujhad_host || '')}:${esc(n.kujhad_port || '')}</span>
+          </div>
+          <div style="margin-top:6px;color:var(--text-faint);font-size:12px;">
+            obs ${n.total_observations || 0} ·
+            decoders [${(n.available_decoders || []).map(esc).join(', ') || '—'}] ·
+            mission ${n.mission_mode_active ? 'ACTIVE' : 'idle'}
+          </div>
+        </div>`).join('');
+      body.innerHTML = cards
+        || '<div style="padding:24px;color:var(--text-faint)">No nodes registered. Set FLEET_NODES in the backend env.</div>';
+    }
+
+    function renderSystem(stats) {
+      const body = document.querySelector('[data-panel="system"] .panel-body');
+      if (!body) return;
+      body.innerHTML = `
+        <div style="padding:14px 18px;font-family:var(--mono);font-size:13px;line-height:1.7;">
+          <div><b style="color:var(--accent)">Backend</b>: connected
+            (<span style="color:var(--text-faint)">${esc(BACKEND || 'same-origin')}</span>)</div>
+          <div><b style="color:var(--accent)">Tracks</b>: ${stats.tracks} active</div>
+          <div><b style="color:var(--accent)">Nodes</b>: ${stats.nodes} in fleet</div>
+          <div><b style="color:var(--accent)">Events</b>: ${stats.events} streamed this session</div>
+          <div><b style="color:var(--accent)">Last update</b>: ${new Date().toLocaleTimeString()}</div>
+        </div>`;
+    }
+
+    let evCount = 0;
+
+    async function probe() {
+      try {
+        const r = await fetch(API('/nodes/'), { cache: 'no-store' });
+        return r.ok;
+      } catch (_) { return false; }
+    }
+
+    async function pollOnce() {
+      const sysStats = { tracks: 0, nodes: 0, events: evCount };
+      try {
+        const [tr, nd] = await Promise.all([
+          fetch(API('/tracks/'), { cache: 'no-store' }).then(r => r.json()).catch(() => []),
+          fetch(API('/nodes/'),  { cache: 'no-store' }).then(r => r.json()).catch(() => []),
+        ]);
+        const tracks = Array.isArray(tr) ? tr : (tr.tracks || []);
+        const nodes  = Array.isArray(nd) ? nd : (nd.nodes  || []);
+        sysStats.tracks = tracks.length;
+        sysStats.nodes  = nodes.length;
+        renderHits(tracks);
+        renderNetwork(tracks);
+        renderKujhad(nodes);
+        renderSystem(sysStats);
+      } catch (e) {
+        console.warn('[predator-live] poll failed:', e);
+      }
+    }
+
+    function startEventStream() {
+      if (typeof EventSource === 'undefined') return;
+      try {
+        const es = new EventSource(API('/events/stream'));
+        es.onmessage = (m) => {
+          try {
+            const ev = JSON.parse(m.data);
+            evCount++;
+            pushLiveEvent(ev);
+          } catch (_) {}
+        };
+        es.onerror = () => { console.warn('[predator-live] SSE error'); };
+        window.__predatorSSE = es;
+      } catch (e) {
+        console.warn('[predator-live] EventSource start failed:', e);
+      }
+    }
+
+    async function init() {
+      const alive = await probe();
+      if (!alive) {
+        console.info('[predator-live] backend not reachable at "%s" — leaving mock data running',
+                     BACKEND || 'same-origin');
+        return;
+      }
+      console.info('[predator-live] backend up at "%s" — taking over', BACKEND || 'same-origin');
+      // Tear down the mock event ticker so we don't interleave fake + real
+      if (window.__mockEventTimer) {
+        clearInterval(window.__mockEventTimer);
+        window.__mockEventTimer = null;
+      }
+      const liveEl = document.getElementById('liveEvents');
+      if (liveEl) liveEl.innerHTML = '';
+
+      startEventStream();
+      pollOnce();
+      window.__predatorPoll = setInterval(pollOnce, POLL_MS);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  })();
   </script>
 </body>
 </html>
