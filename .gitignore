@@ -47,3 +47,4 @@ install_linux/
 # Replit
 .replit
 replit.nix
+.github/workflows/ci.yml
