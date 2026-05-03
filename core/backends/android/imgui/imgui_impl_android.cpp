@@ -38,83 +38,50 @@ static double                                   g_Time = 0.0;
 static ANativeWindow*                           g_Window;
 static char                                     g_LogTag[] = "ImGuiExample";
 
-// ── Touch gesture synthesis ─────────────────────────────────────────────
+// ── Touch input translation ─────────────────────────────────────────────
 // Android delivers raw multi-pointer motion events; ImGui only knows
-// mouse{pos,button,wheel}. The stock imgui_impl_android binding mapped
-// every ACTION_DOWN to MouseButton(0, true), which on a touch-first
-// tactical UI broke three things:
+// mouse{pos,button,wheel}. After multiple iterations of clever gesture
+// synthesis (deferred-MouseDown, time-gated slop, long-press → right
+// click, etc.) all of which subtly broke widget interactions in the
+// menu panels, we are back to the simplest design that actually works:
 //
-//   1. No long-press → right-click. ImGui's context-menu hooks (waterfall
-//      freq mark, module config) are right-click-only and were unreachable.
+//   - Single finger DOWN  → MouseDown(0) at touch point
+//   - Single finger MOVE  → MousePos at current point
+//   - Single finger UP    → MouseUp(0)
+//   - Second finger DOWN  → release MouseDown(0), enter PINCH mode
+//   - Two-finger MOVE     → wheel ticks based on spread delta;
+//                           position events suppressed
+//   - Second finger UP    → exit PINCH; remaining finger does NOT
+//                           re-press (waiting for full lift)
+//   - Last finger UP      → reset state
 //
-//   2. No multi-touch. Two fingers on the waterfall registered as a
-//      single-finger drag tracking the centroid, not a pinch-to-zoom.
+// Tap-vs-drag discrimination is left ENTIRELY to ImGui's own logic
+// (io.MouseDragThreshold). Click forgiveness for finger drift comes
+// from a generous io.TouchExtraPadding set in style::applyTouchFriendly
+// Tweaks(). No long-press → right-click on touch; right-click is for
+// physical mice only. This trade — losing context-menu access via
+// long-press — was made because the deferred MouseDown approach
+// silently broke text inputs, slider activation, FreqSelect digits,
+// and combo boxes throughout the menu tree. A working tap on every
+// widget is more important than a long-press shortcut.
 //
-//   3. Every tap fired a "MouseDown" event before the tap was confirmed,
-//      which (combined with the original tiny MouseDragThreshold) re-
-//      classified taps as drags and stole them from buttons/tabs.
-//
-// This translator fixes all three by deferring the mouse-button event
-// until the gesture is committed:
-//
-//   - Tap   (UP within 500 ms, no move > slop) → DOWN+UP at down position
-//   - Drag  (move > slop while down)           → DOWN at down position,
-//                                                MOVE to current
-//   - Long  (>= 500 ms with no move > slop)    → right-click DOWN+UP at
-//                                                down position
-//   - Pinch (≥ 2 fingers down)                 → wheel ticks based on
-//                                                spread delta; suppress
-//                                                cursor pos updates
-//
-// State is intentionally global / single-context — there is exactly one
-// ImGui context and one input thread on Android.
+// State is intentionally global / single-context — there is exactly
+// one ImGui context and one input thread on Android.
 namespace {
-    constexpr int    kMaxPointers       = 2;
-    // Floor for tap-vs-drag slop in raw pixels. The actual slop used at
-    // runtime is max(this, ImGui::GetIO().MouseDragThreshold) so we stay
-    // in lockstep with style::applyTouchFriendlyTweaks() which sets the
-    // ImGui drag threshold to 20*uiScale (≈60 px on Android). Without
-    // syncing, our synthesizer commits a "drag" at 24 px while ImGui
-    // itself would still call it a click — so a tap inside a sub-menu
-    // panel gets eaten by the parent window's scroll handler before the
-    // child widget ever sees a click.
-    constexpr float  kTapSlopFloorPx    = 24.0f;
-    constexpr float  kPinchDeadZonePx   = 12.0f;
-    constexpr float  kPinchScaleDivisor = 60.0f;   // raw px per wheel tick
-    constexpr double kLongPressSec      = 0.70;    // Android-style; 500 ms
-                                                   // was tripping on normal
-                                                   // slow taps and silently
-                                                   // turning them into right
-                                                   // clicks.
-    // Tap-vs-drag time gate. For this many seconds after ACTION_DOWN we
-    // refuse to promote any pointer to "moved past slop" no matter how far
-    // the finger drifts. This matches Android's ViewConfiguration.
-    // getTapTimeout() / getScaledTouchSlop() pairing: a fast lift, even
-    // with significant finger drift, is always a tap; only a sustained
-    // hold-then-move becomes a drag. Without this, normal thumb taps on
-    // 3x-scaled menus drifted ~12 mm during the press-and-lift, exceeded
-    // the 60 px slop, committed as a drag, and then the menu scroll
-    // handler ate the gesture instead of the tapped widget firing.
-    constexpr double kTapTimeoutSec     = 0.18;
+    constexpr int   kMaxPointers       = 2;
+    constexpr float kPinchDeadZonePx   = 12.0f;
+    constexpr float kPinchScaleDivisor = 60.0f;  // raw px per wheel tick
 
     struct TouchPointer {
-        int32_t id   = -1;          // -1 = slot empty
-        float   downX = 0.f, downY = 0.f;
-        float   curX  = 0.f, curY  = 0.f;
-        double  downTime       = 0.0;
-        bool    movedPastSlop  = false;
-        bool    leftDownEmitted = false;
-        bool    longPressFired  = false;
+        int32_t id   = -1;        // -1 = slot empty
+        float   curX = 0.f, curY = 0.f;
     };
 
     TouchPointer s_Pointers[kMaxPointers];
     bool         s_PinchActive       = false;
+    bool         s_LeftDownEmitted   = false;  // MouseDown(0) currently held?
     float        s_LastPinchDistance = 0.f;
 
-    inline double monotonic_now_sec() {
-        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-        return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
-    }
     inline int find_slot_by_id(int32_t id) {
         for (int i = 0; i < kMaxPointers; ++i)
             if (s_Pointers[i].id == id) return i;
@@ -140,14 +107,16 @@ namespace {
         float dy = s_Pointers[0].curY - s_Pointers[1].curY;
         return sqrtf(dx*dx + dy*dy);
     }
+    inline void release_left_if_held(ImGuiIO& io) {
+        if (s_LeftDownEmitted) {
+            io.AddMouseButtonEvent(0, false);
+            s_LeftDownEmitted = false;
+        }
+    }
     inline void clear_all_pointers() {
         for (int i = 0; i < kMaxPointers; ++i) s_Pointers[i] = TouchPointer{};
         s_PinchActive       = false;
         s_LastPinchDistance = 0.f;
-    }
-    inline float effective_tap_slop_px() {
-        float t = ImGui::GetIO().MouseDragThreshold;
-        return (t > kTapSlopFloorPx) ? t : kTapSlopFloorPx;
     }
 }
 
@@ -345,41 +314,40 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(AInputEvent* input_event)
             break; // out of MOTION case
         }
 
-        // Touch / stylus / unknown path — gesture synthesis (see notes
-        // above the TouchPointer state at the top of this file).
+        // Touch / stylus / unknown path — straight passthrough + pinch.
+        // See header comment above the namespace block for the design.
         const int32_t pointerId = AMotionEvent_getPointerId(input_event, event_pointer_index);
         const float   evX       = AMotionEvent_getX(input_event, event_pointer_index);
         const float   evY       = AMotionEvent_getY(input_event, event_pointer_index);
 
         switch (event_action) {
 
-        case AMOTION_EVENT_ACTION_DOWN:
-        case AMOTION_EVENT_ACTION_POINTER_DOWN: {
-            if (event_action == AMOTION_EVENT_ACTION_DOWN) clear_all_pointers();
+        case AMOTION_EVENT_ACTION_DOWN: {
+            // First finger down: start fresh, emit MousePos + MouseDown(0)
+            // immediately so widgets see a normal mouse press at the touch
+            // point. ImGui's own click/drag/release semantics then take over.
+            clear_all_pointers();
             int slot = alloc_slot(pointerId);
-            if (slot < 0) break;             // > kMaxPointers, drop extra
-            s_Pointers[slot].downX = s_Pointers[slot].curX = evX;
-            s_Pointers[slot].downY = s_Pointers[slot].curY = evY;
-            s_Pointers[slot].downTime        = monotonic_now_sec();
-            s_Pointers[slot].movedPastSlop   = false;
-            s_Pointers[slot].leftDownEmitted = false;
-            s_Pointers[slot].longPressFired  = false;
+            if (slot < 0) break;
+            s_Pointers[slot].curX = evX;
+            s_Pointers[slot].curY = evY;
+            io.AddMousePosEvent(evX, evY);
+            io.AddMouseButtonEvent(0, true);
+            s_LeftDownEmitted = true;
+            break;
+        }
 
-            const int n = active_pointer_count();
-            if (n >= 2) {
-                // Second finger landed: cancel any pending single-finger
-                // gesture, enter pinch mode. We mark the first slot's
-                // long-press as "fired" so the tick handler doesn't
-                // promote it to right-click while we're pinching.
-                for (int i = 0; i < kMaxPointers; ++i) {
-                    if (s_Pointers[i].id < 0) continue;
-                    if (s_Pointers[i].leftDownEmitted) {
-                        // Drag had already been committed — release it.
-                        io.AddMouseButtonEvent(0, false);
-                        s_Pointers[i].leftDownEmitted = false;
-                    }
-                    s_Pointers[i].longPressFired = true;
-                }
+        case AMOTION_EVENT_ACTION_POINTER_DOWN: {
+            // Second (or later) finger down: enter pinch mode. Release any
+            // synthesized left button so the active widget cleanly stops
+            // tracking — pinch is a distinct gesture, not a continuation
+            // of the first finger's press.
+            int slot = alloc_slot(pointerId);
+            if (slot < 0) break;
+            s_Pointers[slot].curX = evX;
+            s_Pointers[slot].curY = evY;
+            if (active_pointer_count() >= 2) {
+                release_left_if_held(io);
                 s_PinchActive       = true;
                 s_LastPinchDistance = pointer_distance();
             }
@@ -387,106 +355,67 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(AInputEvent* input_event)
         }
 
         case AMOTION_EVENT_ACTION_MOVE: {
-            // Slop is dynamic — see kTapSlopFloorPx note. Sampled once per
-            // event so all pointers in the same MotionEvent see the same
-            // threshold.
-            const float slop = effective_tap_slop_px();
-            const float slopSq = slop * slop;
-            const double now  = monotonic_now_sec();
+            // Update curX/curY for every active pointer first (used by
+            // pinch distance below).
             const int sampleCount = AMotionEvent_getPointerCount(input_event);
             for (int i = 0; i < sampleCount; ++i) {
                 int32_t pid = AMotionEvent_getPointerId(input_event, i);
                 int slot = find_slot_by_id(pid);
                 if (slot < 0) continue;
-                float x = AMotionEvent_getX(input_event, i);
-                float y = AMotionEvent_getY(input_event, i);
-                s_Pointers[slot].curX = x;
-                s_Pointers[slot].curY = y;
-                // Time gate: during the tap-timeout window, ignore drift
-                // entirely. Only after the finger has been down longer than
-                // kTapTimeoutSec do we start checking slop for drag promotion.
-                // This is what makes thumb taps on small widgets actually
-                // register — see kTapTimeoutSec comment up top.
-                if (now - s_Pointers[slot].downTime < kTapTimeoutSec)
-                    continue;
-                float dx = x - s_Pointers[slot].downX;
-                float dy = y - s_Pointers[slot].downY;
-                if (dx*dx + dy*dy > slopSq)
-                    s_Pointers[slot].movedPastSlop = true;
+                s_Pointers[slot].curX = AMotionEvent_getX(input_event, i);
+                s_Pointers[slot].curY = AMotionEvent_getY(input_event, i);
             }
 
-            const int n = active_pointer_count();
-            if (n >= 2 && s_PinchActive) {
-                // Pinch / two-finger scroll: emit wheel ticks based on
-                // spread delta. Mouse position is intentionally NOT
-                // updated so ImGui doesn't read the centroid drift as
-                // a single-finger swipe across the whole UI.
+            if (s_PinchActive && active_pointer_count() >= 2) {
+                // Pinch: emit wheel ticks based on spread delta. Mouse
+                // position is intentionally NOT updated so ImGui doesn't
+                // read the centroid drift as a single-finger swipe.
                 float dist  = pointer_distance();
                 float delta = dist - s_LastPinchDistance;
                 if (fabsf(delta) > kPinchDeadZonePx) {
                     io.AddMouseWheelEvent(0.0f, delta / kPinchScaleDivisor);
                     s_LastPinchDistance = dist;
                 }
-            } else if (n == 1) {
+            } else if (active_pointer_count() == 1 && s_LeftDownEmitted) {
+                // Single-finger drag: forward position to ImGui. ImGui's
+                // own MouseDragThreshold (set generously in
+                // style::applyTouchFriendlyTweaks) decides whether this
+                // becomes a drag or stays a click.
                 int slot = primary_slot();
-                if (slot < 0) break;
-                // Commit the deferred MouseButton(0, true) the moment the
-                // gesture clearly becomes a drag. Emit at the ORIGINAL
-                // down position so ImGui's drag-start point is correct.
-                if (!s_Pointers[slot].leftDownEmitted &&
-                    !s_Pointers[slot].longPressFired  &&
-                    s_Pointers[slot].movedPastSlop) {
-                    io.AddMousePosEvent(s_Pointers[slot].downX, s_Pointers[slot].downY);
-                    io.AddMouseButtonEvent(0, true);
-                    s_Pointers[slot].leftDownEmitted = true;
-                }
-                if (s_Pointers[slot].leftDownEmitted) {
-                    io.AddMousePosEvent(s_Pointers[slot].curX, s_Pointers[slot].curY);
+                if (slot >= 0) {
+                    io.AddMousePosEvent(s_Pointers[slot].curX,
+                                        s_Pointers[slot].curY);
                 }
             }
             break;
         }
 
         case AMOTION_EVENT_ACTION_POINTER_UP: {
+            // One of the secondary fingers lifted. If we drop below 2
+            // fingers, exit pinch. We do NOT re-press the left button for
+            // the remaining finger — the user has to fully lift and tap
+            // again to start a new gesture.
             int slot = find_slot_by_id(pointerId);
             if (slot >= 0) s_Pointers[slot] = TouchPointer{};
-            // Exit pinch mode but treat any remaining finger as already-
-            // committed (no tap, no long-press) so we don't emit a stray
-            // click when the user lifts the second finger.
-            s_PinchActive = false;
-            int p = primary_slot();
-            if (p >= 0) {
-                s_Pointers[p].longPressFired = true;
-                io.AddMousePosEvent(s_Pointers[p].curX, s_Pointers[p].curY);
+            if (active_pointer_count() < 2) {
+                s_PinchActive       = false;
+                s_LastPinchDistance = 0.f;
             }
             break;
         }
 
         case AMOTION_EVENT_ACTION_UP: {
-            // Last finger up. Three cases:
-            //   - leftDownEmitted: drag, just release the button
-            //   - long-press already fired: nothing to emit (right-click
-            //     was its own DOWN+UP)
-            //   - otherwise: real tap → emit DOWN+UP at the down position
-            int slot = find_slot_by_id(pointerId);
-            if (slot < 0) slot = primary_slot();
-            if (slot >= 0) {
-                if (s_Pointers[slot].leftDownEmitted) {
-                    io.AddMouseButtonEvent(0, false);
-                } else if (!s_Pointers[slot].longPressFired &&
-                           !s_Pointers[slot].movedPastSlop) {
-                    io.AddMousePosEvent(s_Pointers[slot].downX, s_Pointers[slot].downY);
-                    io.AddMouseButtonEvent(0, true);
-                    io.AddMouseButtonEvent(0, false);
-                }
-            }
+            // Last finger up: release the left button if we still hold it.
+            // ImGui will fire the click event on this release if the
+            // cursor is still inside the original widget's hit-test area
+            // (extended by io.TouchExtraPadding for finger-drift forgiveness).
+            release_left_if_held(io);
             clear_all_pointers();
             break;
         }
 
         case AMOTION_EVENT_ACTION_CANCEL: {
-            for (int i = 0; i < kMaxPointers; ++i)
-                if (s_Pointers[i].leftDownEmitted) io.AddMouseButtonEvent(0, false);
+            release_left_if_held(io);
             clear_all_pointers();
             break;
         }
@@ -520,26 +449,6 @@ void ImGui_ImplAndroid_Shutdown()
 {
 }
 
-// Long-press tick. Called every frame from NewFrame. If a single finger
-// has been held still for ≥ kLongPressSec without committing a drag, we
-// synthesize a right-click at the down position. Marks the slot as
-// long-press-fired so ACTION_UP becomes a no-op for that gesture.
-static void ImGui_ImplAndroid_TickLongPress()
-{
-    if (active_pointer_count() != 1) return;
-    int slot = primary_slot();
-    if (slot < 0) return;
-    TouchPointer& p = s_Pointers[slot];
-    if (p.movedPastSlop || p.leftDownEmitted || p.longPressFired) return;
-    if (monotonic_now_sec() - p.downTime < kLongPressSec) return;
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.AddMousePosEvent(p.downX, p.downY);
-    io.AddMouseButtonEvent(1, true);
-    io.AddMouseButtonEvent(1, false);
-    p.longPressFired = true;
-}
-
 void ImGui_ImplAndroid_NewFrame()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -560,7 +469,4 @@ void ImGui_ImplAndroid_NewFrame()
     double current_time = (double)(current_timespec.tv_sec) + (current_timespec.tv_nsec / 1000000000.0);
     io.DeltaTime = g_Time > 0.0 ? (float)(current_time - g_Time) : (float)(1.0f / 60.0f);
     g_Time = current_time;
-
-    // Promote idle single-finger holds to right-click.
-    ImGui_ImplAndroid_TickLongPress();
 }

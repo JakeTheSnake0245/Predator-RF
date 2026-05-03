@@ -127,7 +127,15 @@ namespace style {
         if (s.FramePadding.y < 6.0f  * uiScale) s.FramePadding.y = 6.0f  * uiScale;
         if (s.IndentSpacing  < 18.0f * uiScale) s.IndentSpacing  = 18.0f * uiScale;
 
-        s.TouchExtraPadding = ImVec2(4.0f * uiScale, 4.0f * uiScale);
+        // TouchExtraPadding extends every widget's hit-test area by this
+        // many pixels in each direction. Bumped substantially on touch
+        // devices so that a thumb tap whose centroid lands a few mm
+        // outside the widget — or whose finger drifts during press-and-
+        // lift — still counts as a hit. Without this, normal taps on
+        // small widgets (combo arrows, slider thumbs, sub-menu rows)
+        // miss because the visible widget rect is smaller than the
+        // finger contact patch.
+        s.TouchExtraPadding = ImVec2(16.0f * uiScale, 16.0f * uiScale);
 
         // ── CRITICAL: drag/click thresholds for finger input ──────────────
         // ImGui defaults (6 px MouseDragThreshold, 6 px MouseDoubleClickMaxDist)
