@@ -128,6 +128,25 @@ namespace style {
         if (s.IndentSpacing  < 18.0f * uiScale) s.IndentSpacing  = 18.0f * uiScale;
 
         s.TouchExtraPadding = ImVec2(4.0f * uiScale, 4.0f * uiScale);
+
+        // ── CRITICAL: drag/click thresholds for finger input ──────────────
+        // ImGui defaults (6 px MouseDragThreshold, 6 px MouseDoubleClickMaxDist)
+        // are tuned for a mouse with sub-pixel precision. On a 3x-scaled phone
+        // screen, normal finger jitter between ACTION_DOWN and ACTION_UP is
+        // routinely 10–25 raw pixels — which trips ImGui's drag detector
+        // BEFORE the click is registered. Net effect: every tap on a button,
+        // tab, menu item, or list row is silently re-classified as a drag,
+        // and the widget never fires its Clicked() event. The waterfall and
+        // any scroll container then consume the motion as a swipe.
+        //
+        // Bumping the drag threshold to 20*uiScale (≈40–60 raw px on phones)
+        // means the finger has to actually move a visible distance before
+        // ImGui treats the gesture as a drag. Taps with normal jitter now
+        // resolve to clicks. We also raise the double-click max distance so
+        // double-taps survive the same jitter.
+        ImGuiIO& io = ImGui::GetIO();
+        io.MouseDragThreshold     = std::max(io.MouseDragThreshold,     20.0f * uiScale);
+        io.MouseDoubleClickMaxDist = std::max(io.MouseDoubleClickMaxDist, 16.0f * uiScale);
     }
 }
 
