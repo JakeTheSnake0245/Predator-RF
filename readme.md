@@ -38,6 +38,7 @@ A Python backend service runs on a Linux operator workstation or a Raspberry Pi.
 - [Building from Source](#building-from-source)
 - [User Guide — the eight tabs](#user-guide--the-eight-tabs)
 - [ATAK / TAK CoT Integration](#atak--tak-cot-integration)
+- [RNS / Reticulum transport (and ATAK forwarder)](#rns--reticulum-transport-and-atak-forwarder)
 - [Kujhad Fleet Console](#kujhad-fleet-console)
 - [Decoder Modules](#decoder-modules)
 - [Tiered Bill of Materials](#tiered-bill-of-materials)
@@ -48,6 +49,14 @@ A Python backend service runs on a Linux operator workstation or a Raspberry Pi.
 ---
 
 ## What's New
+
+### v1.3.1 — RNS (Reticulum) transport / ATAK forwarder
+- **RNS daemon shipped in the Python backend** (`backend/rns/`, pinned to upstream Reticulum 1.2.0). Nine interface types — TCP client / TCP server / UDP / I2P / AutoInterface / RNode (LoRa) / KISS TNC / AX.25 KISS / Pipe — managed from a new "RNS Interfaces (Reticulum)" panel inside Kujhad.
+- **Doubles as an ATAK forwarder, RTAK-style.** Outbound CoT escalations are pushed both over the existing TAK UDP/TCP path **and** into RNS in parallel; inbound CoT received over RNS is auto-forwarded to a local TAK app over UDP. **Android default = 4242** (peer-relayed tracks appear on your TAK map with zero operator action); Linux opt-in via `RNS_ATAK_LOCAL_PORT`.
+- **Replication tokens** — Argon2id-derived XChaCha20-Poly1305 IETF bundles let you clone an RNS posture between nodes without retyping every field. Device-local fields (serial ports, LAN IPs) are swapped for placeholders during mint and re-prompted on import. Identity-included and identity-excluded variants both supported.
+- **Local-only control plane on every platform.** Linux uses a uid-checked Unix socket (`ControlServer`); Android uses `LocalSocket` (kernel-enforced same-app boundary). The HTTP RNS routes exist as importable scaffolding but are deliberately not mounted — there is no remote attack surface for the daemon.
+- **Linux / Android UI parity.** Same C++ Kujhad panel renders on both via `NativeActivity`; full coverage of every COMMON field, every per-type field for all 9 interface types, restart-with-drain, status (online/rxb/txb/bitrate/clients), live log tail, mint / import / export, peer allowlist.
+- 59 RNS unit tests passing.
 
 ### v1.3.0 — Cockpit / Fleet / Geolocation
 - **Python backend (Path 2)** — runs on a Linux workstation or RPi; owns the SQLite mission ledger, aggregates events from C++ Kujhad devices, exposes a token-protected REST + SSE API on `:8000`. CoC mode chains backends together as a TOC-of-TOCs.
@@ -395,6 +404,73 @@ Full CoT field-by-field breakdown and the manual-approval queue API are in [`doc
 
 ---
 
+## RNS / Reticulum transport (and ATAK forwarder)
+
+Predator RF ships a [Reticulum (RNS)](https://reticulum.network/) daemon as a **parallel** transport for the same CoT XML the system already pushes over the TAK UDP/TCP path. RNS handles its own path selection across whatever interfaces you've brought up — LoRa, TCP, UDP, I2P, AX.25 packet radio, KISS TNC, etc.
+
+### It doubles as an ATAK forwarder (RTAK-style)
+
+The CoT path is symmetric and bidirectional, which is what makes the RNS layer an ATAK forwarder in the same sense as RTAK / ATAK-Forwarder:
+
+| Direction | Path |
+|---|---|
+| **Outbound** (your CoT escalations → mesh) | `cot_emitter` → `RNSCotBridge.publish(xml, uid)` → daemon fans the CBOR-wrapped envelope to every allowlisted peer's OUT destination over whatever interfaces are up; per-iface `reliable_cot` decides Packet vs Link/Resource |
+| **Inbound** (peer CoT over the mesh → your TAK app) | RNS daemon receives → bridge dedupes / loop-suppresses / allowlist-checks → `_on_rns_inbound_cot` opens a local UDP socket and re-emits the XML to `(RNS_ATAK_LOCAL_HOST, RNS_ATAK_LOCAL_PORT)` |
+
+**Android defaults the local-relay port to `4242`** the moment the `ANDROID_ROOT` env is present — point your phone's TAK app at `127.0.0.1:4242` and every peer-relayed track from anywhere on the RNS mesh appears on your map with zero operator action. **Linux is opt-in** — set `RNS_ATAK_LOCAL_PORT=4242` (or whatever your TAK client is listening on) in the backend env.
+
+The `src_hash16` tag on every envelope means peer-originated tracks arrive with provenance — they can be filtered, audited, or weighted differently from your own.
+
+### Nine interface types
+
+| Type | Use case | Default `reliable_cot` |
+|---|---|---|
+| `tcp_client` | Dial a remote RNS hub on TCP | `true` |
+| `tcp_server` | Run a local RNS hub others dial | `true` |
+| `udp` | LAN-style stateless transport | `true` |
+| `i2p` | Anonymized via the I2P SAM bridge | `true` |
+| `auto_interface` | Auto-discover other RNS nodes on the LAN | `true` |
+| `rnode` | LoRa via an RNode (the field workhorse) | **`false`** (LoRa airtime is precious; CoT goes single-pass unconfirmed) |
+| `kiss_tnc` | Generic KISS-mode packet radio TNC | `true` |
+| `ax25_kiss` | AX.25 amateur packet radio (callsign-bound) | `true` |
+| `pipe` | Wrap an external process as an RNS interface (advanced) | `true` |
+
+### Where to access it
+
+The "RNS Interfaces (Reticulum)" panel lives inside the Kujhad Fleet view of the Predator RF GUI on **both** Linux and Android — same C++ panel rendered via `NativeActivity` on Android, so the layout is identical.
+
+| Platform | Control transport |
+|---|---|
+| **Linux** | Unix socket (`ControlServer`), uid-checked, no network exposure |
+| **Android** | `android.net.LocalSocket` against the same Unix socket path; kernel-enforced same-app boundary |
+
+There is **no HTTP control plane** for the RNS daemon. The HTTP routes in `backend/api/routes/rns.py` are scaffolded but deliberately not mounted in `backend/api/server.py` — local-only on every platform.
+
+### Replication tokens (mint / import)
+
+Argon2id (t=3, m=64MiB, p=1) → XChaCha20-Poly1305 IETF, with the version byte bound as AAD (downgrade-resistant). Mint a token from one node, import on another, and clone the entire RNS posture without retyping every interface. **Device-local fields** (serial ports, LAN IPs, AX.25 interface names) are swapped for placeholders during mint and re-prompted at import — so you don't leak `/dev/ttyUSB0` paths or LAN IPs across an op. Identity-included and identity-excluded variants both supported and round-trip-tested between Linux and Android.
+
+### Crypto stack
+
+- **Envelope:** CBOR (`cbor2`) with `{v, src_hash16, uid, ts_ms, xml}`
+- **Token KDF:** Argon2id (t=3, m=64 MiB, p=1) via `argon2-cffi`
+- **Token AEAD:** XChaCha20-Poly1305 IETF via `pynacl`, version byte as AAD
+- **RNS:** upstream `rns==1.2.0`, no fork, no patches
+
+### Quick setup — two-node LoRa mesh
+
+Both nodes (assuming RNode plugged in on `/dev/ttyUSB0`):
+
+1. Open Kujhad → "RNS Interfaces (Reticulum)" → **Add interface**.
+2. Type: `rnode`. Fill: `port=/dev/ttyUSB0`, `frequency_hz=915000000`, `bandwidth_hz=125000`, `txpower_dbm=17`, `spreadingfactor=8`, `codingrate=5`, `id_callsign=YOURCALL` (if licensed).
+3. Save. The status row should turn `online=true` within a few seconds.
+4. Wait one announce interval. Each panel's status table should show the other node under `clients`.
+5. On both phones, point ATAK at `127.0.0.1:4242`. Done — CoT escalations from either operator now appear on the other operator's TAK map over LoRa.
+
+Full RNS coverage — every field, every workflow, troubleshooting, security posture, replication-token internals — is in [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) § 20.7.
+
+---
+
 ## Kujhad Fleet Console
 
 Kujhad enables multiple Predator RF instances to share spectrum and coordinate missions across a local network or VPN. Hub-and-spoke (not mesh) — the operator picks who they want to see.
@@ -524,6 +600,8 @@ What you can do: full-perimeter overwatch from one operator screen, real TDOA fi
 - [ ] ADS-B map overlay in the Map tab
 - [ ] Scheduled scan plans (time-gated search bands)
 - [ ] Signal fingerprinting / signature matching
+- [x] RNS (Reticulum) transport for CoT — 9 interface types, LoRa / TCP / UDP / I2P / AX.25 / KISS / Pipe / AutoInterface, full Linux+Android parity
+- [x] ATAK forwarder mode (RNS → local TAK app over UDP, RTAK-style)
 - [ ] Linux desktop build (parity with Android)
 - [ ] Windows desktop build (parity with Android)
 
