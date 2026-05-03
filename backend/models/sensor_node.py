@@ -47,6 +47,23 @@ class SensorNodeTrust:
     bandwidth_allocated_mhz: float = 100.0
     center_frequencies_monitored: List[float] = field(default_factory=list)
 
+    # Mirror of C++ /v1/state — populated by KujhadClient capability probe.
+    # These fields reflect what the *device* reports it is doing right now;
+    # do not write them from the orchestrator side, they will be overwritten
+    # on the next /v1/state poll.
+    mission_mode_active: int = 0                              # C++ enum int
+    scan_running: bool = False
+    scan_status: str = ""
+    threshold_db: float = 0.0                                  # detection floor
+    active_search_bands_hz: List[Tuple[float, float]] = field(default_factory=list)
+    record_audio: bool = False
+
+    # Inferred from hardware identity (capability_inference module). Lists
+    # of decoder/detector *names* (matching the registries) this node's
+    # hardware can plausibly run. Empty until first /v1/identify succeeds.
+    available_decoders: List[str] = field(default_factory=list)
+    available_detectors: List[str] = field(default_factory=list)
+
     # Trust components
     base_trust: float = 0.6
     uptime_fraction: float = 1.0
@@ -82,17 +99,25 @@ class SensorNodeTrust:
     hardware_capabilities: object = field(default=None, repr=False)
 
     def __post_init__(self):
-        if self.hardware_code:
-            try:
-                from backend.sensor.hardware.capabilities import get_hardware_capabilities
-                caps = get_hardware_capabilities(self.hardware_code)
-                self.hardware_capabilities = caps
-                if caps:
-                    self.max_sample_rate_hz = caps.max_sample_rate_hz
-                    self.can_do_tdoa = caps.supports_tdoa
-                    self._init_hardware_trust_factors(caps)
-            except ImportError:
-                pass
+        self.refresh_hardware_capabilities()
+
+    def refresh_hardware_capabilities(self):
+        """Re-look-up `hardware_capabilities` and recompute hardware-derived
+        trust factors based on the current `hardware_code`. Idempotent;
+        safe to call any time the hardware identity changes (e.g. after
+        /v1/identify reports a different value than what was configured)."""
+        if not self.hardware_code:
+            return
+        try:
+            from backend.sensor.hardware.capabilities import get_hardware_capabilities
+            caps = get_hardware_capabilities(self.hardware_code)
+            self.hardware_capabilities = caps
+            if caps:
+                self.max_sample_rate_hz = caps.max_sample_rate_hz
+                self.can_do_tdoa = caps.supports_tdoa
+                self._init_hardware_trust_factors(caps)
+        except ImportError:
+            pass
 
     def _init_hardware_trust_factors(self, caps):
         max_ppm, min_ppm = 100.0, 1.0

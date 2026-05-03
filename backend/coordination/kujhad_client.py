@@ -138,10 +138,19 @@ class KujhadClient:
     async def _poll_loop(self):
         try:
             await self._identify()
+            await self._poll_state()  # one shot at startup so callers see
+                                       # mission_mode / search_bands quickly
+            state_tick = 0
             while self._running:
                 try:
                     await self._poll_events()
                     await self._poll_gps()
+                    state_tick += 1
+                    # /v1/state changes on operator action, not per-event;
+                    # re-poll every 5 cycles (~5s) instead of every cycle.
+                    if state_tick >= 5:
+                        await self._poll_state()
+                        state_tick = 0
                     await asyncio.sleep(self.POLL_INTERVAL_S)
                 except asyncio.CancelledError:
                     break
@@ -153,7 +162,8 @@ class KujhadClient:
             pass
 
     async def _identify(self):
-        """Fetch device identity and populate node metadata."""
+        """Fetch device identity, populate hardware code, and infer
+        decoder/detector capabilities from the SDR hardware table."""
         try:
             async with self._session.get(
                     f"{self._base_url}/v1/identify",
@@ -163,12 +173,78 @@ class KujhadClient:
                     logger.info("Node %s identified: %s",
                                 self.node.node_id, data.get('device', '?'))
                     hw = data.get('hwProfile', {}) or {}
-                    if hw.get('hardware') and not self.node.hardware_code:
-                        self.node.hardware_code = hw['hardware']
+                    reported = hw.get('hardware')
+                    if reported:
+                        # Trust the device — operators do mis-configure the
+                        # FLEET_NODES env, and the SDR is the only thing
+                        # that knows what's actually plugged in. Log loudly
+                        # on mismatch so the operator can fix the config.
+                        if (self.node.hardware_code
+                                and self.node.hardware_code != reported):
+                            logger.warning(
+                                "Node %s: hardware mismatch — config '%s' "
+                                "vs device '%s'. Trusting device.",
+                                self.node.node_id,
+                                self.node.hardware_code, reported)
+                        if self.node.hardware_code != reported:
+                            self.node.hardware_code = reported
+                            self.node.refresh_hardware_capabilities()
                 elif resp.status == 401:
                     logger.error("Node %s: invalid API key", self.node.node_id)
+                    return
         except Exception as exc:
             logger.warning("Node %s: identify failed: %s", self.node.node_id, exc)
+            return
+
+        # Infer runnable decoders/detectors from the SDR's freq range +
+        # parallel detector budget. Cheap, pure, idempotent — safe to call
+        # every identify since the hardware doesn't change underneath us.
+        try:
+            from backend.sensor.hardware.capability_inference import (
+                infer_decoder_capabilities, infer_detector_capabilities)
+            self.node.available_decoders = infer_decoder_capabilities(self.node)
+            self.node.available_detectors = infer_detector_capabilities(self.node)
+            if self.node.available_decoders:
+                logger.info("Node %s capable of decoders: %s",
+                            self.node.node_id,
+                            ", ".join(self.node.available_decoders))
+        except Exception as exc:
+            logger.debug("Capability inference skipped on %s: %s",
+                         self.node.node_id, exc)
+
+    async def _poll_state(self):
+        """Mirror C++ /v1/state mission/scan/threshold fields onto the node.
+
+        Exact wire fields verified against main_window.cpp:1796-1816
+        (kujhadServer.setStateProvider lambda)."""
+        try:
+            async with self._session.get(
+                    f"{self._base_url}/v1/state", timeout=5.0) as resp:
+                if resp.status != 200:
+                    return
+                state = await resp.json()
+        except Exception as exc:
+            logger.debug("Node %s: state poll failed: %s",
+                         self.node.node_id, exc)
+            return
+        if not isinstance(state, dict):
+            return
+
+        from backend.sensor.hardware.capability_inference import search_bands_to_tuples
+
+        try:
+            self.node.mission_mode_active = int(state.get('missionMode', 0))
+        except (TypeError, ValueError):
+            pass
+        self.node.scan_running = bool(state.get('scanRunning', False))
+        self.node.scan_status = str(state.get('scanStatus', ''))
+        try:
+            self.node.threshold_db = float(state.get('thresholdDb', 0.0))
+        except (TypeError, ValueError):
+            pass
+        self.node.record_audio = bool(state.get('recordAudio', False))
+        self.node.active_search_bands_hz = search_bands_to_tuples(
+            state.get('searchBands', []))
 
     async def _poll_events(self):
         """Poll /v1/events?since=<last_id> and convert to RFEvents."""

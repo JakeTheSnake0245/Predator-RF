@@ -65,12 +65,31 @@ class MockKujhadServer:
         self.events: list = []          # newest events appended; serial=index+1
         self.command_log: list = []
         self.gps = {"hasFix": True, "lat": 35.123, "lon": -106.456, "accuracy": 4.2}
+        # Default /v1/state — matches main_window.cpp:1796-1816 lambda shape.
+        self.state = {
+            "centerFreq": 462_612_500.0,
+            "playing": True,
+            "missionMode": 1,
+            "scanRunning": True,
+            "scanStatus": "scanning 420-450 MHz",
+            "searchBands": [
+                {"startHz": 420_000_000.0, "endHz": 450_000_000.0},
+                {"startHz": 144_000_000.0, "endHz": 148_000_000.0},
+            ],
+            "targets": [], "excludes": [],
+            "thresholdDb": -65.0,
+            "dwellMs": 500,
+            "quickScanDelayMs": 0,
+            "quickScanDurationMs": 0,
+            "recordAudio": True,
+        }
         self.runner: web.AppRunner | None = None
         self.port: int = 0
 
     async def start(self) -> int:
         app = web.Application()
         app.router.add_get("/v1/identify", self._identify)
+        app.router.add_get("/v1/state", self._state)
         app.router.add_get("/v1/gps", self._gps)
         app.router.add_get("/v1/events", self._events)
         app.router.add_post("/v1/command", self._command)
@@ -106,6 +125,11 @@ class MockKujhadServer:
             "role": "Device",
             "hwProfile": {"hardware": "hackrf"},
         })
+
+    async def _state(self, req):
+        if not self._auth_ok(req):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        return web.json_response(self.state)
 
     async def _gps(self, req):
         if not self._auth_ok(req):
@@ -390,6 +414,99 @@ class TestKujhadWireSchema(unittest.IsolatedAsyncioTestCase):
         ts = self.received[0].timestamp_ns
         self.assertGreaterEqual(ts, before_ns)
         self.assertLessEqual(ts, after_ns)
+
+    async def test_state_mirror_populates_node_fields(self):
+        """/v1/state response → node.mission_mode_active, scan_running,
+        threshold_db, active_search_bands_hz, record_audio mirrored."""
+        await self.client.start(on_event=self.received.append)
+        await asyncio.sleep(2.0)  # one poll cycle
+
+        self.assertEqual(self.node.mission_mode_active, 1)
+        self.assertTrue(self.node.scan_running)
+        self.assertEqual(self.node.scan_status, "scanning 420-450 MHz")
+        self.assertAlmostEqual(self.node.threshold_db, -65.0, places=2)
+        self.assertTrue(self.node.record_audio)
+        self.assertEqual(len(self.node.active_search_bands_hz), 2)
+        self.assertEqual(self.node.active_search_bands_hz[0],
+                         (420_000_000.0, 450_000_000.0))
+        self.assertEqual(self.node.active_search_bands_hz[1],
+                         (144_000_000.0, 148_000_000.0))
+
+    async def test_capability_inference_from_identify(self):
+        """/v1/identify hwProfile=hackrf → node.available_decoders includes
+        every registered decoder whose declared bands overlap HackRF's
+        1 MHz-6 GHz range; available_detectors includes both algorithms."""
+        from backend.sensor.decoders.decoder_registry import decoder_registry
+        from backend.sensor.hardware.capability_inference import _reset_cache_for_tests
+        _reset_cache_for_tests()
+
+        await self.client.start(on_event=self.received.append)
+        await asyncio.sleep(1.5)  # identify happens first thing in poll loop
+
+        # All registered decoders MUST appear (HackRF spans VHF + UHF).
+        # No decoder name may appear that isn't in the registry — that was
+        # the architect-caught 'adsb' bug.
+        registered = set(decoder_registry.list_decoders())
+        inferred = set(self.node.available_decoders)
+        self.assertTrue(inferred.issubset(registered),
+                        f"inferred {inferred - registered} not in registry")
+        self.assertEqual(inferred, registered,
+                         "HackRF should host every registered decoder")
+        # max_parallel_detectors=2 on HackRF, both detectors need 1
+        self.assertIn("fft_peak", self.node.available_detectors)
+        self.assertIn("energy",   self.node.available_detectors)
+
+    async def test_identify_unauthorized_leaves_capabilities_empty(self):
+        """401 from /v1/identify must NOT populate inferred capability
+        lists with stale or partial data."""
+        # Use a wrong API key so the mock returns 401
+        bad_node = SensorNodeTrust(
+            node_id="mock-node-bad",
+            hardware_code="",       # empty so identify is the only source
+            kujhad_host="127.0.0.1",
+            kujhad_port=self.port,
+            kujhad_api_key="WRONG-KEY",
+        )
+        bad_client = KujhadClient(bad_node)
+        try:
+            await bad_client.start(on_event=lambda _e: None)
+            await asyncio.sleep(1.5)
+            self.assertEqual(bad_node.available_decoders, [])
+            self.assertEqual(bad_node.available_detectors, [])
+            self.assertEqual(bad_node.hardware_code, "")
+        finally:
+            await bad_client.stop()
+
+    async def test_state_malformed_does_not_crash(self):
+        """Non-dict /v1/state response must be handled silently — the poll
+        loop must not propagate the error and kill the client."""
+        # Replace the mock's state with something the converter will reject
+        self.server.state = ["not", "a", "dict"]  # type: ignore[assignment]
+
+        await self.client.start(on_event=self.received.append)
+        await asyncio.sleep(2.0)
+
+        # Defaults remain in place (no crash, no partial population)
+        self.assertEqual(self.node.mission_mode_active, 0)
+        self.assertFalse(self.node.scan_running)
+        self.assertEqual(self.node.active_search_bands_hz, [])
+
+    async def test_state_malformed_search_bands_dropped_gracefully(self):
+        """A malformed entry in searchBands must be silently dropped
+        without poisoning the rest of the array."""
+        self.server.state = dict(self.server.state)  # detach from default
+        self.server.state["searchBands"] = [
+            {"startHz": 100e6, "endHz": 200e6},   # good
+            "garbage-string",                       # bad, dropped
+            {"startHz": "not-a-number"},            # bad, dropped
+            {"startHz": 300e6, "endHz": 400e6},   # good
+        ]
+        await self.client.start(on_event=self.received.append)
+        await asyncio.sleep(2.0)
+
+        self.assertEqual(len(self.node.active_search_bands_hz), 2)
+        self.assertEqual(self.node.active_search_bands_hz[0], (100e6, 200e6))
+        self.assertEqual(self.node.active_search_bands_hz[1], (300e6, 400e6))
 
     async def test_per_event_gps_missing_falls_back_to_node_gps(self):
         """When the event row has no per-event GPS, _poll_gps()-fed
