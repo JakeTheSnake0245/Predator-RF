@@ -37,8 +37,15 @@ else()
 endif()
 endif(MSVC)
 
-find_library(FEC fec)
-CHECK_LIBRARY_EXISTS(FEC dotprod "" HAVE_LIBFEC)
+if(ANDROID OR CMAKE_CROSSCOMPILING)
+  # libfec is x86 hand-tuned SIMD; not present (and not useful) on ARM/Android.
+  # Without this guard, find_library returns FEC-NOTFOUND but CHECK_LIBRARY_EXISTS
+  # still emits -lFEC as a literal flag and the link fails.
+  set(HAVE_LIBFEC FALSE)
+else()
+  find_library(FEC fec)
+  CHECK_LIBRARY_EXISTS(FEC dotprod "" HAVE_LIBFEC)
+endif()
 
 if(NOT CMAKE_CROSSCOMPILING)
   # Check if host machine can compile with SSE 4.1 intrinsic

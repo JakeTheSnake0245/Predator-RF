@@ -1,0 +1,50 @@
+PS C:\Users\cjake\TEMP\Predator-RF\android> C:\Users\cjake\TEMP\Predator-RF\android\app\build\outputs\logs\
+C:\Users\cjake\TEMP\Predator-RF\android\app\build\outputs\logs\ : The term
+'C:\Users\cjake\TEMP\Predator-RF\android\app\build\outputs\logs\' is not recognized as the name of a cmdlet, function,
+script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is
+correct and try again.
+At line:1 char:1
++ C:\Users\cjake\TEMP\Predator-RF\android\app\build\outputs\logs\
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\cjake\...d\outputs\logs\:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\cjake\TEMP\Predator-RF\android> C:\Users\cjake\.gradle\daemon\<gradle-version>\daemon-<pid>.out.log
+C:\Users\cjake\.gradle\daemon\<gradle-version>\daemon-<pid>.out.log : The term
+'C:\Users\cjake\.gradle\daemon\<gradle-version>\daemon-<pid>.out.log' is not recognized as the name of a cmdlet,
+function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the
+path is correct and try again.
+At line:1 char:1
++ C:\Users\cjake\.gradle\daemon\<gradle-version>\daemon-<pid>.out.log
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\cjake\...n-<pid>.out.log:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\cjake\TEMP\Predator-RF\android> cd C:\Users\cjake\TEMP\Predator-RF\android
+PS C:\Users\cjake\TEMP\Predator-RF\android> Get-ChildItem -Recurse -Filter "*.log" app\.cmake\Debug | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content | Select-String -Pattern "FAILED:|error:" -Context 0,8
+
+> FAILED: cmTC_0c1e6
+
+  cmd.exe /C "cd . &&
+C:\Users\cjake\AppData\Local\Android\Sdk\ndk\23.2.8568313\toolchains\llvm\prebuilt\windows-x86_64\bin\clang.exe
+--target=aarch64-none-linux-android28
+--gcc-toolchain=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64
+--sysroot=C:/Users/cjake/AppData/Local/Android/Sdk/ndk/23.2.8568313/toolchains/llvm/prebuilt/windows-x86_64/sysroot -g
+-DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes
+-D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fPIC -std=c99 -Wall -Wpedantic -g3 -O3
+-DCHECK_FUNCTION_EXISTS=dotprod -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--fatal-warnings
+-Wl,--no-undefined -Qunused-arguments -Wl,--gc-sections CMakeFiles/cmTC_0c1e6.dir/CheckFunctionExists.c.o -o
+cmTC_0c1e6  -lFEC  -latomic -lm && cd ."
+
+> ld: error: unable to find library -lFEC
+
+> clang: error: linker command failed with exit code 1 (use -v to see invocation)
+
+  ninja: build stopped: subcommand failed.
+
+
+
+
+
+
+PS C:\Users\cjake\TEMP\Predator-RF\android>
