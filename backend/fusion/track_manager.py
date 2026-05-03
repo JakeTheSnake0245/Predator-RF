@@ -8,6 +8,7 @@ from backend.models.emitter_track import EmitterTrack, TrackState
 from backend.models.sensor_node import SensorNodeTrust
 from backend.fusion.track_associator import HardwareAwareAssociator
 from backend.fusion.confidence_engine import ConfidenceEngine
+from backend.fusion.proximity_estimator import ProximityEstimator
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,17 @@ class TrackManager:
     Ingests RFEvents, associates them, creates/updates/retires tracks.
     """
 
-    def __init__(self):
+    def __init__(self,
+                 proximity_estimator: Optional[ProximityEstimator] = None):
         self.tracks: Dict[str, EmitterTrack] = {}
         self.sensor_nodes: Dict[str, SensorNodeTrust] = {}
         self._associator = HardwareAwareAssociator()
         self._confidence = ConfidenceEngine()
+        # Optional single-node RSSI fallback. None = disabled (default
+        # posture). When provided, every event whose track does NOT
+        # already have a TDOA fix gets a coarse proximity estimate so
+        # the map shows *something* instead of a missing dot.
+        self._proximity = proximity_estimator
         self._on_new_track: Optional[Callable[[EmitterTrack], None]] = None
         self._on_update: Optional[Callable[[EmitterTrack], None]] = None
         self._archived: Dict[str, EmitterTrack] = {}
@@ -83,6 +90,34 @@ class TrackManager:
 
         if node:
             node.total_observations += 1
+
+        # Single-node RSSI proximity fallback. Only runs when:
+        #   - estimator is configured (RSSI_PROXIMITY_ENABLED=true), AND
+        #   - track does NOT already have a TDOA fix (TDOA always wins
+        #     once it produces one — proximity never overwrites a real
+        #     geolocation). Proximity-derived locations may be refreshed
+        #     by later proximity estimates so the radius shrinks as the
+        #     operator walks closer to a strong source.
+        if self._proximity is not None and (
+                track.location_method is None or
+                track.location_method == "rssi_proximity"):
+            node_lat = event.node_lat if event.node_lat is not None else (
+                node.location_gps[0] if node and node.location_gps else None)
+            node_lon = event.node_lon if event.node_lon is not None else (
+                node.location_gps[1] if node and node.location_gps else None)
+            fix = self._proximity.estimate(
+                power_dbfs=event.power_dbfs,
+                frequency_hz=event.frequency,
+                node_lat=node_lat,
+                node_lon=node_lon,
+                node_id=event.node_id,
+                timestamp_ns=event.timestamp_ns)
+            if fix is not None:
+                track.estimated_lat = fix.estimated_lat
+                track.estimated_lon = fix.estimated_lon
+                track.location_confidence = fix.location_confidence
+                track.location_method = fix.method
+                track.location_error_radius_m = fix.error_radius_m
 
         if self._on_update:
             self._on_update(track)

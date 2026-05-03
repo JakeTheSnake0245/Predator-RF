@@ -289,6 +289,13 @@ class PredatorBackend:
         track.estimated_lat = result.estimated_lat
         track.estimated_lon = result.estimated_lon
         track.location_confidence = result.location_confidence
+        # TDOA wins over any prior RSSI-proximity fallback — tag the
+        # method so the UI can switch the marker style. Mirror the
+        # ellipse-radius scaling used by the renderer (50 m at conf=1
+        # → 5 km at conf=0).
+        track.location_method = "tdoa"
+        track.location_error_radius_m = 50.0 + (
+            1.0 - max(0.0, min(1.0, result.location_confidence))) * 4950.0
         logger.info("Track %s located: (%.5f, %.5f) conf=%.2f via %d nodes",
                     emitter_id[:8], result.estimated_lat, result.estimated_lon,
                     result.location_confidence,

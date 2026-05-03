@@ -222,6 +222,11 @@ class MissionStore:
             "ALTER TABLE rf_events           ADD COLUMN gps_age_s REAL",
             "ALTER TABLE rf_events           ADD COLUMN upstream_source TEXT",
             "ALTER TABLE emitter_tracks      ADD COLUMN upstream_source TEXT",
+            # Single-node RSSI proximity fallback adds these — tells
+            # the UI which renderer to use ("tdoa" tight ellipse vs
+            # "rssi_proximity" wide circle) and the radius in metres.
+            "ALTER TABLE emitter_tracks      ADD COLUMN location_method TEXT",
+            "ALTER TABLE emitter_tracks      ADD COLUMN location_error_radius_m REAL",
         ):
             try:
                 self._conn.execute(stmt)
@@ -273,8 +278,9 @@ class MissionStore:
                     confidence, threat_level, modulation, protocol,
                     estimated_lat, estimated_lon, location_confidence,
                     detecting_nodes_json, anomaly_flags_json, updated_ns,
-                    mission_id, upstream_source)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    mission_id, upstream_source,
+                    location_method, location_error_radius_m)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(emitter_id) DO UPDATE SET
                      state=excluded.state,
                      primary_frequency=excluded.primary_frequency,
@@ -293,7 +299,9 @@ class MissionStore:
                      updated_ns=excluded.updated_ns,
                      mission_id=COALESCE(excluded.mission_id, mission_id),
                      upstream_source=COALESCE(excluded.upstream_source,
-                                              upstream_source)""",
+                                              upstream_source),
+                     location_method=excluded.location_method,
+                     location_error_radius_m=excluded.location_error_radius_m""",
                 (tr["emitter_id"], tr.get("state", "new"),
                  float(tr.get("primary_frequency", 0.0)),
                  tr.get("last_power_dbfs"),
@@ -308,7 +316,9 @@ class MissionStore:
                  json.dumps(tr.get("anomaly_flags", []) or []),
                  time.time_ns(),
                  tr.get("mission_id") or self._current_mission_id(),
-                 tr.get("upstream_source")))
+                 tr.get("upstream_source"),
+                 tr.get("location_method"),
+                 tr.get("location_error_radius_m")))
 
     def _insert_assessment_sync(self, rep: Dict[str, Any]):
         with self._lock:

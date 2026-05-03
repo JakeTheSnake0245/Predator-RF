@@ -51,10 +51,22 @@ class EmitterTrack:
     # Anomaly flags
     anomaly_flags: List[str] = field(default_factory=list)
 
-    # Location estimate (if TDOA available)
+    # Location estimate. Populated by either:
+    #   - TDOA solver (≥2 GPS-synced nodes hearing same emission): the
+    #     real geolocation path. `location_method = "tdoa"`.
+    #   - RSSI proximity estimator (single-node fallback, opt-in via
+    #     RSSI_PROXIMITY_ENABLED): centres on the detecting node's GPS,
+    #     uses free-space path-loss + assumed EIRP to estimate a range
+    #     circle. `location_method = "rssi_proximity"`. The radius is
+    #     wide and `location_confidence` is intentionally low (~0.15)
+    #     because TX power is unknown and there is no bearing info.
+    # `location_error_radius_m` is the rendered circle/ellipse radius
+    # so the UI can show uncertainty without recomputing it.
     estimated_lat: Optional[float] = None
     estimated_lon: Optional[float] = None
     location_confidence: float = 0.0
+    location_method: Optional[str] = None       # "tdoa" | "rssi_proximity" | None
+    location_error_radius_m: Optional[float] = None
 
     # Provenance: which cluster originated this track. None = local
     # fleet; otherwise the CoC peer URL (set on first ingest of a
@@ -112,5 +124,8 @@ class EmitterTrack:
             "anomaly_flags": self.anomaly_flags,
             "estimated_lat": self.estimated_lat,
             "estimated_lon": self.estimated_lon,
+            "location_confidence": self.location_confidence,
+            "location_method": self.location_method,
+            "location_error_radius_m": self.location_error_radius_m,
             "upstream_source": self.upstream_source,
         }

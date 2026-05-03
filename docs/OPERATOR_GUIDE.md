@@ -354,11 +354,54 @@ The word "confidence" appears on three different things — keep them distinct:
 
 A track can have high detection confidence (0.9 — definitely real), low location confidence (0.2 — five-km search area), and medium assessment confidence (0.5 — probably elevated threat but not certain). All three are surfaced.
 
-### 12.6 What happens with no GPS-synced nodes
+### 12.6 What happens with no GPS-synced nodes (single-phone operator)
 
-- Single-node operation falls back to **range-only proximity** — the hit is mapped at the detecting node's position with the node's GPS accuracy as the error radius.
-- If even the detecting node has no GPS, the hit lands at the most-trustworthy node's last known position, marked as a **fallback location** (different icon).
-- The CoT emitter (§ 16) refuses to emit a beacon for a hit with no resolvable location — TAK requires a point.
+If you have only one phone in the field, **TDOA does not run** — it physically can't, you need ≥2 GPS-synced sensors hearing the same emission within a 5 s window. Instead, the system has two fallback behaviours:
+
+**Default (RSSI proximity disabled — `RSSI_PROXIMITY_ENABLED=false`):**
+
+- The track's `estimated_lat / estimated_lon` stay `None`. Tracks have no map position of their own.
+- The map shows your phone's GPS dot and its breadcrumb trail, with hit timestamps along the trail. **The operator does the triangulation in their head** by walking the area and noticing where the signal got stronger.
+- This is the honest default: the system never *invents* an emitter position when it can't measure one.
+- The CoT emitter (§ 16), if armed, falls back to **the detecting node's GPS** as a stand-in point so TAK has something to render — but that beacon means "I'm here and I heard something," not "the emitter is here." TAK shows it as a marker at your phone's location.
+
+**Opt-in (RSSI proximity enabled — `RSSI_PROXIMITY_ENABLED=true`):** see § 12.7.
+
+### 12.7 RSSI proximity fallback (single-node coarse geolocation)
+
+When you set `RSSI_PROXIMITY_ENABLED=true`, single-node tracks get a coarse position estimate so the map shows *something* per emitter instead of just your phone's dot. **It is NOT a real geolocation. Treat the radius as a search area, not a position.**
+
+#### How it works
+
+- The detected signal's power (`power_dbfs`) is converted to absolute power at the antenna using a fixed offset (`RSSI_DBFS_TO_DBM_OFFSET`, default −30 dB).
+- A **free-space path-loss** model converts that received power into a range estimate, given an **assumed transmitter EIRP** (`RSSI_ASSUMED_EIRP_DBM`, default 30 dBm = 1 W = typical handheld).
+  - Formula: `d_m = (c / (4π·f_Hz)) · 10^((Pt_dBm − Pr_dBm) / 20)`
+- The estimated range is multiplied by `RSSI_RADIUS_UNCERTAINTY_FACTOR` (default 2.0) to get the rendered circle radius — accounting for path-loss model error, EIRP guess error, and multipath.
+- The radius is clamped to `[RSSI_MIN_RADIUS_M, RSSI_MAX_RADIUS_M]` (default 50 m to 5 km — same scale as a TDOA ellipse).
+- The **circle is centred on the detecting node's GPS position**. There's no bearing information, so the emitter is "somewhere within radius `r` of your phone, in some unknown direction."
+- `location_method = "rssi_proximity"` is set on the track so the UI can render it differently from a TDOA fix (a wide light circle vs. a tight ellipse).
+- `location_confidence` is **hard-capped at 0.20** regardless of signal strength — TX power is unknown, so the system can never be highly confident about distance.
+
+#### What this is good for
+
+- **Walking-the-perimeter recon.** As you walk closer to a strong source, the estimated range shrinks and the circle visibly contracts on the map. You DF visually by watching the circles update.
+- **Coarse "is it within 100 m or within 5 km" bucketing** when planning where to position fixed sensors.
+- **Giving TAK a non-trivial CE radius** so the marker doesn't pretend to be a sub-metre fix when it isn't.
+
+#### What this is NOT good for
+
+- **Reporting actual emitter coordinates** to higher echelons. The single-phone CoT beacon should be understood as "operator was here, heard X" — not "emitter at coordinates Y."
+- **Anything where the assumed TX power is unlikely to match.** A 25 W mobile being assumed-as-1 W will read as ~5× too close; a 100 mW IoT being assumed-as-1 W will read as ~3× too far. **If you know the band's typical TX power, set `RSSI_ASSUMED_EIRP_DBM` accordingly per mission.**
+- **Positions in heavy clutter / urban canyon.** Free-space path loss assumes line-of-sight. Real-world buildings, trees, and ground bounce make the actual range estimate optimistic — bump `RSSI_RADIUS_UNCERTAINTY_FACTOR` to 3 or 4 in those environments.
+
+#### Override priority
+
+TDOA always wins. As soon as a second GPS-synced node hears the same emitter and TDOA produces a fix, the track's `location_method` flips to `"tdoa"` and the proximity circle is replaced by the proper ellipse. Operator manual-location overrides (§ 18.3) win over both.
+
+#### What happens if even the detecting node has no GPS
+
+- Track stays without `estimated_lat / estimated_lon`.
+- Fallback CoT beacon, if armed, uses the **most-trustworthy node's last-known position** — marked with a different icon to flag that the location is a fallback.
 
 ---
 
@@ -633,6 +676,14 @@ COT_APPROVAL_MAX_PENDING=200
 AUTO_TASKER_ENABLED=false
 AUTO_TASKER_MIN_INTERVAL_S=30.0
 AUTO_TASKER_GLOBAL_MAX_PER_MIN=30
+
+# RSSI proximity (single-node fallback geolocation; off by default)
+RSSI_PROXIMITY_ENABLED=false
+RSSI_ASSUMED_EIRP_DBM=30.0          # 1 W handheld; bump to 40 for 10 W mobile
+RSSI_DBFS_TO_DBM_OFFSET=-30.0       # SDR-specific; calibrate per node if possible
+RSSI_RADIUS_UNCERTAINTY_FACTOR=2.0  # 3-4 in cluttered environments
+RSSI_MIN_RADIUS_M=50.0
+RSSI_MAX_RADIUS_M=5000.0
 
 # CoC mode (TOC-of-TOCs)
 COC_MODE_ENABLED=false

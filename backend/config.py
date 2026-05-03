@@ -169,6 +169,43 @@ class BackendConfig:
     gps_max_age_s: float = field(
         default_factory=lambda: _env_float("GPS_MAX_AGE_S", 60.0))
 
+    # ── Single-node RSSI proximity (no-fleet fallback geolocation) ────────
+    # When TDOA can't run (single phone / single sensor, or only one
+    # GPS-synced node hearing the emitter), this fallback uses free-space
+    # path-loss + an assumed transmitter EIRP to convert the received
+    # power into a coarse range estimate, centred on the detecting node's
+    # GPS. The map renders this as a wide circle, NOT a tight dot — the
+    # uncertainty is inherent (TX power is unknown, no bearing info, no
+    # multipath model). Tag on the track is `location_method =
+    # "rssi_proximity"` so the operator can tell it from a TDOA fix.
+    # Disabled by default — opt-in because the result is easy to over-
+    # trust if it's not labelled clearly in the UI.
+    rssi_proximity_enabled: bool = field(
+        default_factory=lambda: _env_bool("RSSI_PROXIMITY_ENABLED", False))
+    # Assumed transmitter EIRP in dBm. 30 dBm = 1 W, typical of a
+    # handheld VHF/UHF radio. Bump to 40 (10 W) for vehicle mobile;
+    # drop to 20 (100 mW) for IoT / short-range telemetry. The
+    # estimator has no way to know the truth — this is the operator's
+    # best a-priori guess given the band they're sweeping.
+    rssi_assumed_eirp_dbm: float = field(
+        default_factory=lambda: _env_float("RSSI_ASSUMED_EIRP_DBM", 30.0))
+    # Conversion from the SDR's reported dBFS to absolute dBm. Without
+    # an absolute power calibration this is approximate; -30 means a
+    # 0 dBFS sample ≈ -30 dBm at the antenna port (typical mid-gain
+    # RTL-SDR). The Calibrator module can tighten this per-node.
+    rssi_dbfs_to_dbm_offset: float = field(
+        default_factory=lambda: _env_float("RSSI_DBFS_TO_DBM_OFFSET", -30.0))
+    # Multiply the estimated range by this factor to get the rendered
+    # circle radius — accounts for path-loss model error, EIRP guess
+    # error, multipath. 2.0 = "the emitter is somewhere within 2× the
+    # nominal free-space range." Bump higher in cluttered environments.
+    rssi_radius_uncertainty_factor: float = field(
+        default_factory=lambda: _env_float("RSSI_RADIUS_UNCERTAINTY_FACTOR", 2.0))
+    rssi_min_radius_m: float = field(
+        default_factory=lambda: _env_float("RSSI_MIN_RADIUS_M", 50.0))
+    rssi_max_radius_m: float = field(
+        default_factory=lambda: _env_float("RSSI_MAX_RADIUS_M", 5000.0))
+
     # ── /v1/timing poll ───────────────────────────────────────────────────
     # How often KujhadClient asks the C++ node for its timing telemetry
     # (NTP offset, GPSDO lock state, last-PPS age). Cheap call; 30 s is
