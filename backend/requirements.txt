@@ -1,0 +1,29 @@
+# Predator-SDR Python Backend — requirements
+# Install: pip install -r requirements.txt
+
+# ── API & web ───────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+aiohttp>=3.9.0
+pydantic>=2.0.0
+
+# ── Signal processing ────────────────────────────────────────────────────────
+numpy>=1.26.0
+scipy>=1.12.0
+
+# ── System monitoring ────────────────────────────────────────────────────────
+psutil>=5.9.0
+
+# ── SDR Python wrappers (install whichever hardware you have) ───────────────
+# RTL-SDR:  pip install pyrtlsdr
+# HackRF:   pip install pyhackrf
+# SoapySDR: apt install python3-soapysdr  (or system package)
+# pyrtlsdr  # uncomment for RTL-SDR
+# pyhackrf  # uncomment for HackRF
+
+# ── Optional: database ───────────────────────────────────────────────────────
+# asyncpg>=0.29.0        # PostgreSQL async
+# influxdb-client>=1.40  # InfluxDB time-series
+
+# ── Optional: structured logging ────────────────────────────────────────────
+# structlog>=24.0.0

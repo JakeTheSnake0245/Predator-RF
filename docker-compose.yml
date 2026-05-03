@@ -1,0 +1,69 @@
+version: "3.9"
+
+# Predator-SDR full-stack deployment
+# Usage:
+#   docker-compose up -d                          # start all services
+#   docker-compose up -d predator-backend         # backend only
+#   FLEET_NODES="node1@192.168.1.10:5259:key:hackrf" docker-compose up -d
+
+services:
+
+  # ── Python intelligence backend ───────────────────────────────────────────
+  predator-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - LOG_LEVEL=INFO
+      - FLEET_NODES=${FLEET_NODES:-}
+      - TRACK_MAINTENANCE_S=10
+      - BASELINE_WINDOW_H=24
+      - TDOA_ENABLED=true
+    networks:
+      - predator-net
+    restart: unless-stopped
+
+  # ── PostgreSQL (track persistence) ───────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: predator
+      POSTGRES_USER: predator
+      POSTGRES_PASSWORD: predator_secret
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - predator-net
+    restart: unless-stopped
+
+  # ── InfluxDB (time-series RF events) ─────────────────────────────────────
+  influxdb:
+    image: influxdb:2.7-alpine
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: predator
+      DOCKER_INFLUXDB_INIT_PASSWORD: predator_secret
+      DOCKER_INFLUXDB_INIT_ORG: predator-sdr
+      DOCKER_INFLUXDB_INIT_BUCKET: rf_events
+      DOCKER_INFLUXDB_INIT_RETENTION: 30d
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    ports:
+      - "8086:8086"
+    networks:
+      - predator-net
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  influxdb-data:
+
+networks:
+  predator-net:
+    driver: bridge

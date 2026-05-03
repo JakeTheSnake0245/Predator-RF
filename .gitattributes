@@ -1,0 +1,28 @@
+# Default: auto line-ending normalization
+* text=auto
+
+# Shell scripts must always be LF (CRLF breaks bash on Linux/Android)
+*.sh text eol=lf
+
+# Python — LF everywhere
+*.py text eol=lf
+
+# YAML / Docker — LF
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile* text eol=lf
+
+# C/C++ source — auto
+*.cpp text=auto
+*.h text=auto
+*.c text=auto
+
+# Binary assets — no conversion
+*.so binary
+*.a binary
+*.keystore binary
+*.png binary
+*.jpg binary
+*.ttf binary
+*.otf binary
+*.pdf binary
