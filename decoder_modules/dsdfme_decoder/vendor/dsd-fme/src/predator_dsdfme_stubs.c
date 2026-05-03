@@ -353,7 +353,39 @@ void udp_socket_blasterA(dsd_opts *opts, dsd_state *state, size_t nsam, void *da
  * ============================================================ */
 void ncursesOpen    (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
 void ncursesPrinter (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+void ncursesClose   (void)                              { /* no-op */ }
 void resumeScan     (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+void openSerial     (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; }
+int  csvGroupImport (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; return 0; }
+int  pulse_list     (void)                              { return 0; }
+
+/* dsd_rigctl.c UDP-socket helpers also referenced from kept TUs (dsd_audio*, edacs-fme.c). */
+int  udp_socket_connect (dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; return -1; }
+int  udp_socket_connectA(dsd_opts *opts, dsd_state *state) { (void)opts; (void)state; return -1; }
+
+/* rtl_sdr_fm.cpp lifecycle calls referenced from dsd_main.c worker. */
+void open_rtlsdr_stream    (dsd_opts *opts) { (void)opts; }
+void cleanup_rtlsdr_stream (void)           { /* no-op */ }
+
+/* ============================================================
+ * libcodec2 stubs — header (codec2/codec2.h) is in sdr-kit so dsd.h compiles,
+ * but the dsdfme_decoder target deliberately does NOT link libcodec2 (M17
+ * voice is OPT_BUILD_M17_DECODER=OFF in v1; we don't pay the APK-size cost).
+ *
+ * Call sites:
+ *   - dsd_main.c:1352-1353 codec2_create  — between gates, NOT preprocessor-excluded
+ *   - m17.c:895/1041/1042 codec2_decode   — m17.c is kept whole; runtime-unreachable
+ *
+ * Returning NULL from codec2_create is fine — m17.c voice paths are never
+ * invoked in v1 (no M17 protocol enable in the wrapper), so the NULL state
+ * never reaches codec2_decode at runtime. The stubs exist purely for the linker.
+ * ============================================================ */
+struct CODEC2;
+struct CODEC2 *codec2_create(int mode) { (void)mode; return (struct CODEC2 *)0; }
+void codec2_destroy(struct CODEC2 *st) { (void)st; }
+void codec2_decode (struct CODEC2 *st, short speech_out[], const unsigned char bytes[]) {
+    (void)st; (void)speech_out; (void)bytes;
+}
 
 /* ============================================================
  * Predator decoder worker (Phase 3b runtime hookup).
