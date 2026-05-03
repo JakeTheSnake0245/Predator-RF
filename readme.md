@@ -4,11 +4,25 @@
 
 # Predator RF
 
-**A mission-focused software-defined radio platform for Android, Linux, Windows, and macOS.**
+**A solo-SIGINT-operator cockpit. Software-defined radio, fleet coordination, geolocation, and ATAK push — built for the operator who has to do all four jobs alone.**
 
-Built on top of the open-source [SDR++](https://github.com/AlexandreRouma/SDRPlusPlus) core, Predator RF replaces the traditional radio-hobby interface with a clean, operator-oriented UI designed for real-world spectrum work — automated frequency monitoring, signal classification, target tracking, and ATAK integration.
+Built on top of the open-source [SDR++](https://github.com/AlexandreRouma/SDRPlusPlus) core, Predator RF replaces the traditional radio-hobby interface with a clean, mission-oriented UI for real-world spectrum work — automated frequency monitoring, signal classification, multi-sensor fusion, time-difference-of-arrival (TDOA) geolocation, and ATAK / TAK CoT integration. **RX-only by policy** — every output (CoT, AutoTasker re-tunes) sits behind explicit two-key gates so an automated assessment can never bypass operator intent.
 
-> **Status:** Active development. Android is the primary target.
+> **Status:** Active development. Android phone-only deployment is the primary target; Python backend + Raspberry Pi sensor nodes are the second.
+
+> **Full operator-side documentation:** [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) (29-page PDF: [`docs/Predator_RF_Operator_Guide.pdf`](docs/Predator_RF_Operator_Guide.pdf)) — the standalone "if you have to pick this up cold and conquer" guide. This README is the project overview; the operator guide is the field manual.
+
+---
+
+## Two deployment paths
+
+The system is designed around two equally-supported deployment modes. Pick one or both — they're built to mix.
+
+### Path 1 — Phone-only (Android)
+The C++ Predator RF app on a Galaxy S22 (or any Android 10+ device), driving a USB SDR through an OTG cable. Standalone — no other infrastructure needed. The phone IS the cockpit. Optionally peers with other phones / RPi sensors via the Kujhad fleet protocol over WiFi or a private overlay (ZeroTier / Tailscale).
+
+### Path 2 — Linux TOC + RPi sensor nodes (Python backend)
+A Python backend service runs on a Linux operator workstation or a Raspberry Pi. It owns persistence (SQLite mission ledger), aggregates events from one or more Kujhad-equipped C++ sensor nodes via HTTP, runs the TDOA coordinator, decision engine, AutoTasker, and CoT emitter centrally, and exposes a REST + SSE API for any UI / dashboard. A typical mission has one Linux workstation running the backend + ATAK plumbing, two-to-four phones in the field with the Android app each sharing into Kujhad, and one or two RPi sensors dropped at fixed points. All of it fuses into one operator screen.
 
 ---
 
@@ -16,21 +30,18 @@ Built on top of the open-source [SDR++](https://github.com/AlexandreRouma/SDRPlu
 
 - [What's New](#whats-new)
 - [Features](#features)
+- [Geolocation: TDOA + single-node RSSI proximity](#geolocation-tdoa--single-node-rssi-proximity)
+- [The two-key safety model](#the-two-key-safety-model)
 - [Supported Hardware](#supported-hardware)
 - [Installation — Android](#installation--android)
+- [Installation — Python backend (Path 2)](#installation--python-backend-path-2)
 - [Building from Source](#building-from-source)
-- [User Guide](#user-guide)
-  - [Screen Layout](#screen-layout)
-  - [Spectrum Tab (SPEC)](#spectrum-tab-spec)
-  - [Hits & Events Tab (HITS)](#hits--events-tab-hits)
-  - [Network Tab (NET)](#network-tab-net)
-  - [Map Tab (MAP)](#map-tab-map)
-  - [Mission Tab (MIS)](#mission-tab-mis)
-  - [Kujhad Fleet Tab (KUJ)](#kujhad-fleet-tab-kuj)
-  - [System Tab (SYS)](#system-tab-sys)
+- [User Guide — the eight tabs](#user-guide--the-eight-tabs)
 - [ATAK / TAK CoT Integration](#atak--tak-cot-integration)
 - [Kujhad Fleet Console](#kujhad-fleet-console)
 - [Decoder Modules](#decoder-modules)
+- [Tiered Bill of Materials](#tiered-bill-of-materials)
+- [Roadmap](#roadmap)
 - [Third-Party Licenses](#third-party-licenses)
 - [Contributing](#contributing)
 
@@ -38,112 +49,184 @@ Built on top of the open-source [SDR++](https://github.com/AlexandreRouma/SDRPlu
 
 ## What's New
 
+### v1.3.0 — Cockpit / Fleet / Geolocation
+- **Python backend (Path 2)** — runs on a Linux workstation or RPi; owns the SQLite mission ledger, aggregates events from C++ Kujhad devices, exposes a token-protected REST + SSE API on `:8000`. CoC mode chains backends together as a TOC-of-TOCs.
+- **TDOA multilateration** — when ≥2 GPS-synchronized nodes hear the same emission within a 5 s window, the fusion module computes a hyperbolic least-squares position fix with a confidence-scaled error ellipse (50 m → 5 km). Inclusive policy: cheap RTL-SDR nodes participate even without a GPSDO; their timing trust is just capped lower so the fix's confidence reflects the kit.
+- **Single-node RSSI proximity fallback** *(opt-in via `RSSI_PROXIMITY_ENABLED=true`)* — when only one sensor is in play, the system can render a wide circle around the detecting node using free-space path-loss + an assumed transmitter EIRP. **Not a real geolocation** — confidence is hard-capped at 0.20 and the radius is intentionally wide. Useful for walking-the-perimeter recon (the circle visibly contracts as the operator gets closer to a strong source).
+- **Track lifecycle state machine** — every emitter goes through NEW → TRACKING (≥3 obs) → STABLE (≥10 obs) → COASTING → LOST. AutoTasker and CoT escalation are gated by state.
+- **AutoTasker** *(opt-in)* — when an assessment recommends `focus_all_nodes`, automatically re-tunes every TDOA-capable node to the track's frequency. Three brakes: per-node 30 s rate limit, already-tuned ±2 kHz check, and a global per-fleet budget of 30 tunes/min.
+- **Mission ledger + AAR export** — `POST /api/v1/missions` opens a mission; everything (events, tracks, assessments, approvals, override changes) is grouped by `mission_id`; `GET /api/v1/missions/<id>/export` returns a JSONL tarball as the after-action package.
+- **Operator overrides** — friendly list, frequency blacklist, and manual location override (operator-supplied lat/lon, pinned at 0.95 confidence, wins over TDOA).
+- **CoT two-key gate** — operator-level kill switch + per-track escalation flag, plus an optional third gate (`COT_REQUIRE_MANUAL_APPROVAL=true`) that queues every escalation for explicit operator approve / reject before the packet leaves.
+- **Inclusive hardware capability table** — RTL-SDR Blog v4, HackRF One, Airspy R2, LimeSDR, bladeRF 2.0, ADALM-PLUTO, and SoapySDR are all first-class; the trust calculus knows each radio's noise figure, frequency stability, and timing uncertainty so good kit gets weighted accordingly without locking out cheap kit.
+
 ### v1.2.0
-- **ATAK CoT integration** — sends GeoChat hit alerts and SA beacons to any TAK endpoint when a targeted frequency is detected; device appears on the ATAK map as a friendly unit at the phone's GPS fix
-- **Right rail fully visible on all phone sizes** — deterministic layout, NoScrollbar, adaptive slider heights
-- **Spectrum no longer freezes during scanning** — debounced event disk writes prevent I/O from blocking the render thread
-- **Confirmation dialogs** before clearing hits or events — no more accidental data loss
-- **Keyboard-safe text editing popup** — naming a hit opens a modal anchored above the Android keyboard so you can see what you're typing
+- **ATAK CoT integration** — sends GeoChat hit alerts and SA beacons to any TAK endpoint when a targeted frequency is detected; device appears on the ATAK map as a friendly unit at the phone's GPS fix.
+- **Right rail fully visible on all phone sizes** — deterministic layout, NoScrollbar, adaptive slider heights.
+- **Spectrum no longer freezes during scanning** — debounced event disk writes prevent I/O from blocking the render thread.
+- **Confirmation dialogs** before clearing hits or events.
+- **Keyboard-safe text editing popup** — naming a hit opens a modal anchored above the Android keyboard.
 
 ### v1.1.0
-- Live spectrum scanning without freezing on signal detection
-- Hit and target frequency marker overlays on FFT and waterfall
-- VFO markers that track signal frequencies during scanner retunes
-- Touch-scroll fix in overlay panels
-- Enhanced Mission tab with frequency display and improved delete buttons
-- Resolved keyboard overlap issue on Android
+- Live spectrum scanning without freezing on signal detection.
+- Hit and target frequency marker overlays on FFT and waterfall.
+- VFO markers that track signal frequencies during scanner retunes.
+- Touch-scroll fix in overlay panels.
+- Enhanced Mission tab with frequency display and improved delete buttons.
+- Resolved keyboard overlap issue on Android.
 
 ---
 
 ## Features
 
 ### Signal Detection & Recording
-- **Continuous FFT peak detection** — identifies peaks above a configurable SNR threshold every render frame
-- **Hit recording** — each confirmed detection is saved with frequency, strength (dBFS), SNR, decoder output, label, notes, and GPS-stamped timestamp
-- **Duplicate suppression** — configurable window (default 20 s) prevents the same frequency spamming the hit list
-- **Strong-hit extended dwell** — stays on a strong signal instead of stepping away mid-transmission
-- **State classification** — tag each hit as Target, Exclude, Unknown, or Archived
+- **Continuous FFT peak detection** above a configurable SNR threshold every render frame.
+- **Hit recording** — each confirmed detection is saved with frequency, dBFS, SNR, decoder output, label, notes, and GPS-stamped timestamp.
+- **Duplicate suppression** — configurable window (default 20 s) prevents the same frequency spamming the hit list.
+- **Strong-hit extended dwell** — stays on a strong signal instead of stepping away mid-transmission.
+- **State classification** — tag each hit as Target, Exclude, Unknown, or Archived.
+- **Baseline learning** — record what the noise floor / normal traffic looks like in an area, save it, then suppress it next time so only NEW signals fire as hits.
 
 ### Operating Modes
-- **Manual** — direct operator tuning; all detector resources are under operator control
-- **Classify** — manual control while background watchers check idle spectrum segments
-- **Scan** — automated stepping across configured search bands with per-band dwell times
-- **QuickScan** — rapid single-pass sweep across all enabled bands for situational awareness
+- **Manual** — direct operator tuning; all detector resources are under operator control.
+- **Classify** — manual control while background watchers check idle spectrum segments.
+- **Scan** — automated stepping across configured search bands with per-band dwell times.
+- **QuickScan** — rapid single-pass sweep across all enabled bands for situational awareness.
 
 ### Spectrum Display
-- Full waterfall + FFT display inherited from SDR++
-- Hit, target, and exclude markers overlaid on the live spectrum (yellow / green / red)
-- Search band shading directly on the waterfall
-- Right-rail sliders for Zoom, FFT Max, and FFT Min — always accessible without opening a menu
-- Peer spectrum mirroring via Kujhad (cyan dashed overlays distinguish peer markers from local ones)
+- Full waterfall + FFT display inherited from SDR++.
+- Hit, target, exclude, and peer markers overlaid on the live spectrum (yellow / green / red / cyan dashed).
+- Search band shading directly on the waterfall.
+- Right-rail sliders for Zoom, FFT Max, FFT Min — always accessible.
+- Peer spectrum mirroring via Kujhad.
 
-### Target Management
-- Named **target frequency slots** — scanner prioritises these; hits here are flagged as "target"
-- **Search bands** — define start/stop frequency ranges for automated scanning
-- **Exclude bands** — mark frequencies the scanner skips entirely
-- All lists persist across sessions in the app directory
+### Multi-sensor Fusion
+- **Hardware-aware track associator** — 100 kHz frequency-bucket index for O(1) candidate lookup; tolerance scales with each radio's PPM accuracy.
+- **Bayesian confidence engine** — six factors (observation saturation, node trust, multi-node agreement, temporal consistency, frequency stability, hardware quality) into a single track confidence in [0.01, 0.99].
+- **Per-node trust score** — composite of base trust × uptime × (1 − false-positive rate) × hardware factor (frequency stability + sensitivity + timing) with a 0.7× thermal-throttle multiplier. Drives observation weighting in fusion.
+- **Anomaly detection** — pumps anomaly flags into the threat assessment; high-severity flags can trigger automatic AutoTasker focus or CoT escalation (subject to operator gates).
+
+### Target & Mission Management
+- Named **target frequency slots** prioritised by the scanner; hits there are flagged "target".
+- **Search bands** — define start/stop ranges for automated scanning.
+- **Exclude bands** — frequencies the scanner skips entirely.
+- **Friendly list / blacklist / manual location** — operator overrides that survive restarts and ride through the audit log.
+- **Mission lifecycle** — start mission, run, end mission, export the AAR tarball as the after-action package.
 
 ### ATAK / TAK Integration
-- **CoT GeoChat** messages sent to any TAK endpoint on every new hit
-- **SA beacons** (type `a-f-G-U-C`) broadcast on a configurable interval — shows as a friendly unit on the ATAK map
-- GPS coordinates from the phone embedded in every SA beacon and hit report
-- Supports UDP multicast (ATAK LAN), UDP unicast, and direct TCP to a TAK Server
-- User-selectable callsign and chat room
-- Sensor mode: Predator RF appears as a dedicated sensor entity separate from your operator unit
+- **CoT GeoChat** messages on every escalated hit.
+- **SA beacons** (`a-f-G-U-C`) at a configurable interval — device shows as a friendly unit on the ATAK map.
+- **Two-key gate** — operator-level kill switch + per-track escalation flag both required.
+- **Optional manual-approval queue** — third key for the field; every escalation enqueues for explicit operator approve/reject before the packet leaves.
+- Supports UDP multicast (ATAK LAN), UDP unicast, direct TCP to a TAK Server, and TLS.
+- Per-emitter rate limit (default 5 s) so a chatty source can't flood TOC.
 
-### Kujhad Fleet Console
-- Peer-to-peer spectrum sharing over LAN or VPN
-- **Device role** — publishes live spectrum, hits, mission config, and GPS position to controller peers
-- **Controller role** — mirrors a peer's live waterfall; can push mission commands (retune, update targets/bands/excludes, start/stop scan)
-- Per-peer API key authentication
-- Optional TLS with SHA-256 certificate pinning
-- Controller sees peer markers in cyan; local markers remain yellow/green
+### Kujhad Fleet
+- Hub-and-spoke peer protocol — each instance can be a Device (publishes state + event stream), a Controller (consumes from peers), or both.
+- Tiny HTTP/1.1 + JSON over a private overlay (ZeroTier / Tailscale recommended) or LAN.
+- Per-peer API key authentication (`X-Kujhad-Key` header).
+- **Optional TLS with SHA-256 certificate pinning** — fingerprint exchanged out-of-band; mismatches abort the connection. When TLS is on, plain HTTP is locked to loopback only.
+- Endpoints: `GET /v1/identify` `gps` `state` `events` `timing` and `POST /v1/command` (rejects any `tx`-class command at the dispatcher — the module never opens a transmit path).
 
 ### Decoder Integration
-- **RTL-433** — hundreds of ISM-band sensors (weather, temperature, humidity, power meters, garage openers)
-- **DSD-FME** — P25 Phase 1 & 2, DMR, D-STAR, NXDN digital voice
-- **ADS-B** — aircraft transponders at 1090 MHz
-- **M17** — M17 amateur digital voice
+- **RTL-433** — hundreds of ISM-band sensors (weather, temperature, humidity, power meters, garage openers).
+- **DSD-FME** — P25 Phase 1 & 2, DMR, D-STAR, NXDN digital voice.
+- **ADS-B** — aircraft transponders at 1090 MHz.
+- **M17** — M17 amateur digital voice.
+- **AIS** — marine vessel tracking (NEW).
+- **POCSAG** — pager protocol (NEW).
 
 ### Android-Specific
-- GPS-driven SA beacons and hit location tagging
-- Touch-first ergonomics: large tap targets, finger-sized scrollbars, immersive fullscreen
-- USB OTG SDR attachment via Android USB host API
-- Persistent app directory — config, hits, events, and mission lists survive restarts and updates
+- GPS-driven SA beacons and hit location tagging.
+- Touch-first ergonomics: large tap targets, finger-sized scrollbars, immersive fullscreen.
+- USB OTG SDR attachment via Android USB host API.
+- Persistent app directory — config, hits, events, baselines, and mission lists survive restarts and updates.
+
+---
+
+## Geolocation: TDOA + single-node RSSI proximity
+
+Two independent geolocation paths, picked automatically based on what's available:
+
+### TDOA (≥2 GPS-synced nodes)
+
+When two or more sensor nodes with GPS lock hear the same emission within a 5-second window, the TDOA coordinator computes a hyperbolic least-squares position fix.
+
+| Configuration | What you get |
+|---|---|
+| 1 distinct node | Falls back to RSSI proximity (if enabled) or no fix |
+| 2 distinct nodes | Midpoint fallback, `confidence = 0.3 × mean(timing_trust)` |
+| 3+ distinct nodes | 50-iter LSQ in a local ENU frame, geometric `confidence = min(0.95, 0.5 + 0.1·N) × mean(timing_trust)` |
+
+**Timing trust** per node ranges 0.30 (system-clock only) to 0.98 (GPSDO + PPS lock + |offset| < 10 ms), with a −0.20 penalty for last-sync > 5 min. Cheap nodes participate too — their fix just carries lower confidence.
+
+**The error ellipse:**
+- Base radius scales as `50 m + (1 − confidence) × 4950 m` — high-confidence fixes shrink toward 50 m, zero-confidence fixes grow toward 5 km.
+- Eccentricity comes from the geometry of the participating nodes (clustered → near-circular; strung along a line → long thin ellipse perpendicular to the baseline, matching TDOA's actual physics).
+- This is the difference between a 50 m fix and a 5 km search area — both look like the same dot without it.
+
+### RSSI proximity (single-node fallback, opt-in)
+
+When you have only one sensor and you set `RSSI_PROXIMITY_ENABLED=true`, the system uses free-space path-loss + an assumed transmitter EIRP to render a wide circle around the detecting node.
+
+- **Hard-capped at 0.20 confidence** — TX power is unknown, so the system can never be highly confident about distance.
+- **No bearing information** — the emitter is "somewhere within radius `r` of the sensor, in some unknown direction."
+- **TDOA always wins** — as soon as a second GPS-synced node hears the same emitter, the proximity circle is replaced by the proper TDOA ellipse.
+- **Off by default** because the result is easy to over-trust if the UI doesn't render it as a wide circle.
+
+Useful for: walking-the-perimeter recon (circle visibly contracts as the operator approaches a strong source), coarse "within 100 m or within 5 km" bucketing, giving TAK a non-trivial CE radius. Not useful for: reporting actual emitter coordinates upstream, wildly-mismatched assumed-EIRP bands, heavy clutter / urban canyon.
+
+Tuning knobs (env vars): `RSSI_ASSUMED_EIRP_DBM` (default 30 = 1 W handheld), `RSSI_DBFS_TO_DBM_OFFSET` (default −30), `RSSI_RADIUS_UNCERTAINTY_FACTOR` (default 2.0; bump to 3-4 in clutter), `RSSI_MIN_RADIUS_M` / `RSSI_MAX_RADIUS_M` (50 / 5000).
+
+---
+
+## The two-key safety model
+
+Predator RF starts in **RX-only** posture. Every output sits behind explicit gates so a software bug or false-positive cannot unilaterally produce an action:
+
+| Output | Gate 1 | Gate 2 | Gate 3 (optional) |
+|---|---|---|---|
+| **CoT to TAK** | `COT_ENABLED` operator switch | `assessment.escalate_to_atak` (auto-set for high/critical threats) | `COT_REQUIRE_MANUAL_APPROVAL` queues every escalation for operator approve/reject |
+| **AutoTasker re-tune** | `AUTO_TASKER_ENABLED` operator switch | Per-node 30 s rate limit | Global per-fleet budget (30 tunes/min default) + already-tuned ±2 kHz check |
+| **Kujhad transmit command** | (none — rejected) | The dispatcher unconditionally rejects any `tx`-class command | n/a — the module physically never opens a transmit path |
+
+`critical` threats are **never** auto-actioned regardless of AutoTasker state — the operator pushes the button.
 
 ---
 
 ## Supported Hardware
 
-Any hardware supported by SDR++ is compatible. Tested on Android:
+| SDR | Freq range | Max sample | NF | MDS | TDOA | Timing | Price |
+|---|---|---|---|---|---|---|---|
+| **RTL-SDR Blog v4** | 25 MHz – 1.7 GHz | 3.2 MS/s | 6.0 dB | -110 dBm | no | 1000 ns | $40 |
+| **HackRF One** | 1 MHz – 6 GHz | 20 MS/s | 10.0 dB | -100 dBm | yes | 500 ns | $300 |
+| **Airspy R2** | 24 MHz – 1.7 GHz | 20 MS/s | 2.5 dB | -125 dBm | yes | 50 ns | $170 |
+| **Airspy HF+ Discovery** | 0.5 kHz – 31 MHz, 60 – 260 MHz | 0.768 MS/s | 1.0 dB | -140 dBm | yes | 50 ns | $170 |
+| **LimeSDR-USB** | 100 kHz – 3.8 GHz | 61.4 MS/s | 3.0 dB | -120 dBm | yes (PPS out) | 100 ns | $600 |
+| **bladeRF 2.0** | 47 MHz – 6 GHz | 61.4 MS/s | 4.0 dB | -118 dBm | yes | 80 ns | $480 |
+| **ADALM-PLUTO** | 325 MHz – 3.8 GHz | 61.4 MS/s | 5.0 dB | -115 dBm | yes | 200 ns | $200 |
+| **SDRplay RSPdx, RSP1A** | 1 kHz – 2 GHz | 10 MS/s | 4.5 dB | -118 dBm | no | 500 ns | $150–$220 |
+| **KiwiSDR** (network) | 0.01 – 30 MHz | — | — | — | no | — | $300 |
+| **SpyServer** (network) | varies | — | — | — | no | — | $0 |
 
-| Device | Notes |
-|---|---|
-| RTL-SDR (RTL2832U) | All variants — R820T, R820T2, V3, V4, Blog |
-| HackRF One | RX mode only in Predator RF |
-| Airspy R2 / Mini | |
-| Airspy HF+ Discovery | |
-| SDRplay RSPdx, RSP1A | |
-| PlutoSDR (ADALM-PLUTO) | Via SpyServer on LAN |
-| KiwiSDR | Via network source |
-| SpyServer | Remote spectrum via TCP |
+Practical guidance: pick **Airspy R2** or **LimeSDR** for serious TDOA work (low timing uncertainty + high sensitivity). **HackRF** is the workhorse for HF coverage. **RTL-SDR Blog v4** is the cheap "I'm here too" node — TDOA participation is fine, the timing trust just gets capped.
 
 ---
 
 ## Installation — Android
 
 ### Requirements
-- Android 9 (API 28) or newer
-- USB OTG cable for directly attached SDRs, **or** a network SDR source (SpyServer, KiwiSDR, RTL-TCP)
-- "Install from unknown sources" enabled in Android settings
+- Android 9 (API 28) or newer.
+- USB OTG cable for directly attached SDRs, **or** a network SDR source (SpyServer, KiwiSDR, RTL-TCP).
+- "Install from unknown sources" enabled in Android settings.
 
 ### Sideload Steps
-1. Download `app-debug.apk` from the [Releases page](https://github.com/JakeTheSnake0245/Predator-SDR/releases)
-2. Transfer the APK to your device (USB, ADB, cloud, etc.)
-3. Tap the APK and confirm installation when prompted
-4. Launch **Predator RF** from the app drawer
-5. Grant location permission when asked (required for GPS SA beacons)
-6. Connect your SDR via USB OTG or configure a network source in the **System** tab
+1. Download `app-debug.apk` from the [Releases page](https://github.com/JakeTheSnake0245/Predator-SDR/releases).
+2. Transfer the APK to your device (USB, ADB, cloud, etc.).
+3. Tap the APK and confirm installation when prompted.
+4. Launch **Predator RF** from the app drawer.
+5. Grant Location, Storage, and USB device permissions when asked.
+6. Connect your SDR via USB OTG or configure a network source in the **System** tab.
 
 ### ADB Sideload
 ```bash
@@ -152,13 +235,48 @@ adb install -r app-debug.apk
 
 ---
 
-## Building from Source
+## Installation — Python backend (Path 2)
 
-### Prerequisites
-- Android NDK r23.2 (set path in `android/local.properties`)
-- Android SDK 33+
-- CMake 3.21+
-- Gradle 8+
+The backend is the brain of the multi-node deployment. It aggregates events from one or more Kujhad devices, runs the TDOA coordinator, persists everything to a SQLite mission ledger, and exposes a token-protected REST + SSE API.
+
+### Quick start (Linux / Debian / Ubuntu / Raspberry Pi OS)
+
+```bash
+sudo mkdir -p /opt/predator-rf /etc/predator-rf /var/lib/predator-rf/backups
+sudo git clone https://github.com/JakeTheSnake0245/Predator-SDR.git /opt/predator-rf
+cd /opt/predator-rf
+sudo python3 -m venv venv
+sudo venv/bin/pip install -r requirements.txt
+sudo cp deploy/predator-rf.env.example /etc/predator-rf/predator-rf.env
+sudoedit /etc/predator-rf/predator-rf.env       # set FLEET_NODES, API_BEARER_TOKEN
+sudo cp deploy/predator-rf.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now predator-rf
+```
+
+The backend listens on `:8000`. Quick sanity checks:
+
+```bash
+curl localhost:8000/healthz                                                   # health
+curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/nodes            # fleet
+curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/tracks           # live tracks
+curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/approvals        # CoT queue
+curl localhost:8000/metrics                                                    # Prometheus
+```
+
+### Wiring a Kujhad device into `FLEET_NODES`
+
+```
+FLEET_NODES=alpha@192.168.1.10:41947:<api_key>:hackrf,bravo@192.168.1.11:41947:<api_key2>:rtlsdr
+```
+
+Format per node: `node_id@host:port:api_key:hardware_code`. The backend identifies each node, mirrors its state every 5 s, polls events and GPS at 1 Hz, and pulls timing telemetry every 30 s.
+
+See [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) § 20 for the full env-var reference (every knob), RPi sensor-node setup, and CoC mode (TOC-of-TOCs).
+
+---
+
+## Building from Source
 
 ### Android Debug APK
 ```bash
@@ -166,6 +284,16 @@ git clone https://github.com/JakeTheSnake0245/Predator-SDR.git
 cd Predator-SDR/android
 ./gradlew assembleDebug
 # Output: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Prereqs: Android NDK r23.2 (set path in `android/local.properties`), Android SDK 33+, CMake 3.21+, Gradle 8+.
+
+On Windows from `C:\Users\cjake\TEMP\Predator-RF`:
+```powershell
+cd C:\Users\cjake\TEMP\Predator-RF
+git pull origin master
+cd android
+.\gradlew assembleDebug
 ```
 
 ### Desktop (Linux / Windows / macOS)
@@ -179,282 +307,127 @@ Refer to the upstream [SDR++ build guide](https://github.com/AlexandreRouma/SDRP
 
 ---
 
-## User Guide
+## User Guide — the eight tabs
 
-### Screen Layout
+The whole app is organized into eight tabs on the right rail.
+
+| Code | Name | What it's for |
+|---|---|---|
+| **SPEC** | Spectrum | Live waterfall + tuner. Where you actually look at signals. |
+| **HITS** | Hits & Events | Every signal the app has noticed, plus the running event log. |
+| **NET** | Network | Catalog of known networks / talkgroups / aliases. |
+| **MAP** | Map | GPS-stamped hits, TDOA fixes with error ellipses, RSSI proximity circles, node positions. |
+| **MIS** | Mission | Mode (Manual / Classify / Scan / QuickScan), search bands, targets, excludes, dwell. |
+| **KUJ** | Kujhad Fleet | Link this device to other phones / RPi sensors over a network. |
+| **SYS** | System | App settings — modules, themes, decoders, ATAK/CoT, baseline comparison, TLS pinning. |
+| **BASE** | Baseline | Record/load "normal" RF for the area; suppress baseline matches so only NEW signals fire as hits. |
+
+Full per-tab walkthroughs and the day-one workflows are in [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) §§ 6 – 8.
+
+### Right-rail layout
 
 ```
 ┌──────────────────────────────────────────────────────┬────────┐
-│ Status bar  [LIVE]  [Source]  [Mode]  [GPS READY]    │        │
-├──────────────────────────────────────────────────────┤  SPEC  │
-│ Control bar  — frequency selector, tuning mode        │  HITS  │
-├──────────────────────────────────────────────────────┤  NET   │
-│                                                       │  MAP   │
-│              Spectrum + Waterfall                     │  MIS   │
-│         (hit/target/exclude markers overlaid)         │  KUJ   │
+│ Status bar  [LIVE]  [Source]  [Mode]  [GPS] [KUJ]    │  SPEC  │
+├──────────────────────────────────────────────────────┤  HITS  │
+│ Control bar — frequency selector, tuning mode         │  NET   │
+├──────────────────────────────────────────────────────┤  MAP   │
+│            Spectrum + Waterfall                       │  MIS   │
+│       (hit/target/exclude/peer markers)               │  KUJ   │
 │                                                       │  SYS   │
-│  ┌────────────────────────────────────────────────┐  │        │
-│  │  Overlay panel (opens when a rail tab is       │  │  Zoom  │
-│  │  tapped; closes on second tap of same tab)     │  │  Max   │
-│  └────────────────────────────────────────────────┘  │  Min   │
+│  ┌────────────────────────────────────────────────┐  │  BASE  │
+│  │  Overlay panel (opens on tab tap)              │  │        │
+│  └────────────────────────────────────────────────┘  │  Zoom  │
+│                                                       │  Max   │
+│                                                       │  Min   │
 └──────────────────────────────────────────────────────┴────────┘
 ```
 
-The **right rail** (seven tab buttons + Zoom/Max/Min sliders) is always visible. Tapping a tab button opens its overlay panel on top of the spectrum; tapping the active tab again closes it.
+The status bar shows live indicators for: SDR state (LIVE / READY / NOT READY), current source, mission mode, GPS lock + age, Kujhad fleet status, CoT enable state. Each is tappable to jump to the relevant config.
 
-The **status bar** shows:
-- `LIVE` / `READY` / `NOT READY` — tap to start/stop the SDR
-- Source name — tap to jump to System → SDR selection
-- Mission mode selector
-- `GPS READY` / `GPS WAIT` — tap to jump to the Map tab
-
----
-
-### Spectrum Tab (SPEC)
-
-The spectrum is always visible in the background. The SPEC overlay adds:
-
-- **Peak Detection toggle** — enables/disables automatic hit recording
-- Threshold controls for SNR and minimum peak spacing
-
-The right-rail **Zoom**, **Max**, and **Min** vertical sliders let you adjust the view without opening any overlay.
-
-**Overlays on the waterfall/FFT:**
+### Marker key
 | Marker | Colour | Meaning |
 |---|---|---|
 | Vertical line | Yellow | Recorded hit |
 | Tick at top | Green | Configured target frequency |
 | Band shading | Blue-tinted | Active search band |
 | Band shading | Red-tinted | Exclude band |
-| Vertical line (dashed, cyan) | Cyan | Peer hit (Kujhad mirror mode) |
-
----
-
-### Hits & Events Tab (HITS)
-
-**Hits list** — all recorded signal detections, most recent first.
-
-Each row shows: frequency, strength, label (if named), decoder, and hit count. Tap a row to expand the **Hit Detail** view:
-
-- Frequency, bandwidth, strength bar, SNR histogram
-- **Rename / Notes** — opens a popup above the keyboard where you can type a label for this frequency
-- **Tune** — retunes the SDR to this frequency immediately
-- **Assign Marker / Release Marker** — routes a VFO slot to permanently track this frequency
-- **Route VFO / Release Route** — same as marker assignment
-- **Promote Target** — adds the frequency to the Mission target list
-- State buttons: **Target**, **Exclude**, **Unknown**, **Archive**
-
-**Clear All Hits** requires a confirmation dialog to prevent accidental deletion.
-
-**Events list** (scroll down or switch sub-tab) — chronological log including decoder events, manual log entries, and ADS-B / RTL-433 ingestion. Filter by state. **Clear Events** also requires confirmation.
-
-**Sort modes:** Recent | Frequency | Strength | Hit Count | State
-
----
-
-### Network Tab (NET)
-
-Displays structured metadata from decoder-bridged networks:
-
-- **P25 / DMR** traffic from DSD-FME: talkgroup ID, radio ID, network, alias
-- **ADS-B** from the 1090 MHz decoder: ICAO, callsign, altitude, squawk
-- **RTL-433** sensor readings: temperature, humidity, power usage, etc.
-
-Use the **filter box** at the top to search across all fields. Tap a row to see the full metadata card and set an alias for a radio ID or talkgroup.
-
-**Bridge configuration** (scroll down in the panel):
-- Add RTL-433 / DSD-FME bridge hosts so Predator RF can pull decoded output from processes running on the same or a networked device
-- P25 / DMR bridge: set the decoder host and port, choose which VFO feeds the decoder
-
----
-
-### Map Tab (MAP)
-
-Launches the native Android map tied to the phone GPS. Shows:
-- Your current position
-- Hit locations where GPS was active during detection
-- Target frequency labels
-
-Tap **Open Map** to launch the map activity. GPS status is visible in the status bar badge.
-
----
-
-### Mission Tab (MIS)
-
-Drives automated scanning and target management.
-
-#### Mission Modes
-Select the mode in the **top status bar** combo:
-
-| Mode | Behaviour |
-|---|---|
-| Manual | Operator tunes freely; scanner inactive |
-| Classify | Manual + background watcher on idle frequencies |
-| Scan | Automated stepping across search bands, dwells on active signals |
-| QuickScan | Single rapid sweep across all enabled bands |
-
-#### Search Bands
-Define frequency ranges for the scanner to sweep:
-
-1. Enter a **Band Name**, **Start Hz**, and **Stop Hz**
-2. Tap **Add Band**
-3. Toggle each band's checkbox to include/exclude it from the current scan
-
-Dwell controls:
-- **Dwell time** — how long the scanner monitors an active signal before stepping to the next candidate
-- **QuickScan delay** — pause between candidates in rapid-sweep mode
-- **QuickScan duration** — maximum time a single rapid sweep runs
-
-#### Targets
-Named frequencies the scanner prioritises:
-- Add manually via the **Targets** section or tap **Promote Target** in any hit's detail view
-- Enable/disable per-entry
-
-#### Excludes
-Frequency ranges skipped during scanning:
-- Enter a center frequency + bandwidth (or tap **Exclude Current** while tuned there)
-
-#### Mission Run Controls
-- **Start Scan / Stop Scan** — begin or stop the automated loop
-- **Previous / Next** — manually step one candidate in the scan list
-- **Target Current** — immediately adds the current VFO frequency to targets
-- **Exclude Current** — immediately adds the current VFO frequency to excludes
-- **Log Event** — records a manual hit event at the current frequency
-
----
-
-### Kujhad Fleet Tab (KUJ)
-
-Multi-operator spectrum sharing. See [Kujhad Fleet Console](#kujhad-fleet-console) for full details.
-
----
-
-### System Tab (SYS)
-
-**SDR Source** — select your device or network source, configure sample rate, gain, and other hardware settings.
-
-**Display** — UI scale (Auto / 1×–4×), colour theme, FFT window function.
-
-**TAK Integration** — see [ATAK / TAK CoT Integration](#atak--tak-cot-integration).
-
-**Session Export** — export the current hits/events list as JSON.
-
-**Module Manager** — enable or disable optional decoder and utility modules.
-
-**Health** — shows SDR status, build version, and runtime diagnostics.
+| Vertical line (dashed) | Cyan | Peer hit (Kujhad mirror mode) |
+| Tight ellipse on map | colour by threat | TDOA fix — semi-major axis shows 1σ uncertainty |
+| Wide circle on map | dim grey | RSSI proximity estimate (single-node fallback) |
 
 ---
 
 ## ATAK / TAK CoT Integration
 
-Predator RF can send **Cursor on Target (CoT)** XML to any TAK-compatible endpoint whenever a hit is recorded, and periodically broadcast a **Situation Awareness (SA)** position update so the device appears as a friendly unit on the ATAK map.
+Predator RF can send Cursor-on-Target XML to any TAK-compatible endpoint when an emitter is escalated, and periodically broadcast SA position updates so the device appears as a friendly unit on the ATAK map.
 
 ### Quick Setup
 
-1. Open **System** tab → **TAK Integration**
-2. Toggle **Enable TAK CoT reporting**
-3. Set **Protocol**:
-   - **UDP** — fire-and-forget; recommended for LAN multicast and most use cases
-   - **TCP** — direct connection to a TAK Server; message delivery is confirmed
-4. Set **Host**:
-   - `239.2.3.1` — ATAK LAN multicast; all ATAK devices on the same subnet receive it without needing a TAK Server
-   - `127.0.0.1` — local device (if running WinTAK or another TAK client on the same phone)
-   - TAK Server IP — for centralised distribution
-5. Set **Port**:
-   - `6969` — ATAK SA multicast (UDP)
-   - `4242` — ATAK direct UDP
-   - `8087` — TAK Server TLS (TCP)
-   - `8088` — TAK Server plain TCP
-6. Set your **Callsign** and **Chat Room** (default: "All Chat Rooms")
-7. Enable **Sensor mode** if you want Predator RF to appear as a dedicated sensor icon on the map (recommended)
-8. Set **SA interval** — how often your position beacon is broadcast (5–300 s, default 30 s)
-9. Tap **Send Test Message** to send a synthetic hit to the configured endpoint and verify reception in ATAK
+1. Open **System** tab → **TAK Integration**.
+2. Toggle **Enable TAK CoT reporting**.
+3. Set **Protocol** (UDP for LAN multicast, TCP for direct to TAK Server).
+4. Set **Host** (`239.2.3.1` for ATAK LAN multicast, your TAK Server IP for unicast).
+5. Set **Port** (`6969` for ATAK SA multicast, `4242` for direct UDP, `8087` TLS, `8088` plain TCP).
+6. Set **Callsign** and **Chat Room**.
+7. Enable **Sensor mode** to appear as a dedicated Predator RF sensor entity.
+8. Set **SA interval** (5–300 s, default 30 s).
+9. **Recommended in the field:** enable **Require manual approval** so every escalation is queued for explicit operator approve / reject before the packet leaves.
+10. Tap **Send Test Message** to verify reception in ATAK.
 
 ### Message Formats
 
-**SA Beacon** (`a-f-G-U-C`, friendly ground unit):
-- Sent every *SA interval* seconds when Sensor mode is enabled
-- Contains: callsign, unique UID, GPS lat/lon, and circular error (CE) from the phone's location fix
-- Appears as a blue diamond on the ATAK 2D/3D map
+**SA Beacon** (`a-f-G-U-C`, friendly ground unit) — sent every SA interval; contains callsign, UID, GPS, and CE from the phone's location fix.
 
-**Hit Alert** (`b-t-f`, GeoChat):
-```
-[Predator RF] HIT: 154.5750 MHz | -62.3 dB | SNR: 14.2 dB | #3 | target | Fire Dispatch
-```
-- Sent to the configured chat room whenever a new, non-suppressed hit is recorded
-- Fields: formatted frequency, signal strength (dBFS), SNR, running hit count, hit state, label (if the frequency has been named)
-
-### Sensor Mode vs. Operator Mode
-
-| Setting | Sensor Mode (recommended) | Operator Mode |
-|---|---|---|
-| SA entity type | Dedicated "Predator RF" sensor with its own UID | Uses your callsign UID |
-| SA beacons | Yes — device appears independently on the map | No — use your existing ATAK SA |
-| Message sender | Predator RF sensor UID | Your callsign |
-| Use when | Running as a dedicated monitoring asset alongside your normal ATAK presence | You want hits attributed directly to your operator callsign |
+**Hit Alert** (`a-u-G` ground unknown when there's a TDOA fix; `b-m-p-s-p-loc` point of interest when only a fallback location) — sent when an escalated track passes the gates. The `point ce` field encodes the geolocation uncertainty (50 m for high-confidence TDOA → 5 km for low-confidence, matching the on-app ellipse). Per-emitter rate-limit: 5 s.
 
 ### Endpoint Reference
 
 | Scenario | Host | Port | Protocol |
 |---|---|---|---|
-| ATAK on same LAN (no server) | `239.2.3.1` | `6969` | UDP |
+| ATAK on same LAN (no server) | `239.2.3.1` | `6969` | UDP multicast |
 | ATAK on same device | `127.0.0.1` | `4242` | UDP |
 | TAK Server (unencrypted) | Server IP | `8088` | TCP |
 | TAK Server (TLS) | Server IP | `8087` | TCP |
-| WinTAK on same network | WinTAK machine IP | `4242` | UDP |
+| WinTAK on same network | WinTAK IP | `4242` | UDP |
+
+Full CoT field-by-field breakdown and the manual-approval queue API are in [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) § 16.
 
 ---
 
 ## Kujhad Fleet Console
 
-Kujhad enables multiple Predator RF instances to share spectrum and coordinate missions across a local network or VPN.
+Kujhad enables multiple Predator RF instances to share spectrum and coordinate missions across a local network or VPN. Hub-and-spoke (not mesh) — the operator picks who they want to see.
 
-### Concepts
+### Wire protocol (v1)
 
-**Device** — the SDR-attached unit collecting live spectrum data. Runs a local server that exposes:
-- Live spectrum frames (downsampled to a configurable bin count, default 256 bins)
-- All current hits, targets, search bands, excludes
-- Real-time GPS position
-- Mission state (mode, scan running, dwell settings)
+Tiny HTTP/1.1 + JSON, single API key in `X-Kujhad-Key`. Default port **41947** (C++) / **5259** (Python backend default).
 
-**Controller** — a phone or tablet without an attached SDR. Pulls data from one or more devices and can:
-- Mirror a device's live spectrum on its own waterfall (peer markers shown in cyan dashes)
-- Push mission commands: retune, start/stop scan, update targets / search bands / excludes
-- Monitor multiple devices simultaneously and switch the mirrored view between them
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/identify` | Device name, version, role, hardware profile |
+| `GET /v1/gps` | Current GPS fix |
+| `GET /v1/state` | Mission mode, scan status, threshold, search bands, decoder roster |
+| `GET /v1/events?since=N` | Hit / decoded-event stream since serial N |
+| `GET /v1/timing` | Clock source, PPS lock, offset, drift, last-sync age |
+| `POST /v1/command` | `tune` / `scan` / `mission` / `identify` — `tx`-class commands rejected |
 
 ### Device Setup
 
-1. Open **Kujhad Fleet** tab → set **Role** to **Device**
-2. Enter a **Device name** (human-readable identifier for controllers)
-3. Enter an **API key** — a shared secret that all authorised controllers must know; use a random string of at least 16 characters
-4. Set **Listen port** (default: 41947; must be reachable by controllers)
-5. (Optional) Enable **TLS**:
-   - Provide paths to a PEM certificate and private key on the device's filesystem
-   - The SHA-256 fingerprint is displayed in the UI — share it with controllers for pinning
-6. Toggle **Enable Kujhad server**
-7. Share the device's IP address (or hostname), port, and API key with your controllers
+1. **Kujhad Fleet** tab → **Listen** section.
+2. Enter a **Device name** (human-readable identifier).
+3. Set **Listen port** (default 41947).
+4. Enter or accept the auto-generated **API key** (32-hex). All controllers need this same key.
+5. (Optional) **Generate self-signed cert** in **SYS → Kujhad TLS**, write down the SHA-256 fingerprint, exchange it out-of-band, then toggle **TLS enabled**. Plain HTTP is locked to loopback when TLS is on.
+6. Toggle **Listen** ON.
 
 ### Controller Setup
 
-1. Open **Kujhad Fleet** tab → set **Role** to **Controller**
-2. Scroll to **Add Peer** and fill in:
-   - **Name** — label for this device in your fleet list
-   - **Host** — IP address or hostname of the device
-   - **Port** — the device's listen port (default: 41947)
-   - **API Key** — the shared secret
-   - **Pinned fingerprint** (optional but recommended) — paste the device's TLS certificate fingerprint to prevent MITM attacks
-3. The peer appears in the fleet list with a live connection status
-4. Tap **Take Control** to start mirroring that device's spectrum on your local waterfall
-5. Tap **Take Control** again or tap **Release** to stop mirroring and restore your local view
-
-### Mirroring Behaviour
-
-When you take control of a device:
-- Your waterfall recentres on the device's current frequency and bandwidth
-- Incoming spectrum frames overwrite local SDR data — the waterfall shows only the peer's view
-- Hit / target / search band / exclude markers from the peer are painted in **cyan** with dashed vertical lines so they are visually distinct from your own (yellow/green) markers
-- The status bar shows a banner identifying the mirrored device
-- Releasing mirror control restores your previous center frequency, bandwidth, and view
+1. **Kujhad Fleet** tab → **Add Peer**.
+2. **Name**, **Host**, **Port**, **API Key**.
+3. (Optional) **Pinned fingerprint** for TLS.
+4. Toggle **Mirror peer spectrum** to view their waterfall on your screen.
+5. Toggle **Mirror peer markers** to see their hits on your map.
 
 ### Security
 
@@ -462,9 +435,8 @@ When you take control of a device:
 |---|---|
 | Unauthorised access | Per-connection API key required |
 | Key interception (cleartext) | Enable TLS on the device |
-| MITM against TLS | Paste the SHA-256 fingerprint on the controller to pin the certificate |
-
-The device server refuses non-loopback connections over plain HTTP when the API key has been set — the key is never sent unless TLS is active or the connection is loopback.
+| MITM against TLS | Pin the SHA-256 fingerprint on the controller |
+| Compromised key on the wire | TLS-enabled mode locks plain HTTP to loopback only |
 
 ---
 
@@ -475,9 +447,85 @@ The device server refuses non-loopback connections over plain HTTP when the API 
 | RTL-433 | OOK / FSK ISM-band sensors (300+ device types) | 315 / 433 / 868 / 915 MHz |
 | DSD-FME | P25 Phase 1 & 2, DMR, D-STAR, NXDN | VHF/UHF public safety |
 | ADS-B | Mode S aircraft transponders | 1090 MHz |
+| AIS | Marine vessel tracking | 161.975 / 162.025 MHz |
+| POCSAG | Pager protocol | 138 / 152 / 158 / 466 MHz |
 | M17 | M17 open amateur digital voice | Any VHF/UHF |
 
-Decoders attach to VFO slots configured in the **Network** tab. Each decoder can optionally inject its decoded metadata directly into the Predator RF hits and events lists.
+Decoders attach to VFO slots configured in the Network tab. Each decoder can optionally inject its decoded metadata directly into the Predator RF hits and events lists.
+
+---
+
+## Tiered Bill of Materials
+
+Prices USD, May 2026, ballpark. Pick the tier that matches your mission.
+
+### Tier 0 — Bare minimum (~$48)
+- Android phone you already own
+- RTL-SDR Blog v4 ($40)
+- USB-C OTG adapter ($8)
+- Rubber-duck antenna (included)
+
+What you can do: live spectrum, hits, baseline learning, scans up to 1.7 GHz on a single phone. No HF, no fleet, no TDOA.
+
+### Tier 1 — Solo field operator (~$330–540)
+- Tier 0 kit
+- Airspy Mini ($130) **or** HackRF One ($340)
+- Diamond RH-77CA telescoping whip ($50)
+- External USB GPS (BU-353N5, $35)
+- Powered USB-C OTG hub ($25)
+- 20,000 mAh USB-C PD power bank ($40)
+
+What you can do: above plus HF (HackRF), all-day battery, fast GPS, ATAK-ready, RSSI proximity fallback usable.
+
+### Tier 2 — Solo TOC + one remote sensor (~$1,400)
+- Tier 1 kit
+- Raspberry Pi 5 8 GB + case + cooler + PSU ($130)
+- 256 GB A2 microSD ($25)
+- Second RTL-SDR Blog v4 for the Pi ($40)
+- GPS HAT (Adafruit Ultimate GPS HAT, $45)
+- Linux laptop or workstation ($0–$500)
+- Outdoor antenna mount + 25 ft LMR-400 ($80)
+- Diamond D130J discone ($130)
+- Pelican 1450 case ($130)
+- ZeroTier / Tailscale (free tier, $0)
+
+What you can do: drop-and-walk sensor node, Python backend mission ledger, AAR exports, **first real TDOA pair** (phone + RPi).
+
+### Tier 3 — Small team / multi-node fleet ($5,000–$10,000+)
+- Tier 2 kit
+- 3 more RPi sensor nodes (~$500 each)
+- At least one Airspy R2 + GPSDO for high-trust TDOA ($200)
+- Cellular hotspot + data plan ($300)
+- OR mesh radio link (goTenna Pro X2 / RAJANT, $500–$5,000)
+- Commercial directional antennas (Yagi for DF, dipoles per band, $400)
+- 10–25 ft fiberglass tactical mast ($150)
+- Pelican / Storm cases per node ($400)
+- Operator laptop (rugged ThinkPad / Dell, $500–$2,000)
+
+What you can do: full-perimeter overwatch from one operator screen, real TDOA fixes (multiple GPSDO-disciplined nodes, tight ellipses), ATAK to higher-echelon TOC, ledger across the fleet, real DF capability.
+
+---
+
+## Roadmap
+
+- [x] Android app
+- [x] Automated frequency scanning + baseline comparison
+- [x] ATAK / TAK CoT integration with two-key gate + manual approval queue
+- [x] Kujhad Fleet protocol (HTTP+JSON, API key, optional TLS pinning)
+- [x] Python backend (Path 2): mission ledger, REST+SSE API, CoT, AutoTasker
+- [x] TDOA multilateration with error ellipses
+- [x] Single-node RSSI proximity fallback
+- [x] Per-node trust model + Bayesian confidence engine
+- [x] Operator overrides (friendly list, blacklist, manual location) with audit log
+- [x] CoC mode (TOC-of-TOCs)
+- [x] RTL-433 / ADS-B / DSD-FME / M17 / AIS / POCSAG decoder integration
+- [ ] In-app TDOA ellipse rendering (currently API-side; Android map overlay pending)
+- [ ] In-app RSSI proximity circle rendering
+- [ ] ADS-B map overlay in the Map tab
+- [ ] Scheduled scan plans (time-gated search bands)
+- [ ] Signal fingerprinting / signature matching
+- [ ] Linux desktop build (parity with Android)
+- [ ] Windows desktop build (parity with Android)
 
 ---
 
@@ -504,28 +552,13 @@ All incorporated projects retain their original licenses:
 
 ---
 
-## Roadmap
-
-- [x] Android app
-- [x] Automated frequency scanning
-- [x] ATAK / TAK CoT integration
-- [x] Kujhad Fleet Console (multi-operator spectrum sharing)
-- [x] RTL-433 / ADS-B / DSD-FME / M17 decoder integration
-- [ ] Linux desktop build
-- [ ] Windows desktop build
-- [ ] ADS-B map overlay in the Map tab
-- [ ] Scheduled scan plans (time-gated search bands)
-- [ ] Signal fingerprinting / signature matching
-
----
-
 ## Contributing
 
 Issues, ideas, and pull requests are welcome. This is a passion project — reviews may take time, but all constructive input is appreciated.
 
-- **Bug reports:** include Android version, device model, SDR hardware, and steps to reproduce
-- **Feature requests:** open an issue describing the use case and the problem it solves
-- **Pull requests:** one logical change per PR; target the `main` branch
+- **Bug reports:** include Android version, device model, SDR hardware, deployment path (Path 1 / Path 2), and steps to reproduce.
+- **Feature requests:** open an issue describing the use case and the problem it solves.
+- **Pull requests:** one logical change per PR; target the `main` branch.
 
 ---
 
