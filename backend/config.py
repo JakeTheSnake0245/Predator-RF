@@ -128,6 +128,60 @@ class BackendConfig:
         default_factory=lambda: _env("COC_UPSTREAM_URLS", ""))
     coc_reconnect_delay_s: float = field(
         default_factory=lambda: _env_float("COC_RECONNECT_DELAY_S", 5.0))
+    # Cross-station emitter dedup interval (seconds). Coalesces tracks
+    # from local fleet + upstream CoC peers when freq+location agree.
+    coc_dedup_interval_s: float = field(
+        default_factory=lambda: _env_float("COC_DEDUP_INTERVAL_S", 15.0))
+    coc_dedup_freq_tolerance_hz: float = field(
+        default_factory=lambda: _env_float("COC_DEDUP_FREQ_TOL_HZ", 5_000.0))
+    coc_dedup_location_tolerance_m: float = field(
+        default_factory=lambda: _env_float("COC_DEDUP_LOC_TOL_M", 500.0))
+
+    # ── Auth ──────────────────────────────────────────────────────────────
+    # Bearer token for all /api/v1/* routes. Empty = open (lab posture).
+    # Set to a long random string for any LAN-exposed deployment.
+    api_bearer_token: str = field(
+        default_factory=lambda: _env("API_BEARER_TOKEN", ""))
+
+    # ── Manual approval gate for CoT pushes ───────────────────────────────
+    # When true, CoT escalations enqueue into ApprovalQueue and the
+    # operator must POST /api/v1/approvals/{id}/approve before they go out.
+    # The cot_enabled flag is still required — both gates must agree.
+    cot_require_manual_approval: bool = field(
+        default_factory=lambda: _env_bool(
+            "COT_REQUIRE_MANUAL_APPROVAL", False))
+    cot_approval_expiry_s: float = field(
+        default_factory=lambda: _env_float("COT_APPROVAL_EXPIRY_S", 7200.0))
+    cot_approval_max_pending: int = field(
+        default_factory=lambda: _env_int("COT_APPROVAL_MAX_PENDING", 200))
+
+    # ── AutoTasker fleet budget ───────────────────────────────────────────
+    # Global brake — at most N tunes per minute across the whole fleet.
+    # Prevents an assessment-loop bug from thrashing every node at once.
+    auto_tasker_global_max_per_minute: int = field(
+        default_factory=lambda: _env_int(
+            "AUTO_TASKER_GLOBAL_MAX_PER_MIN", 30))
+
+    # ── GPS lock freshness ────────────────────────────────────────────────
+    # Drop a node from TDOA participation if its last GPS fix is older
+    # than this. Default 60 s = "still moving with GPS"; tune lower for
+    # vehicle deployments, higher for static workstations.
+    gps_max_age_s: float = field(
+        default_factory=lambda: _env_float("GPS_MAX_AGE_S", 60.0))
+
+    # ── /v1/timing poll ───────────────────────────────────────────────────
+    # How often KujhadClient asks the C++ node for its timing telemetry
+    # (NTP offset, GPSDO lock state, last-PPS age). Cheap call; 30 s is
+    # plenty.
+    timing_poll_interval_s: float = field(
+        default_factory=lambda: _env_float("TIMING_POLL_INTERVAL_S", 30.0))
+
+    # ── Observability ─────────────────────────────────────────────────────
+    # text | json. JSON for ingest into Loki/Splunk/journald.
+    log_format: str = field(
+        default_factory=lambda: _env("LOG_FORMAT", "text"))
+    metrics_enabled: bool = field(
+        default_factory=lambda: _env_bool("METRICS_ENABLED", True))
 
     def parse_coc_upstream_urls(self):
         return [u.strip() for u in self.coc_upstream_urls.split(",") if u.strip()]

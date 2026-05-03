@@ -27,6 +27,7 @@ if _project_root not in sys.path:
 
 from backend.config import config
 from backend.fusion.track_manager import TrackManager
+from backend.fusion.cross_station_dedup import CrossStationDedup
 from backend.coordination.kujhad_client import KujhadFleetManager
 from backend.intelligence.anomaly_detector import AnomalyDetector
 from backend.intelligence.decision_engine import DecisionEngine
@@ -37,12 +38,14 @@ from backend.fusion.tdoa_coordinator import TDOACoordinator
 from backend.output import CoTEmitter
 from backend.coordination.auto_tasker import AutoTasker
 from backend.coc import CoCAggregator
+from backend.operator.approvals import ApprovalQueue
+from backend.operator.missions import MissionRegistry
+from backend.operator.overrides import OverrideRegistry
+from backend.observability.logging import configure_logging
+from backend.observability.metrics import metrics
 
-logging.basicConfig(
-    level=getattr(logging, config.log_level, logging.INFO),
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
+# Structured logging — JSON when LOG_FORMAT=json, plain text otherwise.
+configure_logging(level=config.log_level, fmt=config.log_format)
 logger = logging.getLogger("predator.backend")
 
 
@@ -86,6 +89,7 @@ class PredatorBackend:
             self.fleet_manager,
             min_interval_s=config.auto_tasker_min_interval_s,
             enabled=config.auto_tasker_enabled,
+            global_max_per_minute=config.auto_tasker_global_max_per_minute,
             spawn=lambda coro: self._spawn(coro),
         )
 
@@ -120,6 +124,40 @@ class PredatorBackend:
                 spawn=lambda coro: self._spawn(coro),
             )
 
+        # Mission lifecycle — operator marks the start/end of a SIGINT
+        # mission so events/tracks/assessments get tagged with mission_id
+        # and can be exported as a single AAR bundle.
+        self.missions: MissionRegistry = MissionRegistry(store=self.store)
+        if self.store is not None:
+            self.store.set_mission_provider(lambda: self.missions.active_id)
+
+        # Operator override registry — friendly list, frequency
+        # blacklist, manual location overrides. Persists into the
+        # mission DB so a restart preserves operator intent.
+        self.overrides: OverrideRegistry = OverrideRegistry(store=self.store)
+
+        # CoT manual-approval queue — when COT_REQUIRE_MANUAL_APPROVAL
+        # is set, escalations enqueue here instead of going straight to
+        # the CoT emitter. The operator UI POSTs approve/reject and the
+        # approved items drain to cot.emit_track via on_approved.
+        self.approvals: ApprovalQueue = ApprovalQueue(
+            max_pending=config.cot_approval_max_pending,
+            expiry_s=config.cot_approval_expiry_s)
+        self.approvals.on_approved(self._on_approval_decision)
+        # Snapshot mission_id at enqueue time so audit attribution is
+        # correct even if the operator rolls the mission before deciding.
+        self.approvals.set_mission_provider(lambda: self.missions.active_id)
+        # Persist EVERY terminal state (approved/rejected/expired/dropped)
+        # to op_approvals_log so the AAR has the full operator decision
+        # ledger — not just the approved subset.
+        self.approvals.on_terminal(self._on_approval_terminal)
+
+        # Cross-station dedup — coalesces tracks for the same physical
+        # emitter heard by both local fleet and CoC peers.
+        self.dedup: CrossStationDedup = CrossStationDedup(
+            freq_tolerance_hz=config.coc_dedup_freq_tolerance_hz,
+            location_tolerance_m=config.coc_dedup_location_tolerance_m)
+
         # Background task accounting — every fire-and-forget task spawned
         # from `_on_rf_event` (persistence writes, TDOA solves, CoT emits,
         # AutoTasker tunes) is registered here so `stop()` can drain them
@@ -147,6 +185,18 @@ class PredatorBackend:
 
     def _on_rf_event(self, event):
         """Called for every RFEvent arriving from any C++ node."""
+        # Frequency blacklist gate — operator-marked freqs (regulatory
+        # off-limits, known interferer, our own beacons) are dropped at
+        # ingest. Counted so the operator can see the muting working.
+        if self.overrides.is_blacklisted(event.frequency):
+            metrics.counter("predator_events_blacklisted_total",
+                             help_text="Events dropped by operator blacklist")
+            return
+
+        metrics.counter("predator_events_ingested_total",
+                         labels={"node": event.node_id},
+                         help_text="RF events ingested into pipeline")
+
         # Feed to baseline
         self.baseline.observe(event)
 
@@ -190,17 +240,28 @@ class PredatorBackend:
         self.auto_tasker.handle_assessment(track.to_dict(), report.to_dict())
 
         # CoT/TAK escalation — gated by config.cot_enabled AND
-        # report.escalate_to_atak. Use the detecting node's GPS as a
-        # fallback location so high-threat tracks without a TDOA fix
-        # still produce a "near node X" marker on the TAK map.
-        if self.cot.enabled and report.escalate_to_atak:
+        # report.escalate_to_atak AND (when COT_REQUIRE_MANUAL_APPROVAL)
+        # operator approval via /api/v1/approvals/{id}/approve. Friendly-
+        # listed emitters never escalate. Use the detecting node's GPS
+        # as a fallback location so high-threat tracks without a TDOA
+        # fix still produce a "near node X" marker on the TAK map.
+        if (self.cot.enabled and report.escalate_to_atak
+                and not self.overrides.is_friendly(track.emitter_id)):
             fallback = None
             node = self.track_manager.sensor_nodes.get(event.node_id)
             if node and node.location_gps:
                 fallback = (node.location_gps[0], node.location_gps[1])
-            self._spawn(self.cot.emit_track(
-                track.to_dict(), report.to_dict(),
-                fallback_location=fallback))
+            track_d = self.overrides.apply_to_track(track.to_dict())
+            if config.cot_require_manual_approval:
+                # Two-key gate: enqueue for operator review. The actual
+                # cot.emit_track() call happens in _on_approval_decision
+                # when the operator clicks Approve in the UI.
+                self._spawn(self.approvals.enqueue(
+                    track_d, report.to_dict(), fallback))
+            else:
+                self._spawn(self.cot.emit_track(
+                    track_d, report.to_dict(),
+                    fallback_location=fallback))
 
         # Publish to SSE subscribers
         push_event(event.to_dict())
@@ -234,6 +295,35 @@ class PredatorBackend:
                     len(result.participating_nodes))
         if self.store is not None:
             await self.store.record_track(track.to_dict())
+
+    async def _on_approval_decision(self, approval) -> None:
+        """Drain hook from ApprovalQueue.on_approved: an operator-
+        approved item becomes an actual CoT push. The audit row is
+        written separately by `_on_approval_terminal` (which fires for
+        every terminal state, not just approved)."""
+        try:
+            await self.cot.emit_track(approval.track, approval.report,
+                fallback_location=approval.fallback_location)
+        except Exception as exc:
+            logger.warning("Approved CoT push failed for %s: %s",
+                           approval.approval_id[:8], exc)
+
+    async def _on_approval_terminal(self, approval) -> None:
+        """Persist EVERY terminal approval transition. The mission_id
+        was snapshotted at enqueue time and lives on the approval; we
+        prefer that over `self.missions.active_id` so a mission roll
+        during the approval window doesn't mis-attribute the audit
+        row."""
+        if self.store is None:
+            return
+        payload = approval.to_dict()
+        if not payload.get("mission_id"):
+            payload["mission_id"] = self.missions.active_id
+        try:
+            await self.store.record_approval(payload)
+        except Exception as exc:
+            logger.warning("record_approval failed for %s (%s): %s",
+                           approval.approval_id[:8], approval.state, exc)
 
     def _on_remote_event(self, ev_dict: dict) -> None:
         """Bridge from CoCAggregator (which delivers dicts) into the
@@ -309,6 +399,13 @@ class PredatorBackend:
             self.track_manager.maintenance_loop(config.track_maintenance_interval_s))
         asyncio.create_task(self._merge_loop())
         asyncio.create_task(self._baseline_prune_loop())
+        # Cross-station dedup runs only when CoC is on (otherwise every
+        # track is local and the dedup pass is a no-op).
+        if self.coc is not None:
+            asyncio.create_task(self._dedup_loop())
+        # Approval-queue housekeeping: expire stale items so the UI
+        # doesn't show a 6-hour-old escalation as still actionable.
+        asyncio.create_task(self._approval_expiry_loop())
 
         logger.info("Backend started. %d node(s) in fleet.",
                     self.fleet_manager.node_count())
@@ -395,17 +492,41 @@ class PredatorBackend:
             await asyncio.sleep(prune_interval_s)
             self.baseline.prune_stale()
 
+    async def _dedup_loop(self):
+        """Periodic cross-station emitter dedup. Coalesces tracks for
+        the same physical emitter heard by both the local fleet and
+        upstream CoC peers."""
+        while True:
+            await asyncio.sleep(config.coc_dedup_interval_s)
+            try:
+                self.dedup.run(self.track_manager)
+            except Exception as exc:
+                logger.warning("Cross-station dedup pass failed: %s", exc)
+
+    async def _approval_expiry_loop(self):
+        """Mark stale CoT-approval items as expired every minute. Stops
+        the UI from listing 2-hour-old escalations as actionable."""
+        while True:
+            await asyncio.sleep(60.0)
+            try:
+                await self.approvals.expire_stale()
+            except Exception as exc:
+                logger.debug("Approval expiry pass failed: %s", exc)
+
 
 async def main():
     backend = PredatorBackend()
     await backend.start()
 
-    # Build FastAPI app with injected dependencies
+    # Build FastAPI app with injected dependencies. We pass the full
+    # backend so health/missions/approvals/overrides routes can reach
+    # the subsystems they need without a service-locator pattern.
     from backend.api.server import create_app
     app = create_app(
         track_manager=backend.track_manager,
         fleet_manager=backend.fleet_manager,
         decision_engine=backend.decision_engine,
+        backend=backend,
     )
 
     import uvicorn
