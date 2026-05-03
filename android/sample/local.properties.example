@@ -1,0 +1,18 @@
+# Copy to local.properties (gitignored) at the Android repo root and fill in.
+# build.gradle.kts reads these via java.util.Properties at configure time.
+
+# Where the Python backend is reachable from the phone.
+# Default for the Android emulator on the same dev box: http://10.0.2.2:8000
+predator.backend.url=http://192.168.10.5:8000
+
+# Bearer token from /etc/predator-rf/predator-rf.env on the RPi.
+# Generate with: openssl rand -hex 32
+predator.bearer.token=
+
+# Polling cadence overrides (seconds). Defaults shown.
+predator.poll.wifi.s=5
+predator.poll.cell.s=15
+predator.cot.pull.s=30
+
+# Standard Android SDK location (Windows example).
+sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk

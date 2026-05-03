@@ -1,0 +1,55 @@
+[Unit]
+# Predator-RF backend — solo SIGINT operator service.
+# Runs as a non-root user; writes mission DB to /var/lib/predator-rf;
+# all logs go to journald. Restart-on-fail with exponential backoff
+# so a transient Kujhad / network blip doesn't kill the mission.
+Description=Predator-RF backend (Path 1: Python fusion + Kujhad HTTP)
+Documentation=file:/opt/predator-rf/docs/OPERATOR_RUNBOOK.md
+After=network-online.target chronyd.service gpsd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=predator
+Group=predator
+WorkingDirectory=/opt/predator-rf
+EnvironmentFile=-/etc/predator-rf/predator-rf.env
+ExecStart=/opt/predator-rf/.venv/bin/python -m backend.main
+ExecStop=/bin/kill -TERM $MAINPID
+
+# Operator-facing posture: we want a fast, predictable restart on
+# the network, NOT a slow watchdog cycle. Backoff caps at 30 s so
+# a flaky node doesn't keep us down longer than that.
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Hardening — backend talks HTTP to LAN nodes + UDP to TAK; nothing
+# else needs root or write access outside /var/lib/predator-rf.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false   # gpsd / SDR may be exposed via /dev later
+ReadWritePaths=/var/lib/predator-rf /var/log/predator-rf
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+# Journald: all stdout / stderr → journalctl -u predator-rf -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predator-rf
+
+# Don't let one bad assessment OOM the box.
+LimitNOFILE=4096
+MemoryMax=1G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target
