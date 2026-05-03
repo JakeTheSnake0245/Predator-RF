@@ -724,6 +724,13 @@ class RNSDaemon:
                             if v.get("iface_id") == entry["id"])
                 if peers:
                     rt["peers"] = peers
+                # IFAC active when both netname and netkey are set on
+                # the saved config (matches the daemon-side gate in
+                # _build_rns_interface). The UI uses this to render an
+                # "[IFAC]" badge in the live-status table without
+                # leaking the netkey value itself.
+                ifac_active = bool(entry.get("ifac_netname")) and \
+                              bool(entry.get("ifac_netkey"))
                 ifaces.append({
                     "id": entry["id"],
                     "name": entry["name"],
@@ -735,6 +742,9 @@ class RNSDaemon:
                     "bytes_out": rt.get("bytes_out", 0),
                     "bitrate_bps": rt.get("bitrate_bps", 0),
                     "last_error": rt.get("last_error", ""),
+                    "ifac_active": ifac_active,
+                    "ifac_netname": entry.get("ifac_netname", "")
+                                    if ifac_active else "",
                 })
             cot_stats = (self.cot_bridge.stats()
                          if self.cot_bridge is not None else

@@ -6405,7 +6405,7 @@ void MainWindow::draw() {
                 }
 
                 // Per-interface live table.
-                if (ImGui::BeginTable("rns_iface_table", 8,
+                if (ImGui::BeginTable("rns_iface_table", 9,
                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                         ImGuiTableFlags_SizingStretchProp)) {
                     ImGui::TableSetupColumn(T("Name"));
@@ -6414,6 +6414,7 @@ void MainWindow::draw() {
                     ImGui::TableSetupColumn(T("Peers"));
                     ImGui::TableSetupColumn(T("In/Out"));
                     ImGui::TableSetupColumn(T("Last error"));
+                    ImGui::TableSetupColumn(T("IFAC"));
                     ImGui::TableSetupColumn(T("On"));
                     ImGui::TableSetupColumn(T("Actions"));
                     ImGui::TableHeadersRow();
@@ -6439,7 +6440,29 @@ void MainWindow::draw() {
                         ImGui::TableSetColumnIndex(5);
                         ImGui::TextWrapped("%s",
                             row.value("last_error", "").c_str());
+                        // IFAC badge — shows "[IFAC]" in green when the
+                        // daemon reports ifac_active=true for this iface
+                        // (both netname and netkey set on the saved
+                        // config). Netkey value itself is never sent
+                        // back in status, so nothing sensitive is
+                        // displayed. Hover shows the netname so an
+                        // operator can confirm which IFAC zone an iface
+                        // belongs to without exposing the secret.
                         ImGui::TableSetColumnIndex(6);
+                        bool ifacOn = row.value("ifac_active", false);
+                        if (ifacOn) {
+                            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1),
+                                               "[IFAC]");
+                            if (ImGui::IsItemHovered()) {
+                                std::string nn = row.value("ifac_netname",
+                                                            std::string(""));
+                                ImGui::SetTooltip("%s %s", T("IFAC netname:"),
+                                                  nn.c_str());
+                            }
+                        } else {
+                            ImGui::TextDisabled("—");
+                        }
+                        ImGui::TableSetColumnIndex(7);
                         std::string toggleId = "##en_" + id;
                         bool newEn = en;
                         if (ImGui::Checkbox(toggleId.c_str(), &newEn)) {
@@ -6448,7 +6471,7 @@ void MainWindow::draw() {
                             if (!err.empty()) rnsBanner = err;
                             pollDaemon();
                         }
-                        ImGui::TableSetColumnIndex(7);
+                        ImGui::TableSetColumnIndex(8);
                         std::string editId = T("Edit") + std::string("##e_") + id;
                         std::string restId = T("Restart") + std::string("##r_") + id;
                         std::string delId  = T("Delete") + std::string("##d_") + id;
