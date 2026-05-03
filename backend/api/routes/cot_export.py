@@ -60,12 +60,17 @@ def _build_track_event(track, *, uid_prefix: str, stale_s: float
     freq_mhz = float(getattr(track, "primary_frequency", 0.0) or 0.0) / 1e6
     threat = (getattr(track, "threat_level", "unknown") or "unknown").upper()
     callsign = f"{uid_prefix}-{emitter_id[:8]}"
+    summary = ""
+    asmt = getattr(track, "_latest_assessment", None)
+    if isinstance(asmt, dict):
+        summary = str(asmt.get("summary") or "")
     remarks = (
         f"PREDATOR-RF {threat} | "
         f"{freq_mhz:.4f} MHz | "
         f"obs={getattr(track, 'observation_count', 0)} | "
         f"conf={getattr(track, 'confidence', 0):.2f}"
-    )
+        + (f" | {summary}" if summary else "")
+    ).strip()
     return build_cot_xml(
         uid=f"{uid_prefix}.{emitter_id}",
         lat=lat, lon=lon,
@@ -123,6 +128,13 @@ try:
         for t in track_manager.tracks.values():
             asmt = latest_asmts.get(getattr(t, "emitter_id", None))
             if asmt and asmt.get("escalate_to_atak"):
+                # Stash the latest assessment on the track instance so
+                # the XML builder can include the summary in <remarks>
+                # WITHOUT changing the EmitterTrack dataclass shape.
+                try:
+                    t._latest_assessment = asmt
+                except Exception:
+                    pass
                 approved_tracks.append(t)
 
         events = []

@@ -26,19 +26,19 @@ Print this. Walk it before you go live. Anything not green is a no-go.
 2. `sudo systemctl start predator-rf`
 3. `python deploy/preflight.py` → must report **GO**
 4. `journalctl -u predator-rf -f` → no `ERROR` lines in the first 30 s
-5. `curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/health` → `"status":"ok"`
-6. `curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/missions/start -d '{"name":"<callsign-YYYYMMDD>"}'`
+5. `curl http://localhost:8000/healthz` → `"status":"ok"`
+6. `curl -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8000/api/v1/missions -d '{"name":"<callsign-YYYYMMDD>"}'`
 
 ## In-mission checks (every 30 minutes)
 
 - [ ] `curl /metrics` → `predator_events_total` is climbing
-- [ ] `curl /api/v1/health` → all listed nodes show `gps_lock=true` AND `gps_age_s < 60`
+- [ ] `curl /api/v1/android-pull?since_ns=0` → all listed nodes show `gps_lock=true` AND `gps_age_s < 60`
 - [ ] No CoT approvals stuck > 5 min in `/api/v1/approvals` (operator backlog)
 
 ## End-of-mission
 
 1. `POST /api/v1/missions/end`
-2. `GET /api/v1/missions/<id>/aar.tar.gz` → save to USB
+2. `GET /api/v1/missions/<id>/export` → save to USB
 3. `deploy/backup_mission.sh /media/usb-stick`
 4. `sudo systemctl stop predator-rf`
 
@@ -48,7 +48,7 @@ Print this. Walk it before you go live. Anything not green is a no-go.
 |---|---|---|
 | Preflight `time` FAIL | NTP not syncing | `sudo systemctl restart chrony`; if no WAN, point to a local NTP server |
 | Preflight `fleet` FAIL on one node | Cable / power / Kujhad crash | Walk to the node; check power LED; `ssh` and `systemctl status kujhad` |
-| `/api/v1/health` shows `gps_age_s` climbing | Node lost GPS lock | Reposition antenna; node will be auto-dropped from TDOA |
+| `android-pull` `nodes[].gps_age_s` climbing | Node lost GPS lock | Reposition antenna; node will be auto-dropped from TDOA |
 | `auto_tasker_global_budget` counter rising | Assessment loop thrashing | Check `/api/v1/tracks` for duplicate tracks; raise `MIN_CONFIDENCE` |
 | Approval queue full | Operator missed escalations | Drain via `/api/v1/approvals`, reject the false positives |
 | SSE stream silent | Token wrong, or backend crashed | `journalctl -u predator-rf -n 50`; verify `API_BEARER_TOKEN` |

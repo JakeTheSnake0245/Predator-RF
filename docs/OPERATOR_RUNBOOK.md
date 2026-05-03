@@ -57,7 +57,7 @@ TOKEN=$(grep API_BEARER_TOKEN /etc/predator-rf/predator-rf.env | cut -d= -f2)
 H="-H Authorization:Bearer\ $TOKEN"
 
 # Start
-curl $H -X POST localhost:8000/api/v1/missions/start \
+curl $H -X POST localhost:8000/api/v1/missions \
   -d '{"name":"OVERWATCH-20260315","operator":"K9-Actual"}'
 
 # … operate …
@@ -70,7 +70,7 @@ curl $H -X POST localhost:8000/api/v1/missions/end
 
 # After-action ledger (events, tracks, assessments, approvals,
 #  overrides — everything stamped to that mission_id)
-curl $H -OJ localhost:8000/api/v1/missions/<id>/aar.tar.gz
+curl $H -OJ localhost:8000/api/v1/missions/<id>/export
 ```
 
 ## 4. Operator overrides

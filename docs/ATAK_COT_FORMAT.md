@@ -1,13 +1,16 @@
 # Predator-RF — CoT (Cursor-on-Target) XML Format
 
-This is the EXACT XML the backend produces, both:
+This is the XML the backend produces:
 
 * over UDP via `backend/output/cot_emitter.py` (multicast or unicast
   to TAK's SA feed), and
 * over HTTP via `GET /api/v1/cot/export` (pull-style for the Android
   client when multicast isn't reachable).
 
-The Android client should treat **either source** as identical bytes.
+The two sources use the **same per-event schema**, but they are
+**not byte-identical**. Differences are listed under "UDP vs HTTP
+delta" below — read it before you write a parser that asserts on
+exact bytes.
 
 ## Per-track event
 
@@ -70,6 +73,16 @@ single `<event>` document — no envelope.
   MUST ignore unknown children rather than fail.
 * The `uid` format `PREDATOR.<emitter_id>` is stable — Android can
   parse it to recover the backend emitter ID from a TAK marker.
+
+## UDP vs HTTP delta
+
+| | UDP datagram | HTTP `/api/v1/cot/export` |
+|---|---|---|
+| Type when no TDOA fix | `b-m-p-s-p-loc`, `point` set to most-trustworthy node's GPS | **No event emitted at all** (single returns 409, bulk omits) |
+| `<remarks>` | `... \| <assessment.summary>` always appended when summary present | Same — pulled from store's latest assessment |
+| Per-emitter rate limit | 5 s (`CoTEmitter._min_interval_s`) | None — caller throttles |
+| Document wrapper | Single `<event>` per datagram | Bulk wrapped in `<events>`; single is bare `<event>` |
+| Two-key approval gate | Honored when `COT_REQUIRE_MANUAL_APPROVAL=true` | Bulk honors via `assessment.escalate_to_atak`; single (`?emitter_id=`) is an explicit operator pull and bypasses |
 
 ## Gotchas
 

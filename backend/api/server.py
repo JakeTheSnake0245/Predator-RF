@@ -33,7 +33,8 @@ def create_app(track_manager=None, fleet_manager=None,
     from backend.config import config
     from backend.api.routes import (
         tracks, nodes, events, assessments,
-        health, missions, approvals, overrides)
+        health, missions, approvals, overrides,
+        preflight, android_pull, cot_export)
     from backend.api.middleware.auth import make_bearer_middleware
 
     app = FastAPI(
@@ -77,6 +78,13 @@ def create_app(track_manager=None, fleet_manager=None,
         if hasattr(backend, "overrides"):
             overrides.registry = backend.overrides
 
+    # Tier 4 — Android/Windows client integration routes.
+    android_pull.track_manager = track_manager
+    android_pull.fleet_manager = fleet_manager
+    android_pull.backend_ref = backend
+    cot_export.track_manager = track_manager
+    cot_export.backend_ref = backend
+
     app.include_router(tracks.router, prefix="/api/v1/tracks", tags=["tracks"])
     app.include_router(nodes.router, prefix="/api/v1/nodes", tags=["nodes"])
     app.include_router(events.router, prefix="/api/v1/events", tags=["events"])
@@ -88,6 +96,20 @@ def create_app(track_manager=None, fleet_manager=None,
                         prefix="/api/v1/approvals", tags=["approvals"])
     app.include_router(overrides.router,
                         prefix="/api/v1/overrides", tags=["overrides"])
+
+    # Tier 4 — Android/Windows client integration routes. Each module
+    # gracefully degrades to `router = None` if FastAPI isn't installed,
+    # so guard the include.
+    if getattr(preflight, "router", None) is not None:
+        app.include_router(preflight.router, tags=["preflight"])
+    if getattr(android_pull, "router", None) is not None:
+        app.include_router(android_pull.router,
+                            prefix="/api/v1/android-pull",
+                            tags=["android"])
+    if getattr(cot_export, "router", None) is not None:
+        app.include_router(cot_export.router,
+                            prefix="/api/v1/cot/export",
+                            tags=["cot"])
     # Health/metrics live at root (not under /api/v1) so a Prometheus
     # scraper or a load balancer can hit them with a single, stable
     # path that doesn't change with the API version.

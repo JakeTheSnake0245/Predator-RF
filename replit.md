@@ -253,3 +253,53 @@ flags so the original 76 tests stay green.
 ### Tests
 9 new test modules, 134 total passing (3 skipped: `aiohttp`-required
 loopback tests + `numpy`-required DSP smoke).
+
+## Mission-readiness deploy pack (post-Tier-1+2+3)
+
+`deploy/` and `docs/` now hold everything needed to field the backend
+on a Raspberry Pi without a separate build step:
+
+* `deploy/predator-rf.service` — hardened systemd unit (non-root,
+  ProtectSystem, MemoryMax, journald) with restart-on-failure
+* `deploy/predator-rf.env.example` — every documented env flag
+* `deploy/preflight.py` — pure-stdlib readiness check (time sync,
+  disk, DB schema v2, token, port-free, RX/TX posture, fleet
+  reachability). Importable as `run_all()` for the live HTTP route.
+* `deploy/install_rpi.sh` — one-shot installer
+* `deploy/backup_mission.sh` — `VACUUM INTO`-based online snapshot
+* `docs/OPERATOR_RUNBOOK.md` + `docs/MISSION_READY_CHECKLIST.md`
+* `backend/api/routes/preflight.py` — `GET /api/v1/preflight`
+
+## Tier 4 — Android/Windows client integration hooks
+
+Backend-side hooks the user's separately-built Android APK consumes
+(C++ Android build is on Windows; this repl ships only the contracts):
+
+* `backend/api/routes/android_pull.py` — `GET /api/v1/android-pull`
+  delta-sync snapshot tuned for a phone on a flaky link. Cursor-based
+  (strict `>` so cursor=server-now never re-includes), gracefully
+  degrades when any subsystem (store/missions/approvals/fleet) is
+  missing. Caches preflight result for 30 s.
+* `backend/api/routes/cot_export.py` — `GET /api/v1/cot/export`
+  XML pull for ATAK plugins on networks where multicast is dropped.
+  Bulk wraps in `<events>`, single returns bare `<event>`. Honors
+  `assessment.escalate_to_atak` for bulk; single-track form bypasses
+  (explicit operator pull).
+* `backend/persistence/store.py` — added `fetch_events_since()` and
+  `latest_assessments()` (the new routes' read paths).
+* `docs/ATAK_COT_FORMAT.md` — frozen v2.0.0 CoT XML schema, with an
+  explicit UDP-vs-HTTP delta table.
+* `docs/ANDROID_INTEGRATION.md` — full endpoint contract from the
+  phone's perspective, schema versioning rules, and a known-issues
+  list (no idempotency keys, no WebSocket, TLS out of scope, etc.).
+* `docs/SIDELOAD_README.md` — Galaxy S22 sideload walkthrough using
+  `assembleDebug` (the sample gradle leaves `release` unsigned by
+  design, so debug-signed is the documented happy path).
+* `android/sample/{build.gradle.kts, CMakeLists.txt,
+  AndroidManifest.snippet.xml, local.properties.example}` —
+  reference-only configs for the Predator-RF.git Android repo.
+
+### Tests
+174 total passing (3 skipped: `aiohttp` loopback + `numpy` DSP
+smoke). New modules: `test_preflight`, `test_android_pull`,
+`test_store_tier4`.

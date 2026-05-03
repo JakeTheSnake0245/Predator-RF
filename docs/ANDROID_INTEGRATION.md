@@ -5,6 +5,10 @@ talks to this Python backend over HTTP only. There is no native socket
 or shared memory — pull or subscribe via the documented endpoints
 below and you have everything the operator UI shows.
 
+> **Source-of-truth note.** Endpoint paths here are taken from
+> `backend/api/server.py` as of the v2.0.0 backend. If anything here
+> conflicts with older internal notes, trust this file.
+
 ## 1. Auth
 
 Every `/api/v1/*` request:
@@ -15,8 +19,9 @@ Authorization: Bearer <API_BEARER_TOKEN>
 
 Exception: SSE endpoints (`*/stream`) accept `?token=<token>` because
 Android's `EventSource`-equivalents can't always set custom headers.
-This fallback is intentionally NARROWED to SSE paths — every other
-route is header-only.
+This fallback is intentionally NARROWED to SSE paths only — every
+other route, including `/api/v1/android-pull` and `/api/v1/cot/export`,
+is header-only.
 
 If `API_BEARER_TOKEN` is unset on the backend, auth is fully open
 (lab posture); the backend logs a `WARN` at startup.
@@ -55,30 +60,44 @@ Schema (versioned — clients MUST ignore unknown fields):
 }
 ```
 
-### 2.2 SSE streams (when you want push instead of pull)
+### 2.2 SSE stream (when you want push instead of pull)
 
 ```
-GET /api/v1/events/stream?token=<token>     → RFEvent feed
-GET /api/v1/tracks/stream?token=<token>     → track updates
+GET /api/v1/events/stream?token=<token>     → RFEvent feed (live)
+GET /api/v1/events/recent?count=N           → last N events (REST poll)
 ```
 
-Reconnect on close with exponential backoff. The backend re-streams
-fresh state on every new connection.
+Reconnect on close with exponential backoff. There is **no separate
+`/api/v1/tracks/stream`** — derive track updates from `android-pull`
+or by re-fetching `/api/v1/tracks/`.
 
 ### 2.3 CoT XML pull (for ATAK plugin)
 
 ```
-GET /api/v1/cot/export                      → bulk, all escalated tracks
-GET /api/v1/cot/export?emitter_id=<id>      → single track (operator-pulled)
+GET /api/v1/cot/export                      → bulk: all currently-
+                                              escalating tracks with
+                                              a TDOA fix
+GET /api/v1/cot/export?emitter_id=<id>      → single track (operator-
+                                              pulled override)
 ```
 
 Returns `application/xml` matching `docs/ATAK_COT_FORMAT.md`. Feed
 straight into ATAK's local CoT pipeline.
 
+**Differences vs UDP multicast emission** (read this; it bites):
+
+| | UDP (`cot_emitter.py`) | HTTP (`/cot/export`) |
+|---|---|---|
+| Trigger | DecisionEngine escalation, automatic | Phone polls on its own cadence |
+| Per-emitter rate limit | Yes — 5 s | **No** — caller must self-throttle (≥ 30 s recommended) |
+| Untracked location | Falls back to most-trustworthy node's GPS, type `b-m-p-s-p-loc` | **No fallback** — single returns 409, bulk omits |
+| Wrapper | One `<event>` per datagram | Bulk: `<events>` envelope; single: bare `<event>` |
+| Two-key approval gate | Honored when `COT_REQUIRE_MANUAL_APPROVAL=true` | **Bypassed for the single-track form** (it's an explicit operator pull); honored in bulk |
+
 ### 2.4 Approvals (operator-in-the-loop from the phone)
 
 ```
-GET    /api/v1/approvals                    → list pending
+GET    /api/v1/approvals/                   → list pending
 POST   /api/v1/approvals/{id}/approve       → release the CoT push
 POST   /api/v1/approvals/{id}/reject        → suppress
 ```
@@ -86,29 +105,40 @@ POST   /api/v1/approvals/{id}/reject        → suppress
 ### 2.5 Overrides
 
 ```
-POST   /api/v1/overrides/blacklist          {"frequency_hz": 433920000, "tolerance_hz": 5000}
+POST   /api/v1/overrides/blacklist          {"start_hz":..., "end_hz":..., "reason":"..."}
 POST   /api/v1/overrides/friendly           {"emitter_id": "..."}
-POST   /api/v1/overrides/manual_location    {"emitter_id": "...", "lat": ..., "lon": ...}
-DELETE /api/v1/overrides/blacklist/<freq>
+POST   /api/v1/overrides/manual_location    {"emitter_id": "...", "lat": ..., "lon": ..., "confidence": 0.9}
+DELETE /api/v1/overrides/blacklist/<rowid>
+DELETE /api/v1/overrides/friendly/<emitter_id>
+DELETE /api/v1/overrides/manual_location/<emitter_id>
 ```
 
 ### 2.6 Mission control
 
 ```
-POST   /api/v1/missions/start               {"name": "...", "operator": "..."}
-POST   /api/v1/missions/end
-GET    /api/v1/missions/active
-GET    /api/v1/missions/<id>/aar.tar.gz     → download after-action ledger
+POST   /api/v1/missions                     {"name":"...", "operator":"..."} → start
+POST   /api/v1/missions/end                                                  → end active
+GET    /api/v1/missions                                                       → list
+GET    /api/v1/missions/active                                                → currently active
+GET    /api/v1/missions/{mission_id}/export                                  → AAR tarball
 ```
+
+There is **no `/missions/start`** route — POST to the collection is
+the start verb. The export route is **`/export`**, not `/aar.tar.gz`.
 
 ### 2.7 Health / preflight
 
 ```
-GET    /api/v1/health                       → per-node trust + GPS state
-GET    /api/v1/preflight                    → JSON preflight (same as CLI)
-GET    /healthz                             → liveness
-GET    /readyz                              → readiness
+GET    /api/v1/preflight                    → JSON preflight (same as the CLI)
+GET    /api/v1/status                       → tracks/nodes/mission summary
+GET    /healthz                             → liveness (no auth)
+GET    /readyz                              → readiness (no auth)
+GET    /metrics                             → Prometheus text
+GET    /health                              → legacy alias for /healthz
 ```
+
+For a per-node trust + GPS view, read the `nodes` array out of
+`/api/v1/android-pull` (same data, single round-trip).
 
 ## 3. Connecting the APK
 
@@ -123,21 +153,18 @@ const val PREDATOR_BEARER_TOKEN = BuildConfig.PREDATOR_TOKEN  // from local.prop
 
 The Android client should:
 
-* Cache the last successful `android-pull` snapshot in
-  `SharedPreferences` so the UI shows stale-but-labelled data after
-  a network drop.
+* Cache the last successful `android-pull` snapshot so the UI shows
+  stale-but-labelled data after a network drop.
 * Queue operator actions (approve/reject, overrides) and replay them
-  when the link comes back. **Idempotency keys aren't yet enforced**
-  on the backend — see "Known issues" below.
+  when the link comes back. **Idempotency keys aren't enforced** on
+  the backend — see "Known issues" below.
 * Display the `preflight_go` boolean as a banner. NO-GO + > 60 s of
   network silence = mission-abort prompt.
 
 ## 5. Schema versioning
 
 * `schema=2` is the current `android-pull` payload version.
-* Older clients (`schema=1`) are NOT supported by this backend
-  (it would silently drop the `mission` and `approvals_pending`
-  fields on a v1 client). Bump your client to ≥ schema 2.
+* Older clients (`schema=1`) are NOT supported by this backend.
 * Future schema bumps will add fields, not remove them. Clients MUST
   ignore unknown fields.
 
@@ -154,16 +181,16 @@ APK should defend itself accordingly:
    backend's clock jumps backward (rare but possible on a fresh GPS
    discipline event), you may briefly see duplicate events. Dedup on
    `(node_id, timestamp_ns, frequency)` if it matters.
-3. **`android-pull` returns max 2000 events per poll** even at
-   `max_events=2000`. A backlog from a long offline period must be
-   drained over several polls.
-4. **CoT pull does NOT respect per-emitter rate limits** — UDP
-   multicast does (5 s per emitter), HTTP pull does not. Don't poll
-   `/cot/export` faster than every 30 s or you'll re-import the same
-   markers in ATAK.
+3. **`android-pull` events are bounded by `max_events`** (default 200,
+   max 2000). A backlog from a long offline period must be drained
+   over several polls — keep polling until `len(events) < max_events`.
+4. **CoT pull is NOT rate-limited** by the backend. Per-emitter UDP
+   has a 5 s gate; HTTP pull does not. Don't poll `/cot/export`
+   faster than every 30 s or you'll re-import the same markers in
+   ATAK.
 5. **No WebSocket support.** SSE only. Carrier proxies sometimes
-   buffer SSE silently — fall back to `android-pull` if you don't see
-   the SSE keepalive comment (`:keepalive\n\n`) every 15 s.
+   buffer SSE silently — fall back to `android-pull` if the SSE
+   stream goes silent for > 30 s.
 6. **TLS is out of scope of the backend.** If you expose the backend
    beyond a trusted LAN, terminate TLS at nginx / Caddy and pin the
    cert in the APK. Don't ship the bearer token over plaintext HTTP
@@ -171,3 +198,6 @@ APK should defend itself accordingly:
 7. **No multi-operator coordination.** Two operators on the same
    backend can both approve/reject the same approval; last write
    wins. Coordinate out-of-band.
+8. **`android-pull` events come from the persistent store**; if
+   `PERSISTENCE_ENABLED=false`, the `events` array will always be
+   empty (tracks + approvals + nodes still work).

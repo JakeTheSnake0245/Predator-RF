@@ -79,22 +79,24 @@ android {
         }
     }
 
-    // Sideload-friendly: ship debug-signed when you don't have a release
-    // keystore yet. Replace with your real release signing config before
-    // distributing beyond your own devices.
-    signingConfigs {
-        create("debugSideload") {
-            // Uses the standard Android debug keystore — present on every
-            // Android Studio install at ~/.android/debug.keystore. No
-            // separate file shipped here on purpose.
-        }
-    }
-
+    // Sideloading: by default, build with `./gradlew assembleDebug` and
+    // install the debug APK — it's signed with the standard Android debug
+    // keystore (~/.android/debug.keystore) and installs cleanly on the S22
+    // without any extra setup. The `release` block below is intentionally
+    // UNSIGNED in this sample; running `assembleRelease` here will produce
+    // an unsigned APK that adb refuses to install. Wire your own
+    // `signingConfigs.release` (with a real keystore) before flipping to
+    // release builds. See docs/SIDELOAD_README.md.
     buildTypes {
+        getByName("debug") {
+            isMinifyEnabled = false
+            isDebuggable = true
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         getByName("release") {
             isMinifyEnabled = false
-            // Comment this in once you have a real keystore configured:
-            // signingConfig = signingConfigs.getByName("release")
+            // signingConfig = signingConfigs.getByName("release")  // TODO
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

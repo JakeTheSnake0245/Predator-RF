@@ -380,6 +380,63 @@ class MissionStore:
             out.append(d)
         return out
 
+    # ── Tier 4 read-side helpers (Android pull / CoT bulk export) ────
+    # These are READ-ONLY queries the polling endpoints depend on.
+    # Kept here next to the table definitions so the column lists
+    # don't drift if a future migration renames things.
+
+    def _fetch_events_since_sync(self, since_ns: int, limit: int
+                                  ) -> List[Dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT event_id, timestamp_ns, node_id, frequency, "
+                "       power_dbfs, snr_db, bandwidth_hz, detector, "
+                "       modulation, protocol, node_lat, node_lon, "
+                "       node_trust_score, mission_id, upstream_source "
+                "FROM rf_events "
+                "WHERE timestamp_ns > ? "
+                "ORDER BY timestamp_ns ASC "
+                "LIMIT ?",
+                (int(since_ns), int(limit)))
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    async def fetch_events_since(self, *, since_ns: int, limit: int = 200
+                                  ) -> List[Dict[str, Any]]:
+        """Delta read for the Android polling endpoint. Strictly
+        `timestamp_ns > since_ns` so the cursor returned to the client
+        (server-now) is never re-included on the next poll."""
+        return await asyncio.to_thread(
+            self._fetch_events_since_sync, since_ns, limit)
+
+    def _latest_assessments_sync(self) -> Dict[str, Dict[str, Any]]:
+        with self._lock:
+            # MAX(assessment_ns) per emitter — the most recent verdict
+            # wins. JOIN back to the row to get the full assessment.
+            cur = self._conn.execute("""
+                SELECT a.emitter_id, a.assessment_ns, a.threat_level,
+                       a.confidence, a.summary, a.recommended_action,
+                       a.escalate_to_atak
+                FROM assessment_reports a
+                JOIN (SELECT emitter_id, MAX(assessment_ns) AS ts
+                      FROM assessment_reports
+                      GROUP BY emitter_id) latest
+                  ON a.emitter_id = latest.emitter_id
+                 AND a.assessment_ns = latest.ts
+            """)
+            cols = [c[0] for c in cur.description]
+            out: Dict[str, Dict[str, Any]] = {}
+            for row in cur.fetchall():
+                d = dict(zip(cols, row))
+                d["escalate_to_atak"] = bool(d.get("escalate_to_atak"))
+                out[d["emitter_id"]] = d
+            return out
+
+    async def latest_assessments(self) -> Dict[str, Dict[str, Any]]:
+        """Map of emitter_id → most recent AssessmentReport. Used by
+        the bulk CoT export endpoint to filter to escalating tracks."""
+        return await asyncio.to_thread(self._latest_assessments_sync)
+
     def event_count(self) -> int:
         with self._lock:
             cur = self._conn.execute("SELECT COUNT(*) FROM rf_events")
