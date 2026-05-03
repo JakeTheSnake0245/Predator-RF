@@ -6532,10 +6532,33 @@ void MainWindow::draw() {
                     ImGui::OpenPopup(rnsEditIsNew ? T("Add RNS interface")
                                                   : T("Edit RNS interface"));
                 }
+#ifdef __ANDROID__
+                if (ImGui::IsPopupOpen(T("Add RNS interface")) ||
+                    ImGui::IsPopupOpen(T("Edit RNS interface"))) {
+                    ImVec2 wp      = ImGui::GetWindowPos();
+                    float  screenH = ImGui::GetIO().DisplaySize.y;
+                    float  imeBot  = (float)backend::getImeBottomInset();
+                    float  kbTopY  = (imeBot > 0.0f) ? (screenH - imeBot) : screenH;
+                    float  popMaxH = std::max(kbTopY - wp.y - 2.0f * pad,
+                                             120.0f * style::uiScale);
+                    ImGui::SetNextWindowPos(ImVec2(wp.x + pad, wp.y + pad),
+                                            ImGuiCond_Always);
+                    ImGui::SetNextWindowSizeConstraints(
+                        ImVec2(300.0f * style::uiScale, 80.0f * style::uiScale),
+                        ImVec2(winSize.x - 2.0f * pad, popMaxH));
+                }
+#endif
                 if (ImGui::BeginPopupModal(
                         rnsEditIsNew ? T("Add RNS interface")
                                      : T("Edit RNS interface"),
                         nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    // Wrap all fields in a scrollable child so the
+                    // Validate/Save/Cancel row stays visible when the
+                    // Android soft keyboard pushes the max height down.
+                    float btnAreaH = ImGui::GetFrameHeightWithSpacing()
+                                   + ImGui::GetStyle().ItemSpacing.y;
+                    if (ImGui::BeginChild("##rns_edit_fields",
+                                          ImVec2(0.0f, -btnAreaH), false)) {
                     ImGui::InputText(T("Name##rns_e"), rnsEditName,
                                      sizeof(rnsEditName));
                     if (rnsEditIsNew) {
@@ -6663,6 +6686,8 @@ void MainWindow::draw() {
                         ImGui::InputInt (T("Respawn delay s##rns_e"), &eRespawnDelay);
                     }
                     ImGui::Separator();
+                    } // end ##rns_edit_fields child
+                    ImGui::EndChild();
                     if (ImGui::Button(T("Validate##rns_e"))) {
                         json cfg = buildCfgJson();
                         std::string err;
@@ -6698,6 +6723,21 @@ void MainWindow::draw() {
 
                 // Export modal.
                 if (rnsExportOpen) ImGui::OpenPopup(T("Export RNS config"));
+#ifdef __ANDROID__
+                if (ImGui::IsPopupOpen(T("Export RNS config"))) {
+                    ImVec2 wp      = ImGui::GetWindowPos();
+                    float  screenH = ImGui::GetIO().DisplaySize.y;
+                    float  imeBot  = (float)backend::getImeBottomInset();
+                    float  kbTopY  = (imeBot > 0.0f) ? (screenH - imeBot) : screenH;
+                    float  popMaxH = std::max(kbTopY - wp.y - 2.0f * pad,
+                                             120.0f * style::uiScale);
+                    ImGui::SetNextWindowPos(ImVec2(wp.x + pad, wp.y + pad),
+                                            ImGuiCond_Always);
+                    ImGui::SetNextWindowSizeConstraints(
+                        ImVec2(300.0f * style::uiScale, 80.0f * style::uiScale),
+                        ImVec2(winSize.x - 2.0f * pad, popMaxH));
+                }
+#endif
                 if (ImGui::BeginPopupModal(T("Export RNS config"), nullptr,
                                             ImGuiWindowFlags_AlwaysAutoResize)) {
                     ImGui::InputText(T("Passphrase##rns_x"),
@@ -6733,6 +6773,21 @@ void MainWindow::draw() {
 
                 // Import modal.
                 if (rnsImportOpen) ImGui::OpenPopup(T("Import RNS config"));
+#ifdef __ANDROID__
+                if (ImGui::IsPopupOpen(T("Import RNS config"))) {
+                    ImVec2 wp      = ImGui::GetWindowPos();
+                    float  screenH = ImGui::GetIO().DisplaySize.y;
+                    float  imeBot  = (float)backend::getImeBottomInset();
+                    float  kbTopY  = (imeBot > 0.0f) ? (screenH - imeBot) : screenH;
+                    float  popMaxH = std::max(kbTopY - wp.y - 2.0f * pad,
+                                             120.0f * style::uiScale);
+                    ImGui::SetNextWindowPos(ImVec2(wp.x + pad, wp.y + pad),
+                                            ImGuiCond_Always);
+                    ImGui::SetNextWindowSizeConstraints(
+                        ImVec2(300.0f * style::uiScale, 80.0f * style::uiScale),
+                        ImVec2(winSize.x - 2.0f * pad, popMaxH));
+                }
+#endif
                 if (ImGui::BeginPopupModal(T("Import RNS config"), nullptr,
                                             ImGuiWindowFlags_AlwaysAutoResize)) {
                     ImGui::InputTextMultiline(T("Token##rns_i"),
@@ -6760,16 +6815,32 @@ void MainWindow::draw() {
                     ImGui::EndPopup();
                 }
 
-                // Log tail.
+                // Log tail — inline tap-to-edit buttons feed the pendEdit
+                // popup, keeping the Android soft keyboard above the input.
                 ImGui::Separator();
                 ImGui::Text("%s", T("Log tail"));
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(80);
-                ImGui::InputText("##rns_loglevel", rnsLogLevel,
-                                  sizeof(rnsLogLevel));
+                if (ImGui::Button(rnsLogLevel[0] ? rnsLogLevel : "level",
+                                   ImVec2(80.0f * style::uiScale, 0))) {
+                    openPendEdit(T("Log level"), std::string(rnsLogLevel),
+                        [&](std::string v) {
+                            snprintf(rnsLogLevel, sizeof(rnsLogLevel),
+                                     "%s", v.c_str());
+                        });
+                }
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(80);
-                ImGui::InputInt("##rns_loglimit", &rnsLogLimit);
+                {
+                    std::string limStr = std::to_string(rnsLogLimit);
+                    if (ImGui::Button(limStr.c_str(),
+                                       ImVec2(80.0f * style::uiScale, 0))) {
+                        openPendEdit(T("Log limit"), limStr,
+                            [&](std::string v) {
+                                char* end = nullptr;
+                                long  n   = std::strtol(v.c_str(), &end, 10);
+                                if (end != v.c_str()) rnsLogLimit = (int)n;
+                            });
+                    }
+                }
                 ImGui::SameLine();
                 if (ImGui::Button(T("Pull##rns_l"))) pollLogs();
                 if (ImGui::BeginChild("##rns_log_pane",
