@@ -55,6 +55,7 @@ class AutoTasker:
                  min_interval_s: float = 30.0,
                  freq_match_tolerance_hz: float = 2_000.0,
                  enabled: bool = True,
+                 global_max_per_minute: int = 30,
                  spawn: Optional[Callable[[Awaitable], asyncio.Task]] = None):
         """`spawn`: hook for the orchestrator to register the per-tune
         coroutine in its shutdown-drain set. Defaults to asyncio.create_task
@@ -69,10 +70,24 @@ class AutoTasker:
         self._spawn = spawn or asyncio.create_task
         # node_id → last tune unix-seconds
         self._last_tune: Dict[str, float] = {}
+        # Sliding window of recent tune timestamps (across ALL nodes)
+        # for the global-budget brake. A bad assessment loop could
+        # otherwise thrash every node simultaneously — which is hard
+        # to debug at 0200 in the field. The brake is a safety net,
+        # not a routing decision; rate_limit / already_tuned still
+        # apply per-node first.
+        self.global_max_per_minute = int(global_max_per_minute)
+        self._global_tune_times: list[float] = []
+        # Serializes the per-node rate-limit + global-budget check-and-
+        # reserve so two concurrent assessments can't both pass the
+        # gate and overshoot. The lock is *not* held across the network
+        # tune call — only the budget bookkeeping.
+        self._budget_lock = asyncio.Lock()
         # Counters for /metrics + tests
         self.tasks_issued = 0
         self.tasks_skipped_rate_limit = 0
         self.tasks_skipped_already_tuned = 0
+        self.tasks_skipped_global_budget = 0
         self.tasks_failed = 0
         self.assessments_seen = 0
 
@@ -112,22 +127,56 @@ class AutoTasker:
                 self._tune_one(node_id, float(freq),
                                track_dict.get("emitter_id", "?"), action))
 
+    def _check_global_budget(self, now: float) -> bool:
+        """True iff issuing one more tune NOW would stay under the
+        global per-minute budget. Side-effect: trims the sliding
+        window of expired entries."""
+        cutoff = now - 60.0
+        self._global_tune_times = [
+            t for t in self._global_tune_times if t >= cutoff]
+        return len(self._global_tune_times) < self.global_max_per_minute
+
     async def _tune_one(self, node_id: str, freq_hz: float,
                          emitter_id: str, action: str) -> bool:
-        # Rate limit gate
+        # Reserve a slot atomically — both the per-node rate-limit AND
+        # the fleet-wide budget are checked + updated under the same
+        # lock so concurrent tasks can't race past either gate. The
+        # _last_tune / _global_tune_times entries are written here
+        # *before* the network I/O, then rolled back on failure.
         now = time.time()
-        last = self._last_tune.get(node_id, 0.0)
-        if now - last < self.min_interval_s:
-            self.tasks_skipped_rate_limit += 1
-            logger.debug("AutoTasker: %s rate-limited (last tune %.1fs ago)",
-                         node_id, now - last)
-            return False
+        async with self._budget_lock:
+            last = self._last_tune.get(node_id, 0.0)
+            if now - last < self.min_interval_s:
+                self.tasks_skipped_rate_limit += 1
+                logger.debug("AutoTasker: %s rate-limited (%.1fs since last)",
+                             node_id, now - last)
+                return False
+            if not self._check_global_budget(now):
+                self.tasks_skipped_global_budget += 1
+                logger.warning(
+                    "AutoTasker: global budget exceeded (%d/min) — "
+                    "dropping tune of %s → %.4f MHz",
+                    self.global_max_per_minute, node_id, freq_hz / 1e6)
+                return False
+            # Reserve atomically — release on failure below.
+            self._last_tune[node_id] = now
+            self._global_tune_times.append(now)
 
         # "Already tuned" check (best-effort — get_client may return a
         # client whose underlying node has center_frequencies_monitored)
+        async def _release():
+            async with self._budget_lock:
+                if self._last_tune.get(node_id) == now:
+                    self._last_tune.pop(node_id, None)
+                try:
+                    self._global_tune_times.remove(now)
+                except ValueError:
+                    pass
+
         client = self.fleet.get_client(node_id)
         if client is None:
             logger.debug("AutoTasker: no client for node %s", node_id)
+            await _release()
             return False
 
         node = getattr(client, "node", None)
@@ -139,6 +188,7 @@ class AutoTasker:
                     logger.debug(
                         "AutoTasker: %s already monitoring %.4f MHz — skip",
                         node_id, freq_hz / 1e6)
+                    await _release()
                     return False
 
         try:
@@ -147,15 +197,16 @@ class AutoTasker:
             self.tasks_failed += 1
             logger.warning("AutoTasker: tune of %s → %.4f MHz failed: %s",
                            node_id, freq_hz / 1e6, exc)
+            await _release()
             return False
 
         if not ok:
             self.tasks_failed += 1
             logger.warning("AutoTasker: tune of %s → %.4f MHz returned False",
                            node_id, freq_hz / 1e6)
+            await _release()
             return False
 
-        self._last_tune[node_id] = now
         self.tasks_issued += 1
         logger.info("AutoTasker: tuned %s → %.4f MHz (emitter=%s, action=%s)",
                     node_id, freq_hz / 1e6, emitter_id[:8], action)
@@ -168,5 +219,7 @@ class AutoTasker:
             "tasks_issued": self.tasks_issued,
             "tasks_skipped_rate_limit": self.tasks_skipped_rate_limit,
             "tasks_skipped_already_tuned": self.tasks_skipped_already_tuned,
+            "tasks_skipped_global_budget": self.tasks_skipped_global_budget,
             "tasks_failed": self.tasks_failed,
+            "global_max_per_minute": self.global_max_per_minute,
         }

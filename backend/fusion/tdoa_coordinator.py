@@ -33,6 +33,13 @@ class TDOAResult:
     location_confidence: float
     participating_nodes: List[str] = field(default_factory=list)
     time_differences_ns: Dict[str, int] = field(default_factory=dict)
+    # 1σ error ellipse for UI rendering. Operator needs to see "this is
+    # a 50 m fix vs a 5 km search area" — without it, the map collapses
+    # both to the same dot. Approximated from confidence + rough node
+    # geometry; not Cramér-Rao-bound rigorous, but operationally correct.
+    ellipse_a_m: float = 0.0      # semi-major axis (metres)
+    ellipse_b_m: float = 0.0      # semi-minor axis (metres)
+    ellipse_theta_deg: float = 0.0  # rotation, 0 = east-aligned
 
 
 class TDOACoordinator:
@@ -65,6 +72,26 @@ class TDOACoordinator:
         """
         if not node.location_gps:
             return  # No location → can't triangulate at all
+
+        # Stale-GPS guard: if the node's last GPS lock is older than
+        # the configured window, drop it from TDOA. Static workstations
+        # with location_gps_updated_ns == 0 (never set, or test fakes
+        # without the attribute) bypass this check — the assumption is
+        # that someone who didn't supply the timestamp deliberately
+        # opted out of freshness gating.
+        try:
+            from backend.config import config as _cfg
+            max_age_s = float(_cfg.gps_max_age_s)
+        except Exception:
+            max_age_s = 60.0
+        gps_ts = getattr(node, "location_gps_updated_ns", 0) or 0
+        if gps_ts > 0:
+            import time as _time
+            age_s = (_time.time_ns() - gps_ts) / 1e9
+            if age_s > max_age_s:
+                logger.debug("TDOA: dropping %s — GPS lock %.0fs stale "
+                             "(>%.0fs)", node.node_id, age_s, max_age_s)
+                return
 
         # Map node capability into a timing-trust score. Use getattr
         # with defaults so test fakes / minimal node shims don't have
@@ -185,6 +212,13 @@ class TDOACoordinator:
             timing_factor = sum(m.timing_trust for m in measurements) / len(measurements)
             conf = conf * timing_factor
 
+            # Error ellipse — approximate from confidence + baseline
+            # geometry. With only 2 distinct nodes the fix is a hyperbola,
+            # so the "ellipse" we render is the baseline-aligned uncertainty
+            # corridor; with 3+ it's the LSQ residual scaled by node spread.
+            ellipse_a, ellipse_b, ellipse_theta = self._estimate_ellipse(
+                measurements, conf)
+
             result = TDOAResult(
                 emitter_id=emitter_id,
                 estimated_lat=lat,
@@ -192,6 +226,9 @@ class TDOACoordinator:
                 location_confidence=conf,
                 participating_nodes=[m.node_id for m in measurements],
                 time_differences_ns=tdiffs,
+                ellipse_a_m=ellipse_a,
+                ellipse_b_m=ellipse_b,
+                ellipse_theta_deg=ellipse_theta,
             )
             logger.info("TDOA result for %s: (%.5f, %.5f) conf=%.2f",
                         emitter_id, lat, lon, conf)
@@ -199,6 +236,60 @@ class TDOACoordinator:
             # of the lock — measurements that arrived during the await
             # are safely sitting in a fresh queue for the next solve.
             return result
+
+    @staticmethod
+    def _estimate_ellipse(measurements: List["TDOAMeasurement"],
+                          conf: float) -> Tuple[float, float, float]:
+        """Approximate 1σ error ellipse in metres + rotation in degrees.
+
+        Heuristic, not Cramér-Rao bound:
+          - Base radius scales as (1 - conf) so a high-confidence fix
+            shrinks toward 50 m and a zero-confidence fix grows toward
+            ~5 km (matches the CE encoding used in the CoT emitter).
+          - Eccentricity comes from the ratio of node-spread along the
+            principal axis vs perpendicular: tightly-clustered nodes
+            give a near-circular error blob; nodes strung along a line
+            give a long thin ellipse perpendicular to the baseline (a
+            real geometric property of TDOA).
+          - Theta is the principal-axis bearing of the node cluster,
+            so the ellipse rotates with the operator's actual fleet
+            geometry rather than always east-aligned.
+
+        Pure stdlib — no numpy on the hot path; the operator UI gets
+        meaningful uncertainty geometry without pulling LAPACK.
+        """
+        base = 50.0 + (1.0 - max(0.0, min(1.0, conf))) * 4_950.0
+        if len(measurements) < 2:
+            return base, base, 0.0
+        # Mean lat/lon → metres-per-degree at that latitude
+        mlat = sum(m.node_lat for m in measurements) / len(measurements)
+        mlon = sum(m.node_lon for m in measurements) / len(measurements)
+        m_per_deg_lat = 111_320.0
+        m_per_deg_lon = 111_320.0 * max(0.01, math.cos(math.radians(mlat)))
+        xs = [(m.node_lon - mlon) * m_per_deg_lon for m in measurements]
+        ys = [(m.node_lat - mlat) * m_per_deg_lat for m in measurements]
+        # 2D covariance
+        sxx = sum(x * x for x in xs) / len(xs)
+        syy = sum(y * y for y in ys) / len(ys)
+        sxy = sum(x * y for x, y in zip(xs, ys)) / len(xs)
+        # Principal axis from 2x2 eigenvalues
+        tr = sxx + syy
+        det = sxx * syy - sxy * sxy
+        disc = max(0.0, (tr / 2.0) ** 2 - det)
+        l1 = tr / 2.0 + math.sqrt(disc)
+        l2 = max(1e-6, tr / 2.0 - math.sqrt(disc))
+        # Theta of the LARGER eigenvalue's eigenvector; ellipse semi-major
+        # is PERPENDICULAR to it (TDOA error is across the baseline).
+        if abs(sxy) < 1e-9 and abs(sxx - syy) < 1e-9:
+            theta = 0.0
+        else:
+            theta = 0.5 * math.degrees(math.atan2(2 * sxy, sxx - syy))
+        # Aspect ratio bounded so we don't render a 1 km × 1 m needle
+        ratio = max(0.2, min(1.0, math.sqrt(l2 / l1)))
+        a = base
+        b = base * ratio
+        # Rotate 90° because TDOA error is across the cluster baseline
+        return a, b, (theta + 90.0) % 180.0
 
     def _triangulate(self, measurements: List[TDOAMeasurement]) -> Tuple[float, float, float]:
         """

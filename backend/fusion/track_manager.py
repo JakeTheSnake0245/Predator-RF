@@ -49,11 +49,17 @@ class TrackManager:
         track_id, score = self._associator.associate(
             event, self.tracks, self.sensor_nodes)
 
+        upstream = getattr(event, "upstream_source", None)
         if track_id:
             track = self.tracks[track_id]
             track.update(event.frequency, event.power_dbfs,
                          event.node_id, event.node_trust_score,
                          event.timestamp_ns)
+            # Once a track has been seen locally (upstream_source=None),
+            # it stays local; we only stamp upstream_source if the track
+            # has *only* ever been seen via that single peer cluster.
+            if track.upstream_source is not None and track.upstream_source != upstream:
+                track.upstream_source = None  # heard from >1 origin → local-equivalent
         else:
             track = EmitterTrack(
                 primary_frequency=event.frequency,
@@ -61,6 +67,7 @@ class TrackManager:
                 first_seen_ns=event.timestamp_ns,
                 last_seen_ns=event.timestamp_ns,
                 observation_count=1,
+                upstream_source=upstream,
             )
             track.detecting_nodes = [event.node_id]
             track.frequency_history = [event.frequency]

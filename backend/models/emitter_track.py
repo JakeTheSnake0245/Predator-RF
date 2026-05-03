@@ -56,6 +56,12 @@ class EmitterTrack:
     estimated_lon: Optional[float] = None
     location_confidence: float = 0.0
 
+    # Provenance: which cluster originated this track. None = local
+    # fleet; otherwise the CoC peer URL (set on first ingest of a
+    # remote-origin event). Used by CrossStationDedup to coalesce the
+    # same physical emitter heard by both local + peer clusters.
+    upstream_source: Optional[str] = None
+
     def update(self, frequency: float, power_dbfs: float,
                node_id: str, trust_score: float, timestamp_ns: int):
         self.primary_frequency = frequency
@@ -106,4 +112,5 @@ class EmitterTrack:
             "anomaly_flags": self.anomaly_flags,
             "estimated_lat": self.estimated_lat,
             "estimated_lon": self.estimated_lon,
+            "upstream_source": self.upstream_source,
         }

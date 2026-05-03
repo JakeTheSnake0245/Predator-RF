@@ -140,17 +140,27 @@ class KujhadClient:
             await self._identify()
             await self._poll_state()  # one shot at startup so callers see
                                        # mission_mode / search_bands quickly
+            await self._poll_timing()  # one shot at startup so first-event
+                                        # TDOA already has real timing trust
             state_tick = 0
+            timing_tick = 0
+            # /v1/timing also rarely changes (NTP sync rate, PPS lock
+            # transitions); re-poll on its own cadence.
+            from backend.config import config as _cfg
+            timing_interval_cycles = max(
+                1, int(_cfg.timing_poll_interval_s / self.POLL_INTERVAL_S))
             while self._running:
                 try:
                     await self._poll_events()
                     await self._poll_gps()
                     state_tick += 1
-                    # /v1/state changes on operator action, not per-event;
-                    # re-poll every 5 cycles (~5s) instead of every cycle.
+                    timing_tick += 1
                     if state_tick >= 5:
                         await self._poll_state()
                         state_tick = 0
+                    if timing_tick >= timing_interval_cycles:
+                        await self._poll_timing()
+                        timing_tick = 0
                     await asyncio.sleep(self.POLL_INTERVAL_S)
                 except asyncio.CancelledError:
                     break
@@ -284,8 +294,94 @@ class KujhadClient:
                 acc = float(gps.get('accuracy', 10))
                 self.node.location_gps = (lat, lon)
                 self.node.location_accuracy_m = acc
+                # Stamp the lock-age clock — TDOACoordinator uses this
+                # to drop stale-GPS nodes from solves.
+                self.node.location_gps_updated_ns = time.time_ns()
             except (TypeError, ValueError):
                 pass
+
+    async def _poll_timing(self):
+        """Pull timing telemetry from the C++ /v1/timing endpoint and
+        recompute timing_stability_trust from the device's *measured*
+        clock state instead of guessing from the hardware code.
+
+        Wire shape (the C++ side returns 200 with this body when supported,
+        404 otherwise — we treat 404 as "feature not present, leave the
+        hardware-derived defaults in place"):
+          { source: "gpsdo"|"ntp"|"system",
+            ppsLock: bool, lastSyncSec: number, offsetMs: number,
+            driftPpm: number }
+
+        timing_stability_trust mapping:
+          - gpsdo + ppsLock + |offset|<10 ms        → 0.98
+          - gpsdo + ppsLock                         → 0.90
+          - gpsdo (no PPS)                          → 0.75
+          - ntp + |offset|<25 ms + sync<60 s        → 0.70
+          - ntp + |offset|<100 ms                   → 0.55
+          - ntp (any worse)                         → 0.40
+          - system clock only                       → 0.30
+        Lock age beyond 5 min penalises by an additional 0.2.
+        """
+        try:
+            async with self._session.get(
+                    f"{self._base_url}/v1/timing", timeout=5.0) as resp:
+                if resp.status == 404:
+                    return  # node doesn't expose timing telemetry
+                if resp.status != 200:
+                    return
+                t = await resp.json()
+        except Exception as exc:
+            logger.debug("Node %s: timing poll failed: %s",
+                         self.node.node_id, exc)
+            return
+        if not isinstance(t, dict):
+            return
+        src = str(t.get("source") or "").lower() or "system"
+        pps = bool(t.get("ppsLock"))
+        try:
+            off_ms = float(t.get("offsetMs", 0.0))
+        except (TypeError, ValueError):
+            off_ms = 0.0
+        try:
+            drift_ppm = float(t.get("driftPpm", 0.0))
+        except (TypeError, ValueError):
+            drift_ppm = 0.0
+        try:
+            last_sync_s = float(t.get("lastSyncSec", 0.0))
+        except (TypeError, ValueError):
+            last_sync_s = 0.0
+        # Reverse-engineer last_sync to UNIX ns — `lastSyncSec` is the
+        # AGE of the sync, so subtract from now.
+        if last_sync_s > 0:
+            self.node.timing_last_sync_ns = (
+                time.time_ns() - int(last_sync_s * 1e9))
+        self.node.timing_source = src
+        self.node.timing_pps_lock = pps
+        self.node.timing_offset_ms = off_ms
+        self.node.clock_drift_ppm = drift_ppm
+        self.node.gps_synchronized = (src == "gpsdo" and pps)
+        # Compute trust
+        if src == "gpsdo" and pps and abs(off_ms) < 10:
+            trust = 0.98
+        elif src == "gpsdo" and pps:
+            trust = 0.90
+        elif src == "gpsdo":
+            trust = 0.75
+        elif src == "ntp" and abs(off_ms) < 25 and last_sync_s < 60:
+            trust = 0.70
+        elif src == "ntp" and abs(off_ms) < 100:
+            trust = 0.55
+        elif src == "ntp":
+            trust = 0.40
+        else:
+            trust = 0.30
+        if last_sync_s > 300:
+            trust = max(0.2, trust - 0.2)
+        self.node.timing_stability_trust = trust
+        logger.debug("Node %s timing: src=%s pps=%s offset=%.1fms "
+                     "drift=%.1fppm age=%.0fs → trust=%.2f",
+                     self.node.node_id, src, pps, off_ms,
+                     drift_ppm, last_sync_s, trust)
 
     # ── Event conversion (verified against C++ wire schema) ──────────────────
 

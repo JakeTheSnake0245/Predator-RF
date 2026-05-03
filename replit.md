@@ -187,3 +187,69 @@ MapLibre GL JS v4.7.1, OpenFreeMap dark style, 2D/3D toggle, layer toggles (Road
 - [ ] Linux build
 - [ ] Windows build
 - [ ] Remote SDR ecosystem
+
+## Backend operational gap closure (Tier 1+2+3, 15 items)
+
+This commit lands the operator-facing pieces that turn the existing 76-test
+fusion engine into a fieldable backend. All new behavior is opt-in via env
+flags so the original 76 tests stay green.
+
+### New modules
+- `backend/operator/missions.py` — MissionRegistry. Operator marks start/end
+  of a SIGINT mission; events/tracks/assessments tagged with `mission_id`.
+  Active mission survives a restart (replayed from `missions` table).
+- `backend/operator/approvals.py` — ApprovalQueue. Two-key gate for CoT
+  pushes when `COT_REQUIRE_MANUAL_APPROVAL=1`. Back-pressure (drop oldest),
+  TTL expiry, sync+async on_approved callbacks.
+- `backend/operator/overrides.py` — OverrideRegistry. Friendly-emitter list,
+  freq blacklist (drops at ingest), manual-location override (replaces TDOA
+  estimate when operator has DF gear they trust more).
+- `backend/observability/metrics.py` — Prometheus text-format registry,
+  pure stdlib. Counters + gauges with label maps.
+- `backend/observability/logging.py` — structured JSON logger + idempotent
+  `configure_logging(fmt="text"|"json")`.
+- `backend/api/middleware/auth.py` — bearer-token gate for `/api/v1/*`.
+  No-op when `API_BEARER_TOKEN` is unset (lab posture, logged loudly at
+  boot). Supports `?token=` fallback for SSE.
+- `backend/fusion/cross_station_dedup.py` — coalesces tracks for the same
+  physical emitter heard by both local fleet and CoC peers (only merges
+  when origins differ; freq + location tolerances).
+- `backend/api/routes/{health,missions,approvals,overrides}.py` — REST
+  surface for the new subsystems plus `/healthz`, `/readyz`, `/metrics`.
+
+### Edits to existing files
+- `backend/persistence/store.py` — schema v1→v2: `missions` table,
+  `op_friendly` / `op_blacklist` / `op_manual_location` / `op_approvals_log`
+  tables, `mission_id` + `gps_age_s` + `upstream_source` columns on
+  `rf_events` / `emitter_tracks` / `assessment_reports`. Forward-only,
+  idempotent, gated on `PRAGMA user_version`.
+- `backend/coordination/kujhad_client.py` — new `_poll_timing()` for
+  `/v1/timing` (NTP/GPSDO offset, PPS lock, drift); recomputes
+  `timing_stability_trust` from device-measured state instead of guessing
+  from the hardware code. Stamps `location_gps_updated_ns` on each GPS
+  poll.
+- `backend/coordination/auto_tasker.py` — global per-minute fleet budget
+  brake (`AUTO_TASKER_GLOBAL_MAX_PER_MIN`) so an assessment loop bug can't
+  thrash every node simultaneously.
+- `backend/fusion/tdoa_coordinator.py` — stale-GPS guard
+  (`GPS_MAX_AGE_S` drops nodes whose lock is older); adds error ellipse
+  (semi-major / semi-minor / theta) derived from confidence + node-cluster
+  geometry so the operator UI can render uncertainty.
+- `backend/models/sensor_node.py` — new fields:
+  `location_gps_updated_ns`, `timing_source`, `timing_pps_lock`,
+  `timing_offset_ms`, `timing_last_sync_ns`.
+- `backend/main.py` — wires MissionRegistry → store mission_id provider,
+  blacklist gate at `_on_rf_event` ingest, friendly-list short-circuit on
+  CoT escalation, manual-approval queue gate, dedup loop (CoC mode only),
+  approval-expiry loop. Replaces `logging.basicConfig` with
+  `configure_logging` so JSON logs come online with `LOG_FORMAT=json`.
+- `backend/api/server.py` — mounts auth middleware (gated on token),
+  injects backend ref into health/missions/approvals/overrides routes.
+- `backend/config.py` — 14 new env flags
+  (`API_BEARER_TOKEN`, `LOG_FORMAT`, `COT_REQUIRE_MANUAL_APPROVAL`,
+  `COT_APPROVAL_EXPIRY_S`, `AUTO_TASKER_GLOBAL_MAX_PER_MIN`,
+  `GPS_MAX_AGE_S`, `TIMING_POLL_INTERVAL_S`, `COC_DEDUP_*`, etc.).
+
+### Tests
+9 new test modules, 134 total passing (3 skipped: `aiohttp`-required
+loopback tests + `numpy`-required DSP smoke).

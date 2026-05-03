@@ -67,11 +67,24 @@ class SensorNodeTrust:
     # Location
     location_gps: Optional[Tuple[float, float]] = None   # (lat, lon)
     location_accuracy_m: float = 10.0
+    # When was location_gps last refreshed? UNIX ns. 0 means "never" —
+    # used by TDOACoordinator to drop stale-GPS nodes from solves so
+    # we don't triangulate against a position the operator drove
+    # away from 20 minutes ago.
+    location_gps_updated_ns: int = 0
 
-    # Clock
+    # Clock — both reported by the C++ /v1/timing endpoint when
+    # available. Without this, timing_stability_trust is a guess
+    # derived from the hardware code; with it, we use the device's
+    # actual GPSDO/NTP-disciplined offset and the freshness of its
+    # last PPS.
     gps_synchronized: bool = False
     clock_drift_ppm: float = 0.0
     timing_offset_ns: int = 0
+    timing_source: str = ""             # "gpsdo" | "ntp" | "system" | ""
+    timing_last_sync_ns: int = 0        # UNIX ns of last sync
+    timing_pps_lock: bool = False       # GPS-PPS visible to the SDR clock
+    timing_offset_ms: float = 0.0       # NTP/GPSDO offset reported by node
 
     # Operational config
     bandwidth_allocated_mhz: float = 100.0
