@@ -67,6 +67,10 @@ class EmitterTrack:
     location_confidence: float = 0.0
     location_method: Optional[str] = None       # "tdoa" | "rssi_proximity" | None
     location_error_radius_m: Optional[float] = None
+    # TDOA 1-sigma error ellipse (only set when location_method == "tdoa").
+    tdoa_ellipse_a_m: Optional[float] = None    # semi-major axis (metres)
+    tdoa_ellipse_b_m: Optional[float] = None    # semi-minor axis (metres)
+    tdoa_ellipse_theta_deg: Optional[float] = None  # rotation, 0 = east-aligned
 
     # Provenance: which cluster originated this track. None = local
     # fleet; otherwise the CoC peer URL (set on first ingest of a
@@ -127,5 +131,8 @@ class EmitterTrack:
             "location_confidence": self.location_confidence,
             "location_method": self.location_method,
             "location_error_radius_m": self.location_error_radius_m,
+            "tdoa_ellipse_a_m": self.tdoa_ellipse_a_m,
+            "tdoa_ellipse_b_m": self.tdoa_ellipse_b_m,
+            "tdoa_ellipse_theta_deg": self.tdoa_ellipse_theta_deg,
             "upstream_source": self.upstream_source,
         }
