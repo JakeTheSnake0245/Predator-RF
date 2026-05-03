@@ -319,15 +319,37 @@ class MainActivity : NativeActivity() {
         super.onDestroy();
     }
 
+    // Show / hide the soft keyboard. Called from the native (game) thread
+    // via JNI when ImGui's io.WantTextInput rises/falls. Two non-obvious
+    // requirements made the previous implementation a silent no-op:
+    //
+    //   1. InputMethodManager calls MUST run on the UI thread. Calling
+    //      from any other thread fails silently — no exception, no log,
+    //      no keyboard. This is why edit boxes appeared "dead": the
+    //      InputText widget was activating correctly and io.WantTextInput
+    //      was rising correctly, but the IME request was being dropped
+    //      because it was issued from the native thread.
+    //
+    //   2. NativeActivity's decorView is NOT focusable in touch mode, so
+    //      InputMethodManager.showSoftInput(view, 0) returns false because
+    //      the target view can't accept input focus. The SHOW_FORCED flag
+    //      bypasses the focus check and forces the IME to appear. Pair it
+    //      with HIDE_IMPLICIT_ONLY on hide so the IME stays up even if
+    //      another non-focusable view briefly gets focus.
     fun showSoftInput() {
-        val inputMethodManager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager;
-        inputMethodManager.showSoftInput(window.decorView, 0);
+        runOnUiThread {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(window.decorView, InputMethodManager.SHOW_FORCED)
+        }
     }
 
     fun hideSoftInput() {
-        val inputMethodManager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager;
-        inputMethodManager.hideSoftInputFromWindow(window.decorView.windowToken, 0);
-        hideSystemBars();
+        runOnUiThread {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(window.decorView.windowToken,
+                                       InputMethodManager.HIDE_IMPLICIT_ONLY)
+            hideSystemBars()
+        }
     }
 
     // Queue for the Unicode characters to be polled from native code (via pollUnicodeChar())
