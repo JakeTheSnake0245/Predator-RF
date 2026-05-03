@@ -702,6 +702,16 @@ void MainWindow::draw() {
     static struct {
         bool                              open     = false;
         bool                              setFocus = false;
+        // Set true by openPendEdit() to ASK the popup section (which
+        // runs at root ID stack at the bottom of draw()) to actually
+        // call ImGui::OpenPopup. We can't call OpenPopup directly from
+        // inside drawEditButton() because that lambda is wrapped in a
+        // PushID(label) for click-uniqueness — that pushes the popup
+        // ID into a per-button hash that BeginPopupModal at the root
+        // stack can never look up, so the popup gets queued and never
+        // rendered. Decoupling via this flag keeps the OpenPopup and
+        // BeginPopupModal calls at matching ID stacks.
+        bool                              openRequested = false;
         char                              buf[256] = {};
         char                              label[128] = {};
         std::function<void(std::string)>  onAccept;
@@ -738,21 +748,29 @@ void MainWindow::draw() {
                              std::function<void(std::string)> cb) {
         snprintf(pendEdit.label, sizeof(pendEdit.label), "%s", label);
         snprintf(pendEdit.buf,   sizeof(pendEdit.buf),   "%s", initial.c_str());
-        pendEdit.onAccept = std::move(cb);
-        pendEdit.open     = true;
-        pendEdit.setFocus = true;
-        ImGui::OpenPopup("##pend_edit");
+        pendEdit.onAccept      = std::move(cb);
+        pendEdit.open          = true;
+        pendEdit.setFocus      = true;
+        // Defer the actual OpenPopup until we're at the root ID stack
+        // (see comment on openRequested above). Until this fix every
+        // drawEditButton click queued a popup ID nobody could find,
+        // which is why Add Peer / Edit IP / Edit Port appeared dead.
+        pendEdit.openRequested = true;
     };
 
     auto drawEditButton = [&](const char* label, const std::string& value,
                               std::function<void(std::string)> cb) {
         ImGui::TextDisabled("%s", label);
         std::string buttonText = value.empty() ? std::string(T("Tap to edit")) : value;
+        // PushID/PopID brackets the BUTTON for click-uniqueness only.
+        // We MUST call openPendEdit (which schedules the popup) AFTER
+        // PopID so it runs at the parent ID stack — see openRequested.
         ImGui::PushID(label);
-        if (ImGui::Button(buttonText.c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+        bool clicked = ImGui::Button(buttonText.c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0));
+        ImGui::PopID();
+        if (clicked) {
             openPendEdit(label, value, std::move(cb));
         }
-        ImGui::PopID();
     };
 
     auto drawEditDoubleButton = [&](const char* label, double value, const char* fmt,
@@ -6458,9 +6476,25 @@ void MainWindow::draw() {
     // Rendered last so it appears on top of everything.  Positioned in the
     // upper portion of the content area so the Android software keyboard
     // (which appears at the bottom) never obscures the input field.
+    //
+    // CRITICAL: ImGui::OpenPopup hashes the popup ID against the CURRENT
+    // ID stack, so the OpenPopup call must run at the same PushID nesting
+    // as the BeginPopupModal call below — i.e. the root stack of the
+    // outer SDR++ window. drawEditButton therefore only flips
+    // openRequested=true; we trigger the actual OpenPopup right here.
+    if (pendEdit.openRequested) {
+        pendEdit.openRequested = false;
+        ImGui::OpenPopup("##pend_edit");
+    }
     if (ImGui::IsPopupOpen("##pend_edit")) {
         float popW = winSize.x - 4.0f * pad;
-        ImGui::SetNextWindowPos(ImVec2(2.0f * pad, contentTop + pad), ImGuiCond_Always);
+        // SetNextWindowPos is in screen coords, but our content area starts
+        // at the outer window's origin (which itself is offset by the
+        // safe-area insets — camera cutouts, status bar, etc.). Add the
+        // window's screen position so the popup appears INSIDE the safe
+        // area instead of partially under a notch on landscape phones.
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImGui::SetNextWindowPos(ImVec2(wp.x + 2.0f * pad, wp.y + contentTop + pad), ImGuiCond_Always);
         // Force the width; height auto-sizes around the label + input + buttons.
         ImGui::SetNextWindowSizeConstraints(ImVec2(popW, 0.0f), ImVec2(popW, winSize.y * 0.45f));
     }
