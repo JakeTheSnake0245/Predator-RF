@@ -372,13 +372,22 @@ class MainActivity : NativeActivity() {
         return resources.displayMetrics.density;
     }
 
-    // ── JNI getters: window insets and thermal status ───────────────────
+    // ── JNI getters: window insets ──────────────────────────────────────
+    // NOTE: getImeBottomInset() and getThermalStatus() are NOT declared
+    // here — Kotlin auto-generates those from the public `var` properties
+    // above, and declaring them explicitly causes a JVM signature clash
+    // (Platform declaration clash on getImeBottomInset()I). The native
+    // side still finds them via the auto-generated getters, so the JNI
+    // bridge in backend.cpp is unaffected.
+    //
+    // The safe-area getters DO need explicit functions because the
+    // properties are named `safeTop`/`safeBottom`/etc, not `safeAreaTop`,
+    // so Kotlin would otherwise expose them as getSafeTop() — which
+    // wouldn't match the C++ side's GetMethodID lookup of getSafeAreaTop.
     fun getSafeAreaTop():    Int = safeTop
     fun getSafeAreaBottom(): Int = safeBottom
     fun getSafeAreaLeft():   Int = safeLeft
     fun getSafeAreaRight():  Int = safeRight
-    fun getImeBottomInset(): Int = imeBottomInset
-    fun getThermalStatus():  Int = thermalStatus
 
     fun startLocationUpdates() {
         val fine = PermissionChecker.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION);
