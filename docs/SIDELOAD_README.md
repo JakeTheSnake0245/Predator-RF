@@ -34,26 +34,31 @@ fingerprint prompt didn't accept — re-plug, accept on the phone.
 
 ## 2. Build the APK on Windows
 
-In the Predator-RF repo root:
+In the Predator-RF repo root, **start with the debug build** — it's
+auto-signed with the standard Android debug keystore, no extra setup:
 
 ```
-.\gradlew clean assembleRelease
+.\gradlew clean assembleDebug
 ```
 
-The signed APK lands at:
+The signed-by-debug-key APK lands at:
 
 ```
-app\build\outputs\apk\release\app-release.apk
+app\build\outputs\apk\debug\app-debug.apk
 ```
 
-If you don't have a release keystore yet, `assembleDebug` works for
-sideloading too — it's just signed with the Android debug key, which
-is fine for personal-device installs.
+The reference `android/sample/build.gradle.kts` in this repo
+intentionally leaves `release` UNSIGNED — running `assembleRelease`
+without first wiring a real `signingConfigs.release` produces an
+unsigned APK that `adb install` rejects (`INSTALL_PARSE_FAILED_NO_CERTIFICATES`).
+For personal sideloads to your own S22, debug-signed is fine; for
+distribution, generate a keystore (`keytool -genkeypair`) and wire it
+into `signingConfigs.release`.
 
 ## 3. Push to the phone
 
 ```
-adb install -r .\app\build\outputs\apk\release\app-release.apk
+adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 ```
 
 `-r` means "replace if already installed" — preserves app data.
