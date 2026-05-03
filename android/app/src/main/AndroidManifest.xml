@@ -13,13 +13,31 @@
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             android:exported="true"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="orientation|keyboardHidden|screenSize">
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard"
+            android:windowSoftInputMode="adjustResize"
+            android:resizeableActivity="true">
             <meta-data android:name="android.app.lib_name" android:value="sdrpp_core" />
+            <!-- Notch / cutout: render to the edges in landscape. MainActivity
+                 publishes the safe-area insets via JNI so the C++ side can pad
+                 the main window. Without shortEdges, devices with a camera
+                 cutout get a black bar across the full top of the waterfall. -->
+            <meta-data android:name="android.notch_support" android:value="true" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- USB hot-plug: without this filter, an SDR plugged in AFTER the
+                 app launches is silently ignored. The system fires this intent
+                 on attach; MainActivity.onNewIntent() picks it up, requests
+                 permission, and opens the FD just like the cold-start path. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
         </activity>
 
         <activity
@@ -34,4 +52,15 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Keep the screen on while running. The operator is staring at the
+         waterfall during a sweep; doze would kill the SDR thread within
+         ~60s of screen-off and silently drop the in-flight tracks. We
+         use FLAG_KEEP_SCREEN_ON (window-scoped, auto-released when the
+         activity stops), so this permission is technically not required
+         for that flag — but we declare it so a future foreground-service
+         migration doesn't need a manifest bump. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- USB host (required to enumerate SDR/GPS dongles via OTG). -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 </manifest>

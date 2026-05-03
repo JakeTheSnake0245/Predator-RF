@@ -16,8 +16,11 @@ import android.location.LocationManager;
 import android.Manifest;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.view.View;
 import android.view.KeyEvent;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.util.Log;
 import android.content.res.AssetManager;
@@ -70,6 +73,27 @@ class MainActivity : NativeActivity() {
     public var gpsHasFix : Boolean = false;
     public var locationManager : LocationManager? = null;
 
+    // ── Window insets (notch / nav-bar safe area) and IME inset ─────────
+    // Updated by setOnApplyWindowInsetsListener; published to native via
+    // getSafeArea*() / getImeBottomInset(). All values in raw screen pixels.
+    @Volatile public var safeTop    : Int = 0;
+    @Volatile public var safeBottom : Int = 0;
+    @Volatile public var safeLeft   : Int = 0;
+    @Volatile public var safeRight  : Int = 0;
+    @Volatile public var imeBottomInset : Int = 0;
+    // For pre-API-30 (Android < 11) IME-height inference: we don't get a
+    // dedicated ime-inset, so we capture the no-keyboard bottom inset as
+    // a baseline and treat any growth as the keyboard.
+    private var legacyBaselineBottom : Int = -1;
+
+    // ── Thermal status (Android Q+) ─────────────────────────────────────
+    // 0 = NONE, 1 = LIGHT, 2 = MODERATE, 3 = SEVERE, 4 = CRITICAL,
+    // 5 = EMERGENCY, 6 = SHUTDOWN. Native side throttles scan rate /
+    // FFT depth based on this so the phone doesn't melt during a sweep.
+    @Volatile public var thermalStatus : Int = 0;
+    private var powerManager : PowerManager? = null;
+    private var thermalListener : PowerManager.OnThermalStatusChangedListener? = null;
+
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             gpsLat = location.latitude;
@@ -107,9 +131,116 @@ class MainActivity : NativeActivity() {
         decorView.setSystemUiVisibility(uiOptions);
     }
 
+    /**
+     * Render to the edges (under camera cutouts / notch) in landscape.
+     * Combined with the safe-area inset publication below, this lets the
+     * waterfall use the full width while menus still sit clear of the
+     * cutout. Layout-cutout API is API 28+; minSdk is 28 so always present.
+     */
+    private fun configureCutoutMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = lp
+        }
+    }
+
+    /**
+     * Subscribe to window insets so the C++ side can pad the main window
+     * around the system bars / notch and shrink it when the soft keyboard
+     * comes up. The inset listener runs on the UI thread; the values are
+     * @Volatile so the render thread can read them lock-free.
+     */
+    private fun installInsetListener() {
+        window.decorView.setOnApplyWindowInsetsListener { v, insets ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Android 11+: dedicated ime() and systemBars() insets.
+                val sysMask = WindowInsets.Type.systemBars() or
+                              WindowInsets.Type.displayCutout()
+                val sys = insets.getInsets(sysMask)
+                val ime = insets.getInsets(WindowInsets.Type.ime())
+                safeTop    = sys.top
+                safeBottom = sys.bottom
+                safeLeft   = sys.left
+                safeRight  = sys.right
+                imeBottomInset = ime.bottom
+            } else {
+                // Android 9–10: only the combined systemWindowInset* exists.
+                // Capture the first-seen bottom inset as our "no keyboard"
+                // baseline; any growth past that is the IME height.
+                @Suppress("DEPRECATION")
+                run {
+                    val curBottom = insets.systemWindowInsetBottom
+                    if (legacyBaselineBottom < 0) legacyBaselineBottom = curBottom
+                    safeTop    = insets.systemWindowInsetTop
+                    safeBottom = legacyBaselineBottom
+                    safeLeft   = insets.systemWindowInsetLeft
+                    safeRight  = insets.systemWindowInsetRight
+                    imeBottomInset = (curBottom - legacyBaselineBottom).coerceAtLeast(0)
+                }
+            }
+            v.onApplyWindowInsets(insets)
+        }
+    }
+
+    /**
+     * Subscribe to thermal status. On API 29+ Android lets us read the
+     * SoC's thermal state directly so we can back off scan rate before
+     * the kernel starts CPU-throttling us silently.
+     */
+    private fun installThermalListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        thermalStatus = powerManager!!.currentThermalStatus
+        thermalListener = PowerManager.OnThermalStatusChangedListener { status ->
+            thermalStatus = status
+            if (status >= PowerManager.THERMAL_STATUS_SEVERE) {
+                Log.w(TAG, "Thermal status SEVERE+ ($status) — native side should throttle")
+            }
+        }
+        powerManager!!.addThermalStatusListener(thermalListener!!)
+    }
+
+    /**
+     * Request USB permission for one device. Same flow as the cold-start
+     * loop in onCreate, factored out so onNewIntent can reuse it.
+     */
+    private fun requestUsbPermissionFor(dev: UsbDevice) {
+        val mgr = usbManager ?: return
+        if (mgr.hasPermission(dev)) {
+            // Already granted — open immediately.
+            SDR_device = dev
+            SDR_conn = mgr.openDevice(dev)
+            if (SDR_conn != null) {
+                SDR_VID = dev.vendorId
+                SDR_PID = dev.productId
+                SDR_FD  = SDR_conn!!.fileDescriptor
+            }
+            return
+        }
+        val pi = PendingIntent.getBroadcast(this, 0,
+            Intent(ACTION_USB_PERMISSION).setPackage(packageName),
+            PendingIntent.FLAG_MUTABLE)
+        val filter = IntentFilter(ACTION_USB_PERMISSION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(usbReceiver, filter)
+        }
+        mgr.requestPermission(dev, pi)
+    }
+
     public override fun onCreate(savedInstanceState: Bundle?) {
         // Hide bars
         hideSystemBars();
+
+        // Keep the screen on while the activity is foreground. Auto-released
+        // when the window stops, so no explicit wakelock acquire/release.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        // Render under camera cutout / notch in landscape.
+        configureCutoutMode();
 
         // Ask for required permissions, without these the app cannot run.
         requestMissingPermissions(
@@ -133,14 +264,40 @@ class MainActivity : NativeActivity() {
             registerReceiver(usbReceiver, filter)
         }
 
-        // Get permission for all USB devices
+        // Get permission for all USB devices (cold-start enumeration).
         val devList = usbManager!!.getDeviceList();
         for ((_, dev) in devList) {
             usbManager!!.requestPermission(dev, permissionIntent);
         }
 
         super.onCreate(savedInstanceState)
+
+        // Install inset + thermal listeners after super.onCreate so the
+        // window/decor view exists.
+        installInsetListener();
+        installThermalListener();
+
         startLocationUpdates();
+
+        // Cold-launch via USB_DEVICE_ATTACHED — Android passes the device
+        // in the launch intent. Treat it the same as a hot-plug.
+        handleUsbAttachIntent(intent)
+    }
+
+    public override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleUsbAttachIntent(intent)
+    }
+
+    private fun handleUsbAttachIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        val dev: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        if (dev != null) {
+            Log.i(TAG, "USB attached: vid=0x${"%04x".format(dev.vendorId)} pid=0x${"%04x".format(dev.productId)}")
+            requestUsbPermissionFor(dev)
+        }
     }
 
     public override fun onResume() {
@@ -153,6 +310,13 @@ class MainActivity : NativeActivity() {
     public override fun onPause() {
         stopLocationUpdates();
         super.onPause();
+    }
+
+    public override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            thermalListener?.let { powerManager?.removeThermalStatusListener(it) }
+        }
+        super.onDestroy();
     }
 
     fun showSoftInput() {
@@ -207,6 +371,14 @@ class MainActivity : NativeActivity() {
     fun getDisplayDensity(): Float {
         return resources.displayMetrics.density;
     }
+
+    // ── JNI getters: window insets and thermal status ───────────────────
+    fun getSafeAreaTop():    Int = safeTop
+    fun getSafeAreaBottom(): Int = safeBottom
+    fun getSafeAreaLeft():   Int = safeLeft
+    fun getSafeAreaRight():  Int = safeRight
+    fun getImeBottomInset(): Int = imeBottomInset
+    fun getThermalStatus():  Int = thermalStatus
 
     fun startLocationUpdates() {
         val fine = PermissionChecker.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION);
