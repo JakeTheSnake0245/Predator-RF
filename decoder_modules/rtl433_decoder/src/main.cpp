@@ -123,7 +123,7 @@ public:
         if (enabled_) startPipeline();
     }
 
-    ~Rtl433DecoderModule() override {
+    ~Rtl433DecoderModule() {
         predator::unregisterNativeDecoder(this);
         gui::menu.removeEntry(name_);
         stopPipeline();
