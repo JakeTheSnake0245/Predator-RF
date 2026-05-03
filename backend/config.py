@@ -61,6 +61,60 @@ class BackendConfig:
     tdoa_enabled: bool = field(
         default_factory=lambda: _env_bool("TDOA_ENABLED", True))
 
+    # ── Persistence ───────────────────────────────────────────────────────
+    # SQLite-backed mission log (events / tracks / assessments). On crash
+    # or restart, active tracks are rehydrated from this DB so an operator
+    # doesn't lose situational awareness mid-mission.
+    persistence_enabled: bool = field(
+        default_factory=lambda: _env_bool("PERSISTENCE_ENABLED", True))
+    data_dir: str = field(
+        default_factory=lambda: _env("DATA_DIR", "./predator_data"))
+    mission_db_filename: str = field(
+        default_factory=lambda: _env("MISSION_DB", "mission.db"))
+    track_replay_window_hours: float = field(
+        default_factory=lambda: _env_float("TRACK_REPLAY_WINDOW_H", 24.0))
+
+    @property
+    def mission_db_path(self) -> str:
+        import os
+        return os.path.join(self.data_dir, self.mission_db_filename)
+
+    # ── CoT / TAK output ──────────────────────────────────────────────────
+    # OFF by default — RX-only posture. Operator must explicitly opt in to
+    # transmit anything. When enabled, only tracks with an assessment that
+    # has escalate_to_atak=True will produce CoT beacons.
+    cot_enabled: bool = field(
+        default_factory=lambda: _env_bool("COT_ENABLED", False))
+    cot_dest_host: str = field(
+        default_factory=lambda: _env("COT_DEST_HOST", "239.2.3.1"))
+    cot_dest_port: int = field(
+        default_factory=lambda: _env_int("COT_DEST_PORT", 6969))
+    cot_uid_prefix: str = field(
+        default_factory=lambda: _env("COT_UID_PREFIX", "PREDATOR"))
+    cot_stale_seconds: float = field(
+        default_factory=lambda: _env_float("COT_STALE_S", 300.0))
+    cot_multicast_ttl: int = field(
+        default_factory=lambda: _env_int("COT_MULTICAST_TTL", 1))
+
+    # ── AutoTasker ─────────────────────────────────────────────────────────
+    # When the DecisionEngine recommends a closer look (focus_all_nodes /
+    # increase_dwell_time), AutoTasker re-tunes the recommended sensor
+    # nodes via the Kujhad HTTP API. Critical assessments still require
+    # an operator-in-the-loop and are NEVER auto-actioned.
+    # Default OFF for the same reason as cot_enabled: a SIGINT operator
+    # must explicitly arm any surface that emits RF (here: re-tune
+    # commands to the C++ nodes). RX-only is the safe posture.
+    auto_tasker_enabled: bool = field(
+        default_factory=lambda: _env_bool("AUTO_TASKER_ENABLED", False))
+    auto_tasker_min_interval_s: float = field(
+        default_factory=lambda: _env_float("AUTO_TASKER_MIN_INTERVAL_S", 30.0))
+
+    # Maximum time stop() will wait for in-flight persistence/CoT/TDOA
+    # tasks to drain before forcing a cancel. A hung TAK server must
+    # not block shutdown forever.
+    shutdown_drain_timeout_s: float = field(
+        default_factory=lambda: _env_float("SHUTDOWN_DRAIN_TIMEOUT_S", 5.0))
+
     def parse_fleet_nodes(self):
         """Parse FLEET_NODES CSV into SensorNodeTrust objects."""
         from backend.models.sensor_node import SensorNodeTrust
