@@ -22,13 +22,18 @@ from backend.fusion.tdoa_coordinator import TDOACoordinator
 
 
 class _FakeNode:
-    """Minimal SensorNodeTrust shim — TDOACoordinator only reads
-    location_gps, can_do_tdoa, and node_id."""
+    """Minimal SensorNodeTrust shim — TDOACoordinator reads
+    location_gps, can_do_tdoa, node_id, and timing_stability_trust.
+    Default timing_stability_trust=1.0 so a can_tdoa=True fake yields
+    timing_factor=1.0 (i.e. tests written before the inclusive-policy
+    change keep their numeric assertions on raw geometric confidence)."""
     def __init__(self, node_id: str, lat: float, lon: float,
-                 can_tdoa: bool = True):
+                 can_tdoa: bool = True,
+                 timing_stability_trust: float = 1.0):
         self.node_id = node_id
         self.location_gps = (lat, lon)
         self.can_do_tdoa = can_tdoa
+        self.timing_stability_trust = timing_stability_trust
 
 
 class TDOACoordinatorWireTests(unittest.IsolatedAsyncioTestCase):
@@ -170,13 +175,26 @@ class TDOACoordinatorWireTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.tdoa.distinct_nodes(em), 1)
         self.assertIsNone(await self.tdoa.solve(em))
 
-    async def test_node_without_tdoa_capability_dropped(self):
+    async def test_node_without_tdoa_capability_now_included_with_low_trust(self):
+        """Policy change: nodes WITHOUT a dedicated TDOA timing path
+        (e.g. RTL-SDR, phone-bundled SDR) used to be silently dropped.
+        Per operator request, they now participate so the operator
+        gets at least a search-area fix from cheap hardware. The fix
+        is correspondingly marked low-confidence by the timing_factor."""
         em = "emitter-D"
         no_tdoa = _FakeNode("no_tdoa", 35.10, -106.50, can_tdoa=False)
         self.tdoa.record_measurement(em, no_tdoa, self.now)
         self.tdoa.record_measurement(em, self.n2, self.now)
-        self.assertEqual(self.tdoa.distinct_nodes(em), 1,
-                         "node without TDOA capability must not be queued")
+        self.assertEqual(self.tdoa.distinct_nodes(em), 2,
+            "non-TDOA-capable node must now be queued (inclusive policy)")
+        # And a 2-node solve mixing one cheap + one capable yields a
+        # downgraded confidence vs the all-capable case.
+        result = await self.tdoa.solve(em)
+        self.assertIsNotNone(result)
+        # base 0.3 * mean(0.5 cheap-cap, 1.0 capable) = 0.3 * 0.75 = 0.225
+        self.assertLess(result.location_confidence, 0.3,
+            "mixed-trust fix must be downgraded vs all-capable baseline")
+        self.assertGreater(result.location_confidence, 0.0)
 
     async def test_prune_old_drops_stale_measurements(self):
         em = "emitter-E"

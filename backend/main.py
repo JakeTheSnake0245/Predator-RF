@@ -36,6 +36,7 @@ from backend.persistence import MissionStore
 from backend.fusion.tdoa_coordinator import TDOACoordinator
 from backend.output import CoTEmitter
 from backend.coordination.auto_tasker import AutoTasker
+from backend.coc import CoCAggregator
 
 logging.basicConfig(
     level=getattr(logging, config.log_level, logging.INFO),
@@ -107,6 +108,18 @@ class PredatorBackend:
                              config.mission_db_path, exc)
                 self.store = None
 
+        # CoC aggregator — optional, consumes events from peer backends
+        # over SSE and feeds them through our local pipeline as if they
+        # were native fleet events. Off by default (field-station mode).
+        upstreams = config.parse_coc_upstream_urls()
+        self.coc: Optional[CoCAggregator] = None
+        if config.coc_mode_enabled and upstreams:
+            self.coc = CoCAggregator(
+                upstream_urls=upstreams,
+                reconnect_delay_s=config.coc_reconnect_delay_s,
+                spawn=lambda coro: self._spawn(coro),
+            )
+
         # Background task accounting — every fire-and-forget task spawned
         # from `_on_rf_event` (persistence writes, TDOA solves, CoT emits,
         # AutoTasker tunes) is registered here so `stop()` can drain them
@@ -118,6 +131,12 @@ class PredatorBackend:
         # Wire event callback
         self.fleet_manager.on_event(self._on_rf_event)
         self.track_manager.on_new_track(self._on_new_track)
+        # CoC events feed the SAME callback so they go through baseline,
+        # tracking, anomaly detection, decisioning, persistence, CoT and
+        # AutoTasker — exactly like a local-fleet event would. They keep
+        # their `_upstream` tag so the operator can tell origin.
+        if self.coc is not None:
+            self.coc.on_event(self._on_remote_event)
 
     def _spawn(self, coro) -> asyncio.Task:
         """Schedule a coroutine and track it for shutdown drain."""
@@ -216,6 +235,34 @@ class PredatorBackend:
         if self.store is not None:
             await self.store.record_track(track.to_dict())
 
+    def _on_remote_event(self, ev_dict: dict) -> None:
+        """Bridge from CoCAggregator (which delivers dicts) into the
+        same per-event pipeline used by the local fleet (which delivers
+        RFEvent objects). We rehydrate the dict back into an RFEvent
+        and route through `_on_rf_event`. CoC provenance — `_upstream`
+        from the aggregator, or `upstream_source` already on the event
+        if it was relayed through multiple CoC layers — is preserved
+        end-to-end via the dedicated RFEvent.upstream_source field."""
+        try:
+            from backend.models.rf_event import RFEvent
+            # Pull provenance out before constructing — `_upstream` is
+            # the aggregator's tag, `upstream_source` may already be set
+            # if a peer CoC station relayed this event from yet another
+            # field station. Prefer the deepest origin.
+            upstream = ev_dict.get("upstream_source") or ev_dict.get("_upstream")
+            clean = {k: v for k, v in ev_dict.items()
+                     if not k.startswith("_") and k != "upstream_source"}
+            if hasattr(RFEvent, "from_dict"):
+                ev = RFEvent.from_dict(clean)
+            else:
+                ev = RFEvent(**clean)
+            if upstream:
+                ev.upstream_source = upstream
+        except Exception as exc:
+            logger.debug("CoC: unable to rehydrate upstream event: %s", exc)
+            return
+        self._on_rf_event(ev)
+
     def _on_new_track(self, track):
         logger.info("New track: %s at %.4f MHz",
                     track.emitter_id[:8], track.primary_frequency / 1e6)
@@ -227,11 +274,13 @@ class PredatorBackend:
         # where the operator must KNOW whether AutoTasker / CoT will
         # take any active action. Both default OFF (RX-only posture).
         logger.info(
-            "GATES — persistence=%s tdoa=%s cot=%s auto_tasker=%s",
+            "GATES — persistence=%s tdoa=%s cot=%s auto_tasker=%s coc=%s",
             "on" if self.store is not None else "off",
             "on" if self.tdoa is not None else "off",
             "ARMED" if self.cot.enabled else "off",
-            "ARMED" if self.auto_tasker.enabled else "off")
+            "ARMED" if self.auto_tasker.enabled else "off",
+            f"on({len(config.parse_coc_upstream_urls())} upstream)"
+                if self.coc is not None else "off")
 
         # Rehydrate active tracks from the previous mission (if any) so a
         # mid-mission restart doesn't lose context.
@@ -245,9 +294,15 @@ class PredatorBackend:
             logger.info("Fleet node registered: %s (%s)",
                         node.node_id, node.hardware_code)
 
-        if self.fleet_manager.node_count() == 0:
-            logger.warning("No fleet nodes configured. "
-                           "Set FLEET_NODES env var or register via API.")
+        if self.fleet_manager.node_count() == 0 and self.coc is None:
+            logger.warning("No fleet nodes configured AND CoC mode is off. "
+                           "Set FLEET_NODES env var or register via API, "
+                           "or enable COC_MODE_ENABLED + COC_UPSTREAM_URLS.")
+
+        # Start the CoC aggregator (if configured). Each upstream gets
+        # its own consumer task registered in _pending_tasks via _spawn.
+        if self.coc is not None:
+            await self.coc.start()
 
         # Background maintenance tasks
         asyncio.create_task(
@@ -261,7 +316,9 @@ class PredatorBackend:
     async def stop(self):
         logger.info("Backend stopping...")
         # Stop accepting new RF events first so no fresh tasks spawn
-        # while we drain.
+        # while we drain. Includes the CoC upstream consumers.
+        if self.coc is not None:
+            await self.coc.stop()
         await self.fleet_manager.stop_all()
 
         # Drain in-flight persistence/CoT/TDOA/AutoTasker tasks. We give

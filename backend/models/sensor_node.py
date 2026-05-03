@@ -3,6 +3,36 @@ from enum import Enum
 from typing import List, Optional, Tuple
 import time
 
+from backend.models.sdr_backend import SDRBackend
+
+
+def _load_hardware_capabilities(hardware_code: str):
+    """Look up hardware capabilities WITHOUT going through
+    `backend.sensor.__init__`. The package's __init__ imports numpy
+    (via dsp_engine) — on hosts that don't have it (CoC-only
+    workstations, this Repl), the import would fail and we'd silently
+    lose freq-range, max-sample-rate, and TDOA-capability data.
+    Loading the leaf module file directly via importlib sidesteps the
+    package init entirely."""
+    import importlib.util
+    import os
+    try:
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "sensor", "hardware", "capabilities.py")
+        if not os.path.isfile(path):
+            return None
+        spec = importlib.util.spec_from_file_location(
+            "_predator_capabilities", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        getter = getattr(mod, "get_hardware_capabilities", None)
+        if getter is None:
+            return None
+        return getter(hardware_code)
+    except Exception:
+        return None
+
 
 class NodeRole(Enum):
     WIDEBAND_SCANNER = "wideband"
@@ -46,6 +76,14 @@ class SensorNodeTrust:
     # Operational config
     bandwidth_allocated_mhz: float = 100.0
     center_frequencies_monitored: List[float] = field(default_factory=list)
+
+    # Optional multi-SDR profile. Empty list → "single-SDR node", keep
+    # using `hardware_code` + `max_sample_rate_hz`. Populated → this node
+    # has multiple physical radios and the orchestrator can task them
+    # independently (e.g. one watching a control channel while another
+    # sweeps). The C++ Kujhad daemon side reports its radios in
+    # /v1/identify; we mirror that list here.
+    sdr_backends: List[SDRBackend] = field(default_factory=list)
 
     # Mirror of C++ /v1/state — populated by KujhadClient capability probe.
     # These fields reflect what the *device* reports it is doing right now;
@@ -105,19 +143,25 @@ class SensorNodeTrust:
         """Re-look-up `hardware_capabilities` and recompute hardware-derived
         trust factors based on the current `hardware_code`. Idempotent;
         safe to call any time the hardware identity changes (e.g. after
-        /v1/identify reports a different value than what was configured)."""
+        /v1/identify reports a different value than what was configured).
+
+        Implementation note: we load `backend.sensor.hardware.capabilities`
+        directly via `importlib.util` instead of `from … import …` because
+        the `backend.sensor` package __init__ pulls in `dsp_engine` which
+        imports numpy. On a CoC-only host (or any host that doesn't have
+        the DSP stack installed) the package import would fail and we'd
+        silently lose hardware capability data — including the per-radio
+        frequency range used by SweepCoordinator. Loading the leaf module
+        directly avoids the numpy chain."""
         if not self.hardware_code:
             return
-        try:
-            from backend.sensor.hardware.capabilities import get_hardware_capabilities
-            caps = get_hardware_capabilities(self.hardware_code)
-            self.hardware_capabilities = caps
-            if caps:
-                self.max_sample_rate_hz = caps.max_sample_rate_hz
-                self.can_do_tdoa = caps.supports_tdoa
-                self._init_hardware_trust_factors(caps)
-        except ImportError:
-            pass
+        caps = _load_hardware_capabilities(self.hardware_code)
+        if caps is None:
+            return
+        self.hardware_capabilities = caps
+        self.max_sample_rate_hz = caps.max_sample_rate_hz
+        self.can_do_tdoa = caps.supports_tdoa
+        self._init_hardware_trust_factors(caps)
 
     def _init_hardware_trust_factors(self, caps):
         max_ppm, min_ppm = 100.0, 1.0
@@ -155,6 +199,58 @@ class SensorNodeTrust:
     def kujhad_base_url(self) -> str:
         scheme = "https" if self.kujhad_tls else "http"
         return f"{scheme}://{self.kujhad_host}:{self.kujhad_port}"
+
+    # ── Multi-SDR helpers ────────────────────────────────────────────────
+    def all_sdr_backends(self) -> List[SDRBackend]:
+        """Return every SDR attached to this node. Synthesises a single
+        backend from the legacy `hardware_code` fields if `sdr_backends`
+        is empty, so callers don't have to special-case single-SDR
+        nodes.
+
+        Critical: when synthesising the legacy default we MUST pull
+        the per-hardware frequency range from `hardware_capabilities`
+        — otherwise a HackRF (1 MHz–6 GHz) gets clamped to
+        SDRBackend's class defaults (24 MHz–1.7 GHz, RTL-SDR's range)
+        and the SweepCoordinator would refuse to task it above
+        1.7 GHz. Same applies to the LimeSDR, BladeRF, etc."""
+        if self.sdr_backends:
+            return list(self.sdr_backends)
+        # Legacy path — derive freq range from capability lookup so
+        # high-frequency-capable radios aren't wrongly clamped. Try
+        # the cached `hardware_capabilities` first, then a fresh lookup
+        # in case __post_init__'s lookup failed (e.g. import order
+        # races on first construction).
+        min_freq_hz = 24e6
+        max_freq_hz = 1.7e9
+        caps = self.hardware_capabilities or _load_hardware_capabilities(
+            self.hardware_code)
+        freq_range = getattr(caps, "freq_range_hz", None)
+        if freq_range and len(freq_range) == 2:
+            min_freq_hz = float(freq_range[0])
+            max_freq_hz = float(freq_range[1])
+        return [SDRBackend(
+            backend_id=self.node_id + ":default",
+            hardware_code=self.hardware_code,
+            hardware_serial=self.hardware_serial,
+            max_sample_rate_hz=self.max_sample_rate_hz,
+            instantaneous_bandwidth_hz=self.max_sample_rate_hz,
+            min_freq_hz=min_freq_hz,
+            max_freq_hz=max_freq_hz,
+            timing_stability_trust=self.timing_stability_trust,
+            sensitivity_trust=self.sensitivity_trust,
+            frequency_stability_trust=self.frequency_stability_trust,
+        )]
+
+    def total_instantaneous_bandwidth_hz(self) -> int:
+        """Sum of the instantaneous bandwidths across all SDRs on this
+        node. Used by the SweepCoordinator to allocate spectrum
+        segments — a multi-SDR node can be assigned wider/multiple
+        segments per phase."""
+        return sum(s.instantaneous_bandwidth_hz for s in self.all_sdr_backends())
+
+    def free_sdr_backends(self) -> List[SDRBackend]:
+        """Backends not currently claimed by an active scan/decode."""
+        return [s for s in self.all_sdr_backends() if not s.in_use]
 
     def to_dict(self) -> dict:
         return {

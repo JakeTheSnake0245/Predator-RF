@@ -18,6 +18,11 @@ class TDOAMeasurement:
     timestamp_ns: int
     node_lat: float
     node_lon: float
+    # 0..1 — how much we trust this node's timing for TDOA purposes.
+    # 1.0 = GPSDO/OCXO + dedicated TDOA hardware; ~0.3 = generic phone
+    # SDR with system-clock-only timestamps. Mean of these across the
+    # solve's participating nodes scales the final location confidence.
+    timing_trust: float = 1.0
 
 
 @dataclass
@@ -47,17 +52,40 @@ class TDOACoordinator:
 
     def record_measurement(self, emitter_id: str, node: SensorNodeTrust,
                             timestamp_ns: int):
-        """Record that a node heard an emitter at a specific timestamp."""
+        """Record that a node heard an emitter at a specific timestamp.
+
+        Inclusive policy: any node with a GPS fix participates, even if
+        its hardware lacks a dedicated TDOA timing path (e.g. RTL-SDR,
+        an Android phone's bundled SDR dongle). We need a position fix
+        to triangulate at all, but we'll accept system-clock timestamps
+        and DOWNGRADE the resulting fix's confidence by the average
+        timing_trust of the participants. A rough fix from 4 cheap nodes
+        is still operationally useful — it gives the operator a search
+        area instead of nothing.
+        """
         if not node.location_gps:
-            return  # No location → can't do TDOA
-        if not node.can_do_tdoa:
-            return
+            return  # No location → can't triangulate at all
+
+        # Map node capability into a timing-trust score. Use getattr
+        # with defaults so test fakes / minimal node shims don't have
+        # to populate every hardware-trust field.
+        can_tdoa = getattr(node, "can_do_tdoa", False)
+        hw_timing = getattr(node, "timing_stability_trust", 0.8)
+        if can_tdoa:
+            # GPSDO/OCXO timing path — trust the underlying hardware factor
+            timing_trust = max(0.5, min(1.0, hw_timing))
+        else:
+            # System-clock timestamps. Floor of 0.2 so a 3-node solve from
+            # cheap nodes still produces a usable (low-confidence) fix.
+            # Use half the hardware's timing_stability_trust as the cap.
+            timing_trust = max(0.2, min(0.5, hw_timing * 0.5))
 
         m = TDOAMeasurement(
             node_id=node.node_id,
             timestamp_ns=timestamp_ns,
             node_lat=node.location_gps[0],
             node_lon=node.location_gps[1],
+            timing_trust=timing_trust,
         )
         self._pending.setdefault(emitter_id, []).append(m)
 
@@ -147,6 +175,15 @@ class TDOACoordinator:
                 lat = (uniq[0].node_lat + uniq[1].node_lat) / 2.0
                 lon = (uniq[0].node_lon + uniq[1].node_lon) / 2.0
                 conf = 0.3  # Low confidence with only 2 nodes
+
+            # Scale by the mean timing trust of the participating
+            # measurements. A 3-node fix from cheap RTL-SDR phones
+            # (timing_trust ~0.3 each) gets ~30% of the geometric
+            # confidence; a fix from GPSDO-equipped HackRFs keeps
+            # essentially all of it. Operator sees a "search area"
+            # vs a "tight fix" instead of being told "no fix".
+            timing_factor = sum(m.timing_trust for m in measurements) / len(measurements)
+            conf = conf * timing_factor
 
             result = TDOAResult(
                 emitter_id=emitter_id,
