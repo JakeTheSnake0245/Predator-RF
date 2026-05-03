@@ -210,9 +210,10 @@ class PredatorBackend:
         # few seconds of data — exactly when an operator most wants it.
         self._pending_tasks: set[asyncio.Task] = set()
 
-        # Wire event callback
+        # Wire event callbacks
         self.fleet_manager.on_event(self._on_rf_event)
         self.track_manager.on_new_track(self._on_new_track)
+        self.track_manager.on_update(self._on_track_update)
         # CoC events feed the SAME callback so they go through baseline,
         # tracking, anomaly detection, decisioning, persistence, CoT and
         # AutoTasker — exactly like a local-fleet event would. They keep
@@ -449,6 +450,12 @@ class PredatorBackend:
     def _on_new_track(self, track):
         logger.info("New track: %s at %.4f MHz",
                     track.emitter_id[:8], track.primary_frequency / 1e6)
+
+    def _on_track_update(self, track):
+        metrics.gauge("predator_track_confidence",
+                      track.confidence,
+                      labels={"emitter": track.emitter_id[:8]},
+                      help_text="Current confidence score for an emitter track")
 
     async def start(self):
         logger.info("Predator-SDR Backend starting...")
