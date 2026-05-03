@@ -1,0 +1,66 @@
+<!--
+  REFERENCE-ONLY snippet of AndroidManifest.xml.
+
+  Merge these elements into your real
+  github.com/JakeTheSnake0245/Predator-RF app/src/main/AndroidManifest.xml.
+  This is the minimum permission + feature set the Android client needs to
+  consume the Predator-RF backend over LAN.
+
+  We deliberately do NOT request RECORD_AUDIO, CAMERA, READ_CONTACTS,
+  READ_SMS or any other "scary" permissions — Predator-RF is RX-only over
+  the network, never local sensors, so the install prompt should be tame
+  enough for a sideload review.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ── Network ────────────────────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Wake-lock so the polling loop keeps running with screen off -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Foreground service for the persistent backend-pull loop -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+
+    <!-- Optional, only if you wire local TAK CoT delivery via file URI -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- ── Hardware features (informational; none required) ─────────── -->
+    <uses-feature android:name="android.hardware.wifi" android:required="false"/>
+    <uses-feature android:name="android.hardware.location.gps"
+                  android:required="false"/>
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.PredatorRF"
+        android:usesCleartextTraffic="true">
+        <!--
+          usesCleartextTraffic="true" is REQUIRED if your backend URL is
+          http:// (i.e. on the LAN with no TLS). For any deploy outside a
+          trusted LAN, terminate TLS at nginx/Caddy and switch this to
+          false (the default).
+        -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service that runs the android-pull polling loop -->
+        <service
+            android:name=".net.BackendPollingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
+    </application>
+</manifest>
