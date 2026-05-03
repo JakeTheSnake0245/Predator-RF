@@ -235,8 +235,12 @@ Optional persistence: PostgreSQL (track history) and InfluxDB
 `docker-compose.yml`. Persistence is opt-in — the backend works
 in-memory for lone-wolf and tactical deployments.
 
-Multi-transport (RNS/LoRa, mesh failover) is a future addition that
-sits **under** the Kujhad HTTP layer (e.g., a transport-multiplexer
+Multi-transport (RNS, LoRa, mesh failover) ships in Task #27 as a
+parallel CoT path: the same XML the TAK UDP feed emits is also
+published over the `predatorrf/cot.v1` RNS Destination. Architecture
+notes in `backend/rns/README.md`; field/method/UI parity matrix in
+`docs/rns_parity.md`. The Kujhad HTTP layer remains the control plane
+(transport-multiplexer pattern
 agent that exposes the same HTTP surface over alternate carriers).
 v1 ships with TCP/TLS over IP only.
 
@@ -378,7 +382,8 @@ directly from the vignettes and from customer requirements.
    `/v1/command` over TLS with per-node API key. The Python backend
    is the canonical client; third-party clients are welcome to use
    the same API. v1 ships TCP/TLS over IP only; multi-transport
-   (RNS/LoRa) is post-MVP and slots in **under** the HTTP layer.
+   (RNS/LoRa) ships in Task #27 as a parallel CoT path under the same
+   Kujhad UI tab; see `backend/rns/README.md`.
 2. **Phone runs without an SDR.** The OPERATOR role is fully
    functional with no local DSP. Vignette 3.3 must work end to end.
 3. **Manual selective exfil to higher.** Operator can tag any marker
@@ -472,4 +477,4 @@ but only after the MVP commitments are concrete and tested.
 | Marker          | Promoted track presented to the operator on the map.                     |
 | Selective exfil | Operator-initiated push of a marker / hit to higher.                     |
 | Tier 1/2/3 BOM  | Hardware shopping lists. See section 5.                                  |
-| RTAK-V2 / RNS   | *Post-MVP reference for multi-transport.* Not in v1.                     |
+| RTAK-V2 / RNS   | Reticulum transport bridge (Task #27). Parallel CoT path; see `backend/rns/README.md`. |

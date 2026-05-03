@@ -30,7 +30,7 @@ import socket
 import struct
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 from xml.sax.saxutils import escape as _xmlesc
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,13 @@ class CoTEmitter:
         self._min_interval_s = 5.0
         self._sent_count = 0
         self._error_count = 0
+        # Optional fan-out hooks. Each hook is called with `(xml_bytes, uid)`
+        # for every successfully transmitted CoT datagram. The RNS bridge
+        # (backend/rns/bridge.py::RNSCotBridge.publish) is the canonical
+        # consumer; tests register a list-appending closure. Hook
+        # exceptions are logged and swallowed — never break the TAK feed.
+        self._fanout_hooks: List[Callable[[bytes, str], None]] = []
+        self._fanout_count = 0
 
         if self.enabled:
             try:
@@ -144,11 +151,19 @@ class CoTEmitter:
         """Build + send a CoT for `track_dict`. Returns True if a datagram
         was actually written, False if any gate suppressed it.
 
+        Loop prevention (spec section C): tracks ingested from RNS are
+        not re-broadcast over IP unless the operator explicitly opts
+        in via `set_rns_to_ip_relay(True)`.
+
         `fallback_location` is the lat/lon to use when the track has no
         TDOA fix yet — typically the most-trustworthy detecting node's
         position, so the operator at least sees a "somewhere near node X"
         marker in TAK.
         """
+        # Gate 0: IP↔RNS loop break (spec section C, default off)
+        if not self._emit_allowed_for(track_dict):
+            return False
+
         # Gate 1: operator kill switch
         if not self.enabled or self._sock is None:
             return False
@@ -214,7 +229,43 @@ class CoTEmitter:
         self._sent_count += 1
         logger.info("CoT sent: %s @ (%.5f, %.5f) → %s:%d",
                     callsign, lat, lon, self.dest_host, self.dest_port)
+
+        # Parallel-transport fan-out (RNS bridge, etc). Each hook is
+        # best-effort; failures must not break the TAK UDP feed.
+        cot_uid = f"{self.uid_prefix}.{emitter_id}"
+        for hook in list(self._fanout_hooks):
+            try:
+                hook(xml, cot_uid)
+                self._fanout_count += 1
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("CoT fan-out hook raised: %s", exc)
         return True
+
+    def set_rns_to_ip_relay(self, allow: bool) -> None:
+        """When False (default), tracks tagged source_transport='rns'
+        are not re-emitted on the TAK UDP feed — this is the IP↔RNS
+        loop break point per spec section C."""
+        self._rns_to_ip_relay = bool(allow)
+
+    def _emit_allowed_for(self, track_dict: dict) -> bool:
+        if getattr(self, "_rns_to_ip_relay", False):
+            return True
+        st = track_dict.get("source_transport") or ""
+        if str(st).lower() == "rns":
+            return False
+        return True
+
+    def attach_fanout(self, hook: Callable[[bytes, str], None]) -> None:
+        """Register a `(xml_bytes, uid)` callback invoked after every
+        successful CoT UDP send. Used to publish the same XML over
+        parallel transports (RNS in particular)."""
+        self._fanout_hooks.append(hook)
+
+    def detach_fanout(self, hook: Callable[[bytes, str], None]) -> None:
+        try:
+            self._fanout_hooks.remove(hook)
+        except ValueError:
+            pass
 
     def close(self):
         if self._sock is not None:

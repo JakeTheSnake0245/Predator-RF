@@ -40,8 +40,14 @@ Two-tier system, **Python backend on top of the Kujhad Fleet HTTP API**:
   P25 ~L1714). Wire fields used: `serial, time(ISO), type∈{hit,decoder},
   frequency, strengthDb, label, protocol, networkId, talkgroup, radioId,
   decoder, hitState, lat, lon, accuracyM, gpsFix, encrypted?, raw`.
-- **Multi-transport (RNS/LoRa) is post-MVP**, not v1. Slots in *under* the
-  Kujhad HTTP layer in a future release. v1 ships TCP/TLS over IP only.
+- **Multi-transport (RNS) is shipped (Task #27)** alongside the existing
+  TAK UDP/TCP feed. The RNS daemon (`backend/rns/`) and the Kujhad-tab
+  "RNS Interfaces" sub-panel manage 9 interface types (TCP client/server,
+  UDP, I2P, AutoInterface, RNode/LoRa, KISS TNC, AX.25 KISS, Pipe). CoT
+  XML fans out over both IP and the `predatorrf/cot.v1` RNS Destination
+  simultaneously. See `backend/rns/README.md`, `docs/rns_parity.md`,
+  `docs/rns_field_log.md`. TCP/TLS Kujhad over IP remains the primary
+  control-plane transport; RNS is additive, not a replacement.
 - **CoT export** is operator-initiated only in v1 (`escalate_to_atak=True`
   flag from `DecisionEngine` is advisory; transmission is manual).
 - See `docs/1_conops.md` §1.5 for the full implementation-status snapshot.

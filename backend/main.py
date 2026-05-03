@@ -36,6 +36,8 @@ from backend.api.routes.events import push_event
 from backend.persistence import MissionStore
 from backend.fusion.tdoa_coordinator import TDOACoordinator
 from backend.output import CoTEmitter
+from backend.rns.bridge import RNSCotBridge
+from backend.rns.daemon import RNSDaemon
 from backend.coordination.auto_tasker import AutoTasker
 from backend.coc import CoCAggregator
 from backend.operator.approvals import ApprovalQueue
@@ -77,6 +79,46 @@ class PredatorBackend:
             stale_seconds=config.cot_stale_seconds,
             multicast_ttl=config.cot_multicast_ttl,
         )
+
+        # RNS transport bridge — parallel to the TAK UDP/TCP CoT path.
+        # The bridge is created unconditionally and runs as a soft no-op
+        # until `rns_enabled` is set; that lets every existing test keep
+        # constructing PredatorBackend without RNS side effects.
+        self.rns_bridge: RNSCotBridge = RNSCotBridge(
+            own_hash16=("0" * 16),
+            reliable_default=getattr(config, "rns_reliable_default", True))
+        self.rns_daemon: Optional[RNSDaemon] = None
+        if getattr(config, "rns_enabled", False):
+            try:
+                self.rns_daemon = RNSDaemon(
+                    state_dir=getattr(config, "rns_state_dir", None) or None,
+                    cot_bridge=self.rns_bridge)
+                # Sync the bridge's hash with the daemon's identity so
+                # loop-suppression and outbound `src` tags match.
+                self.rns_bridge.own_hash16 = self.rns_daemon.identity_hash16()
+                # Apply the configured peer allowlist (empty list = open
+                # mode per spec section D, with a startup warning logged
+                # by the daemon).
+                self.rns_bridge.set_allowlist(
+                    self.rns_daemon.config.get("peer_allowlist", []))
+                # Inbound RNS-CoT is fed to the CoC aggregator path with
+                # source_transport="rns" so it reuses the existing
+                # remote-event handler (track fusion, persistence, dedupe).
+                self.rns_bridge.set_inbound_fn(self._on_rns_inbound_cot)
+            except Exception as exc:
+                logger.error("RNS daemon init failed: %s — RNS disabled", exc)
+                self.rns_daemon = None
+        # Hook the CoT emitter so every successful TAK send also goes
+        # over RNS. When the daemon isn't running, publish() is a no-op.
+        # `reliable=None` lets the bridge pick its configured default;
+        # the daemon promotes to Link automatically when the envelope
+        # exceeds the path MTU (spec section C).
+        self.cot.attach_fanout(
+            lambda xml, uid: self.rns_bridge.publish(xml, uid))
+        # IP↔RNS loop break: by default RNS-sourced CoT is not echoed
+        # back over the TAK UDP feed (spec section C).
+        self.cot.set_rns_to_ip_relay(
+            getattr(config, "rns_to_ip_relay", False))
 
         # AutoTasker — closes the intel→action loop. On
         # `increase_dwell_time` / `focus_all_nodes` assessments, tunes the
@@ -332,6 +374,43 @@ class PredatorBackend:
             logger.warning("record_approval failed for %s (%s): %s",
                            approval.approval_id[:8], approval.state, exc)
 
+    def _on_rns_inbound_cot(self, xml: bytes, src_hash16: str) -> None:
+        """Hand inbound CoT XML received over RNS to the local pipeline
+        AND, when configured, forward the raw XML to a local ATAK app
+        over UDP (e.g. Android ATAK on 127.0.0.1:4242). The ATAK
+        forward is fire-and-forget — it must never break the inbound
+        path. Tagged `source_transport="rns"` and `_upstream="rns:<hash>"`
+        so downstream dedupe + persistence can attribute it correctly.
+        """
+        # Local ATAK forward (UDP). Spec: peer-relayed CoT must reach
+        # the device's local TAK app so operators see what the mesh
+        # delivered, not just what their own sensor produced.
+        port = int(getattr(self.config, "rns_atak_local_port", 0) or 0)
+        if port > 0:
+            try:
+                if not hasattr(self, "_atak_local_sock"):
+                    import socket as _s
+                    self._atak_local_sock = _s.socket(
+                        _s.AF_INET, _s.SOCK_DGRAM)
+                    self._atak_local_sock.setblocking(False)
+                host = getattr(self.config, "rns_atak_local_host",
+                               "127.0.0.1") or "127.0.0.1"
+                self._atak_local_sock.sendto(xml, (host, port))
+            except Exception as exc:
+                logger.debug("RNS→ATAK local UDP forward failed: %s", exc)
+        try:
+            ev = {
+                "source_transport": "rns",
+                "_upstream": f"rns:{src_hash16}",
+                "raw": xml.decode("utf-8", errors="replace"),
+                "frequency": 0,
+            }
+            push_event(ev)
+            if self.coc is not None:
+                self.coc.feed_event(ev, source=f"rns:{src_hash16}")
+        except Exception as exc:
+            logger.debug("RNS inbound CoT handling failed: %s", exc)
+
     def _on_remote_event(self, ev_dict: dict) -> None:
         """Bridge from CoCAggregator (which delivers dicts) into the
         same per-event pipeline used by the local fleet (which delivers
@@ -401,6 +480,33 @@ class PredatorBackend:
         if self.coc is not None:
             await self.coc.start()
 
+        # Start the RNS daemon (if configured). Soft no-op when the
+        # `rns` Python package isn't importable — daemon reports
+        # `daemon=stub` in that case.
+        if self.rns_daemon is not None:
+            try:
+                self.rns_daemon.start()
+                logger.info("RNS daemon started: id=%s",
+                            self.rns_daemon.identity_hash16())
+            except Exception as exc:
+                logger.error("RNS daemon start failed: %s", exc)
+            # Local-only Unix-socket control plane — used by both
+            # the Linux GUI Kujhad sub-panel (kujhad_rns.h) and the
+            # Android RnsBridge.kt (via android.net.LocalSocket).
+            # This is the ONLY control surface; no HTTP route is
+            # mounted on the FastAPI server (see backend/api/server.py).
+            # Best-effort start; failure here is logged but the daemon
+            # itself keeps running.
+            try:
+                from backend.rns.daemon import ControlServer
+                self._rns_control = ControlServer(self.rns_daemon)
+                self._rns_control.start()
+                logger.info("RNS control socket: %s",
+                            self._rns_control.sock_path)
+            except Exception as exc:
+                logger.warning("RNS control socket start failed: %s", exc)
+                self._rns_control = None
+
         # Background maintenance tasks
         asyncio.create_task(
             self.track_manager.maintenance_loop(config.track_maintenance_interval_s))
@@ -444,6 +550,18 @@ class PredatorBackend:
                     await asyncio.gather(*still_pending, return_exceptions=True)
             except Exception as exc:
                 logger.error("Error draining tasks: %s", exc)
+
+        if self.rns_daemon is not None:
+            try:
+                self.rns_daemon.stop()
+            except Exception as exc:
+                logger.warning("RNS daemon stop failed: %s", exc)
+            ctrl = getattr(self, "_rns_control", None)
+            if ctrl is not None:
+                try:
+                    ctrl.stop()
+                except Exception as exc:
+                    logger.warning("RNS control socket stop failed: %s", exc)
 
         # Now safe to close the persistent backends.
         if self.store is not None:
@@ -534,6 +652,7 @@ async def main():
         fleet_manager=backend.fleet_manager,
         decision_engine=backend.decision_engine,
         backend=backend,
+        rns_daemon=backend.rns_daemon,
     )
 
     import uvicorn

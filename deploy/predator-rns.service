@@ -1,0 +1,28 @@
+[Unit]
+Description=Predator RF — RNS transport bridge daemon
+Documentation=file:///opt/predator-rf/backend/rns/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Override these in /etc/systemd/system/predator-rns.service.d/override.conf
+# if your installer puts the venv / state dir somewhere non-standard.
+Environment=PREDATOR_RNS_STATE_DIR=/var/lib/predator-rns
+ExecStart=/usr/bin/python3 -m backend.rns --state-dir ${PREDATOR_RNS_STATE_DIR}
+WorkingDirectory=/opt/predator-rf
+Restart=on-failure
+RestartSec=3
+# Hardening — the daemon only writes to its state dir and the control socket.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/predator-rns /run
+# journald structured JSON output is parsed by the Kujhad UI's log tail.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predator-rns
+
+[Install]
+WantedBy=multi-user.target

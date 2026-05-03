@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(track_manager=None, fleet_manager=None,
-               decision_engine=None, backend=None):
+               decision_engine=None, backend=None, rns_daemon=None):
     """
     Create the FastAPI application.
 
@@ -34,7 +34,7 @@ def create_app(track_manager=None, fleet_manager=None,
     from backend.api.routes import (
         tracks, nodes, events, assessments,
         health, missions, approvals, overrides,
-        preflight, android_pull, cot_export)
+        preflight, android_pull, cot_export, rns)
     from backend.api.middleware.auth import make_bearer_middleware
 
     app = FastAPI(
@@ -113,6 +113,19 @@ def create_app(track_manager=None, fleet_manager=None,
     # Health/metrics live at root (not under /api/v1) so a Prometheus
     # scraper or a load balancer can hit them with a single, stable
     # path that doesn't change with the API version.
+    # RNS daemon control (task #27). Injected daemon may be None when
+    # RNS_ENABLED=0; the route module guards every call with HTTP 503.
+    # The router itself degrades to None when fastapi/pydantic aren't
+    # installed (matches the preflight/android_pull pattern).
+    # Spec section F + threat model: the RNS daemon control plane is
+    # local-only — Linux operators talk to it via the uid-checked Unix
+    # socket in `backend/rns/daemon.py::ControlServer`, Android via the
+    # same Unix socket through `LocalSocket` (see RnsBridge.kt). We
+    # deliberately do NOT mount the FastAPI router here so the daemon
+    # never gets a network-exposed control surface, even when the API
+    # binds to 0.0.0.0. The `rns` module remains importable for tests
+    # and a hypothetical future opt-in mode.
+    rns.daemon = rns_daemon
     app.include_router(health.router, tags=["health"])
 
     @app.get("/health")
