@@ -45,25 +45,24 @@ def main(files_dir: str) -> None:
     # Enable RNS daemon (default is now True, but be explicit for clarity).
     os.environ.setdefault("RNS_ENABLED", "1")
 
-    # ── 1b. RNS config ────────────────────────────────────────────────────
-    # Chaquopy's Android Python stubs socket.if_nametoindex() as unavailable.
-    # RNS AutoInterface.final_init() calls it to enumerate network interfaces;
-    # the unhandled OSError kills the process before the backend starts.
-    # Write a minimal config with panic_on_interface_error=No so RNS logs
-    # the error and continues. Only written on first launch; a user-placed
-    # config (e.g. with a TCPInterface) is never overwritten.
-    _rns_cfg_dir = os.path.join(files_dir, ".reticulum")
-    _rns_cfg_path = os.path.join(_rns_cfg_dir, "config")
-    os.makedirs(_rns_cfg_dir, exist_ok=True)
-    if not os.path.exists(_rns_cfg_path):
-        with open(_rns_cfg_path, "w") as _f:
-            _f.write(
-                "[reticulum]\n"
-                "panic_on_interface_error = No\n"
-                "\n"
-                "[logging]\n"
-                "loglevel = 4\n"
-            )
+    # ── 1b. socket.if_nametoindex patch ──────────────────────────────────
+    # Chaquopy's Android Python stubs socket.if_nametoindex() to raise
+    # OSError("this function is not available in this build of Python").
+    # RNS AutoInterface.final_init() calls it unconditionally to bind
+    # multicast sockets; the unhandled OSError propagates up and kills
+    # the process.  Patch it to return 0 (= any/loopback interface) so
+    # AutoInterface initialises without multicast connectivity rather than
+    # crashing.  Must happen before any RNS import.
+    import socket as _socket_mod
+    _orig_nametoindex = getattr(_socket_mod, "if_nametoindex", None)
+    if _orig_nametoindex is not None:
+        def _safe_nametoindex(name: str) -> int:
+            try:
+                return _orig_nametoindex(name)
+            except OSError:
+                return 0
+        _socket_mod.if_nametoindex = _safe_nametoindex
+    del _socket_mod, _orig_nametoindex
 
     # ── 1c. Writable data directory ───────────────────────────────────────
     # backend/config.py defaults DATA_DIR to "./predator_data", which
