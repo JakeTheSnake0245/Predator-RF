@@ -517,6 +517,10 @@ class PredatorBackend:
                 self._rns_control.start()
                 logger.info("RNS control socket: %s",
                             self._rns_control.sock_path)
+                # Export the socket path so kujhad_rns.h (C++) and
+                # RnsBridge.kt (Kotlin) can find it via PREDATOR_RNS_SOCK.
+                import os as _os
+                _os.environ["PREDATOR_RNS_SOCK"] = self._rns_control.sock_path
             except Exception as exc:
                 logger.warning("RNS control socket start failed: %s", exc)
                 self._rns_control = None
