@@ -46,20 +46,27 @@ android {
         }
 
         python {
-            // Python 3.11 — widest wheel availability for numpy/scipy/pynacl on arm64.
-            version "3.11"
-            // buildPython must be 3.8–3.12; Python 3.13 removed the `cgi` module
+            // Python 3.10 — highest version with pre-built scipy/pynacl/cryptography
+            // wheels in the Chaquopy pypi-13.1 mirror for android arm64.
+            // (scipy has no cp311 Android wheel; pydantic-core has no Android wheel at all.)
+            version "3.10"
+            // buildPython must be 3.8–3.12 (host); Python 3.13 removed the `cgi` module
             // that Chaquopy's pip tooling still imports at build time.
             buildPython "C:/Users/cjake/AppData/Local/Programs/Python/Python311/python.exe"
             pip {
                 // ── HTTP API ──────────────────────────────────────────
-                install "fastapi>=0.111.0"
+                // fastapi==0.99.1 is the last release that supports pydantic v1.
+                // pydantic v2 requires pydantic-core (Rust) which has no Android wheel.
+                install "fastapi==0.99.1"
                 install "uvicorn>=0.29.0"        // plain uvicorn, no uvloop/httptools extras
-                install "pydantic>=2.0.0"
+                install "pydantic>=1.10.0,<2.0.0"
                 install "aiohttp>=3.9.0"
                 // ── Signal processing (TDOA) ──────────────────────────
                 install "numpy>=1.26.0"
-                install "scipy>=1.12.0"
+                // scipy==1.8.1: highest version with a cp310 android_21_arm64_v8a wheel
+                // in the Chaquopy mirror.  1.12+ has no pre-built Android wheel and
+                // building from source requires meson which is not in the build env.
+                install "scipy==1.8.1"
                 install "psutil>=5.9.0"
                 // ── RNS daemon ────────────────────────────────────────
                 install "rns==1.2.0"
