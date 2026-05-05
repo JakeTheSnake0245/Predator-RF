@@ -48,6 +48,9 @@ android {
         python {
             // Python 3.11 — widest wheel availability for numpy/scipy/pynacl on arm64.
             version "3.11"
+            // buildPython must be 3.8–3.12; Python 3.13 removed the `cgi` module
+            // that Chaquopy's pip tooling still imports at build time.
+            buildPython "C:/Users/cjake/AppData/Local/Programs/Python/Python311/python.exe"
             pip {
                 // ── HTTP API ──────────────────────────────────────────
                 install "fastapi>=0.111.0"
