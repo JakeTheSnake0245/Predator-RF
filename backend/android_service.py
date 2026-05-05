@@ -45,26 +45,36 @@ def main(files_dir: str) -> None:
     # Enable RNS daemon (default is now True, but be explicit for clarity).
     os.environ.setdefault("RNS_ENABLED", "1")
 
-    # ── 1b. socket.if_nametoindex patch ──────────────────────────────────
-    # Chaquopy's Android Python stubs socket.if_nametoindex() to raise
-    # OSError("this function is not available in this build of Python").
-    # RNS AutoInterface.final_init() calls it unconditionally to bind
-    # multicast sockets; the unhandled OSError propagates up and kills
-    # the process.  Patch it to return 0 (= any/loopback interface) so
-    # AutoInterface initialises without multicast connectivity rather than
-    # crashing.  Must happen before any RNS import.
-    import socket as _socket_mod
-    _orig_nametoindex = getattr(_socket_mod, "if_nametoindex", None)
-    if _orig_nametoindex is not None:
-        # Default arg captures the callable by value so deleting _orig_nametoindex
-        # below doesn't unset the cell variable and cause a NameError in the closure.
-        def _safe_nametoindex(name: str, _orig=_orig_nametoindex) -> int:
-            try:
-                return _orig(name)
-            except OSError:
-                return 0
-        _socket_mod.if_nametoindex = _safe_nametoindex
-    del _socket_mod, _orig_nametoindex
+    # ── 1b. RNS config ────────────────────────────────────────────────────
+    # AutoInterface uses multicast (socket.if_nametoindex + multicast socket
+    # binding), neither of which work in Chaquopy's Android Python.  Write a
+    # TCPServerInterface config on loopback so RNS doesn't synthesize
+    # AutoInterface at all.
+    #
+    # Two paths are written because we can't be certain which configdir the
+    # backend passes to RNS.Reticulum() — the standard path and the XDG path
+    # used by the predator-rns daemon subprocess.  Both are overwritten every
+    # launch; RNS auto-creates default configs (panic_on_interface_error=Yes)
+    # on first boot and the "if not exists" guard would preserve those bad ones.
+    for _dir, _port in [
+        (os.path.join(files_dir, ".reticulum"), 4242),
+        (os.path.join(files_dir, ".config", "predator-rns", "reticulum"), 4243),
+    ]:
+        os.makedirs(_dir, exist_ok=True)
+        with open(os.path.join(_dir, "config"), "w") as _f:
+            _f.write(
+                "[reticulum]\n"
+                "panic_on_interface_error = No\n"
+                "\n"
+                "[logging]\n"
+                "loglevel = 4\n"
+                "\n"
+                "[[LocalTCP]]\n"
+                "  type = TCPServerInterface\n"
+                "  interface_enabled = Yes\n"
+                "  listen_ip = 127.0.0.1\n"
+                f"  listen_port = {_port}\n"
+            )
 
     # ── 1c. Writable data directory ───────────────────────────────────────
     # backend/config.py defaults DATA_DIR to "./predator_data", which
