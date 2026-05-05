@@ -62,10 +62,10 @@ android {
                 install "pydantic>=1.10.0,<2.0.0"
                 install "aiohttp>=3.9.0"
                 // ── Signal processing (TDOA) ──────────────────────────
-                install "numpy>=1.26.0"
-                // scipy==1.8.1: highest version with a cp310 android_21_arm64_v8a wheel
-                // in the Chaquopy mirror.  1.12+ has no pre-built Android wheel and
-                // building from source requires meson which is not in the build env.
+                // numpy==1.23.3: only cp310 android arm64 wheel in the Chaquopy mirror.
+                // scipy 1.8.1 requires numpy<1.25.0, so 1.23.3 is the right pin.
+                install "numpy==1.23.3"
+                // scipy==1.8.1: highest version with a cp310 android_21_arm64_v8a wheel.
                 install "scipy==1.8.1"
                 install "psutil>=5.9.0"
                 // ── RNS daemon ────────────────────────────────────────
