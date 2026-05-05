@@ -70,7 +70,8 @@ android {
                 install "psutil>=5.9.0"
                 // ── RNS daemon ────────────────────────────────────────
                 install "rns==1.2.0"
-                install "cbor2>=5.6.0"
+                // cbor2 6.0+ added a Rust extension with no Android wheel; 5.x is pure Python.
+                install "cbor2>=5.6.0,<6.0.0"
                 install "argon2-cffi>=23.1.0"
                 install "pynacl>=1.5.0"
             }
