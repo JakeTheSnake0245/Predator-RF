@@ -6532,14 +6532,18 @@ void MainWindow::draw() {
                     ImGui::OpenPopup(rnsEditIsNew ? T("Add RNS interface")
                                                   : T("Edit RNS interface"));
                 }
-                // Give the modal a sensible fixed size when it first opens so
-                // BeginChild(negative-height) can compute correctly.
-                // AlwaysAutoResize is intentionally NOT used here — it makes
-                // the parent height undefined, which collapses a negative-height
-                // child to zero and hides all fields.
-                ImGui::SetNextWindowSize(
-                    ImVec2(420.0f * style::uiScale, 560.0f * style::uiScale),
-                    ImGuiCond_Appearing);
+                // Fixed initial size capped to the actual window dimensions.
+                // uiScale=3 on Android makes 420*3=1260 px which exceeds the
+                // 1080 px S22 width — cap to winSize so nothing is clipped.
+                // AlwaysAutoResize is NOT used (collapses negative-height child).
+                {
+                    float popW = std::min(winSize.x - 2.0f * pad,
+                                          420.0f * style::uiScale);
+                    float popH = std::min(winSize.y * 0.80f,
+                                          560.0f * style::uiScale);
+                    ImGui::SetNextWindowSize(ImVec2(popW, popH),
+                                             ImGuiCond_Appearing);
+                }
 #ifdef __ANDROID__
                 if (ImGui::IsPopupOpen(T("Add RNS interface")) ||
                     ImGui::IsPopupOpen(T("Edit RNS interface"))) {
@@ -6565,8 +6569,13 @@ void MainWindow::draw() {
                         nullptr, 0)) {
                     float btnAreaH = ImGui::GetFrameHeightWithSpacing()
                                    + ImGui::GetStyle().ItemSpacing.y;
+                    // Use explicit positive height instead of negative so
+                    // the scrollable region is correct on the first frame.
+                    float childH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    if (childH < 60.0f * style::uiScale)
+                        childH = 60.0f * style::uiScale;
                     if (ImGui::BeginChild("##rns_edit_fields",
-                                          ImVec2(0.0f, -btnAreaH), false)) {
+                                          ImVec2(0.0f, childH), false)) {
                     ImGui::InputText(T("Name##rns_e"), rnsEditName,
                                      sizeof(rnsEditName));
                     if (rnsEditIsNew) {
