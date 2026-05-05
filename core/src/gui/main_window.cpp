@@ -6532,29 +6532,37 @@ void MainWindow::draw() {
                     ImGui::OpenPopup(rnsEditIsNew ? T("Add RNS interface")
                                                   : T("Edit RNS interface"));
                 }
+                // Give the modal a sensible fixed size when it first opens so
+                // BeginChild(negative-height) can compute correctly.
+                // AlwaysAutoResize is intentionally NOT used here — it makes
+                // the parent height undefined, which collapses a negative-height
+                // child to zero and hides all fields.
+                ImGui::SetNextWindowSize(
+                    ImVec2(420.0f * style::uiScale, 560.0f * style::uiScale),
+                    ImGuiCond_Appearing);
 #ifdef __ANDROID__
                 if (ImGui::IsPopupOpen(T("Add RNS interface")) ||
                     ImGui::IsPopupOpen(T("Edit RNS interface"))) {
                     ImVec2 wp      = ImGui::GetWindowPos();
                     float  screenH = ImGui::GetIO().DisplaySize.y;
                     float  imeBot  = (float)backend::getImeBottomInset();
-                    float  kbTopY  = (imeBot > 0.0f) ? (screenH - imeBot) : screenH;
-                    float  popMaxH = std::max(kbTopY - wp.y - 2.0f * pad,
-                                             120.0f * style::uiScale);
-                    ImGui::SetNextWindowPos(ImVec2(wp.x + pad, wp.y + pad),
-                                            ImGuiCond_Always);
-                    ImGui::SetNextWindowSizeConstraints(
-                        ImVec2(300.0f * style::uiScale, 80.0f * style::uiScale),
-                        ImVec2(winSize.x - 2.0f * pad, popMaxH));
+                    if (imeBot > 0.0f) {
+                        float kbTopY = screenH - imeBot;
+                        float popH   = std::max(kbTopY - wp.y - 2.0f * pad,
+                                               120.0f * style::uiScale);
+                        float popW   = std::min(winSize.x - 2.0f * pad,
+                                               420.0f * style::uiScale);
+                        ImGui::SetNextWindowPos(ImVec2(wp.x + pad, wp.y + pad),
+                                                ImGuiCond_Always);
+                        ImGui::SetNextWindowSize(ImVec2(popW, popH),
+                                                 ImGuiCond_Always);
+                    }
                 }
 #endif
                 if (ImGui::BeginPopupModal(
                         rnsEditIsNew ? T("Add RNS interface")
                                      : T("Edit RNS interface"),
-                        nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    // Wrap all fields in a scrollable child so the
-                    // Validate/Save/Cancel row stays visible when the
-                    // Android soft keyboard pushes the max height down.
+                        nullptr, 0)) {
                     float btnAreaH = ImGui::GetFrameHeightWithSpacing()
                                    + ImGui::GetStyle().ItemSpacing.y;
                     if (ImGui::BeginChild("##rns_edit_fields",
