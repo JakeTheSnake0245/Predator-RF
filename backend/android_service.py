@@ -56,9 +56,11 @@ def main(files_dir: str) -> None:
     import socket as _socket_mod
     _orig_nametoindex = getattr(_socket_mod, "if_nametoindex", None)
     if _orig_nametoindex is not None:
-        def _safe_nametoindex(name: str) -> int:
+        # Default arg captures the callable by value so deleting _orig_nametoindex
+        # below doesn't unset the cell variable and cause a NameError in the closure.
+        def _safe_nametoindex(name: str, _orig=_orig_nametoindex) -> int:
             try:
-                return _orig_nametoindex(name)
+                return _orig(name)
             except OSError:
                 return 0
         _socket_mod.if_nametoindex = _safe_nametoindex
