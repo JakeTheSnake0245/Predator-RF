@@ -1,5 +1,6 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'com.chaquo.python'
 
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
@@ -19,6 +20,16 @@ def sdrKitRoot = (localProperties.getProperty('sdr.kit.dir')
         ?: System.getenv('SDR_KIT_ROOT')
         ?: (repoSdrKit.exists() ? repoSdrKit.absolutePath : '/sdr-kit')).replace('\\', '/')
 
+// Resolution order for the Python backend source:
+//   1) `predator.rf.dir` in android/local.properties
+//   2) PREDATOR_RF_ROOT environment variable
+//   3) ~/Downloads/Predator-RF (default location on the dev machine)
+def predatorRfRoot = (
+    localProperties.getProperty('predator.rf.dir')
+        ?: System.getenv('PREDATOR_RF_ROOT')
+        ?: new File(System.getProperty('user.home'), 'Downloads/Predator-RF').absolutePath
+).replace('\\', '/')
+
 android {
     namespace "org.sdrpp.sdrpp"
     compileSdkVersion 33
@@ -32,6 +43,27 @@ android {
 
         ndk {
             abiFilters "arm64-v8a"
+        }
+
+        python {
+            // Python 3.11 — widest wheel availability for numpy/scipy/pynacl on arm64.
+            version "3.11"
+            pip {
+                // ── HTTP API ──────────────────────────────────────────
+                install "fastapi>=0.111.0"
+                install "uvicorn>=0.29.0"        // plain uvicorn, no uvloop/httptools extras
+                install "pydantic>=2.0.0"
+                install "aiohttp>=3.9.0"
+                // ── Signal processing (TDOA) ──────────────────────────
+                install "numpy>=1.26.0"
+                install "scipy>=1.12.0"
+                install "psutil>=5.9.0"
+                // ── RNS daemon ────────────────────────────────────────
+                install "rns==1.2.0"
+                install "cbor2>=5.6.0"
+                install "argon2-cffi>=23.1.0"
+                install "pynacl>=1.5.0"
+            }
         }
 
         externalNativeBuild {
@@ -100,6 +132,10 @@ android {
     sourceSets {
         main {
             assets.srcDirs += ['assets']
+            // Package the Python backend into the APK so Chaquopy can import it.
+            // On the dev machine this resolves to ~/Downloads/Predator-RF.
+            // Override via `predator.rf.dir` in local.properties or PREDATOR_RF_ROOT env var.
+            python.srcDirs = [predatorRfRoot]
         }
     }
 }
