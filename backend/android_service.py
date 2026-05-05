@@ -45,6 +45,35 @@ def main(files_dir: str) -> None:
     # Enable RNS daemon (default is now True, but be explicit for clarity).
     os.environ.setdefault("RNS_ENABLED", "1")
 
+    # ── 1b. RNS config ────────────────────────────────────────────────────
+    # Chaquopy's Android Python stubs socket.if_nametoindex() as unavailable.
+    # RNS AutoInterface.final_init() calls it to enumerate network interfaces;
+    # the unhandled OSError kills the process before the backend starts.
+    # Write a minimal config with panic_on_interface_error=No so RNS logs
+    # the error and continues. Only written on first launch; a user-placed
+    # config (e.g. with a TCPInterface) is never overwritten.
+    _rns_cfg_dir = os.path.join(files_dir, ".reticulum")
+    _rns_cfg_path = os.path.join(_rns_cfg_dir, "config")
+    os.makedirs(_rns_cfg_dir, exist_ok=True)
+    if not os.path.exists(_rns_cfg_path):
+        with open(_rns_cfg_path, "w") as _f:
+            _f.write(
+                "[reticulum]\n"
+                "panic_on_interface_error = No\n"
+                "\n"
+                "[logging]\n"
+                "loglevel = 4\n"
+            )
+
+    # ── 1c. Writable data directory ───────────────────────────────────────
+    # backend/config.py defaults DATA_DIR to "./predator_data", which
+    # resolves to /predator_data on Android (cwd is /) — a read-only path.
+    # Set DATA_DIR before any backend import so MissionStore uses a writable
+    # location inside the app's sandboxed files directory.
+    _data_dir = os.path.join(files_dir, "predator_data")
+    os.makedirs(_data_dir, exist_ok=True)
+    os.environ.setdefault("DATA_DIR", _data_dir)
+
     # Ensure the Predator-RF project root is on sys.path so that
     # `import backend.*` resolves correctly when Chaquopy's srcDirs
     # points at the repo root.
