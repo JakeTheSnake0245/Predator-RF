@@ -50,9 +50,9 @@ android {
             // wheels in the Chaquopy pypi-13.1 mirror for android arm64.
             // (scipy has no cp311 Android wheel; pydantic-core has no Android wheel at all.)
             version "3.10"
-            // buildPython must be 3.8–3.12 (host); Python 3.13 removed the `cgi` module
-            // that Chaquopy's pip tooling still imports at build time.
-            buildPython "C:/Users/cjake/AppData/Local/Programs/Python/Python311/python.exe"
+            // buildPython must match the target version so pip's python_requires checks
+            // resolve correctly.  Python 3.13 removed `cgi` (breaks Chaquopy 15 pip).
+            buildPython "C:/Users/cjake/AppData/Local/Programs/Python/Python310/python.exe"
             pip {
                 // ── HTTP API ──────────────────────────────────────────
                 // fastapi==0.99.1 is the last release that supports pydantic v1.
