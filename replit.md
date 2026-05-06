@@ -61,7 +61,7 @@ _Populate as you build_
 - `X-Kujhad-Key` header is required for authentication on all `/v1/*` Kujhad API calls.
 - The `predatorrf/cot.v1` RNS Destination is additive, not a replacement for TCP/TLS Kujhad control-plane transport.
 - For Android builds, `assembleDebug` is the documented happy path as `release` is unsigned by design.
-- Any `BeginPopupModal` in `main_window.cpp` that contains a text input MUST anchor itself with `SetNextWindowPos` + `SetNextWindowSizeConstraints` keyed off `backend::getImeBottomInset()` — otherwise the soft keyboard covers the field on Android. Existing patterns: `##pend_edit` (line ~7361) and `positionRnsModal` lambda used by the RNS Add/Edit/Export/Import modals (line ~6522). Long forms must wrap their body in a `BeginChild` that reserves space for the action button row.
+- Any `BeginPopupModal` in `main_window.cpp` that contains a text input MUST anchor itself with `SetNextWindowPos` **and** `SetNextWindowSize` (with `ImGuiCond_Always`) keyed off `backend::getImeBottomInset()` — otherwise the soft keyboard covers the field on Android. Note: `SetNextWindowSizeConstraints` alone is NOT enough without `AlwaysAutoResize`; the popup will fall back to ImGui's tiny default size. Existing patterns: `##pend_edit` (line ~7361) and the `positionRnsModal` lambda used by the RNS Add/Edit/Export/Import modals (line ~6533). Long forms must wrap their body in a `BeginChild` with an explicit positive height that reserves space for the action button row.
 
 ## Pointers
 

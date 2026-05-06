@@ -6527,16 +6527,22 @@ void MainWindow::draw() {
                         "RNode/LoRa, KISS TNC, AX.25, I2P, or Pipe)."));
                 }
 
-                // Keyboard-safe modal positioning helper.
-                // Anchors the popup high inside the safe area and clamps its
-                // max height so the bottom row (Save/Cancel/Close) stays
-                // above the Android soft keyboard. Mirrors the logic used
-                // by the ##pend_edit popup so every text-entry modal in
-                // this panel is reachable on a phone in landscape.
+                // Keyboard-safe modal sizing helper.
+                //
+                // Forces the popup to a large, screen-relative size every
+                // frame (NOT just constraints — constraints alone leave
+                // the window at its tiny default size when AlwaysAutoResize
+                // is off). The size fills `widthFrac` of the available
+                // window width and either `heightCapFrac` of the height
+                // or — when the Android soft keyboard is up — exactly the
+                // space between the top safe area and the keyboard top,
+                // whichever is smaller. The body of the modal is expected
+                // to be wrapped in a BeginChild that scrolls so every
+                // field is reachable.
                 auto positionRnsModal = [&](float widthFrac,
                                             float heightCapFrac) {
                     ImVec2 wp     = ImGui::GetWindowPos();
-                    float popW    = std::min(winSize.x - 4.0f * pad,
+                    float popW    = std::min(winSize.x - 2.0f * pad,
                                              winSize.x * widthFrac);
                     float popX    = wp.x + (winSize.x - popW) * 0.5f;
                     float popY    = wp.y + pad;
@@ -6547,13 +6553,12 @@ void MainWindow::draw() {
                     float fitH    = std::max<float>(kbTopY - popY - pad,
                                                     160.0f * style::uiScale);
                     float capH    = winSize.y * heightCapFrac;
-                    float maxH    = (imeBot > 0.0f) ? std::min(fitH, capH)
+                    float popH    = (imeBot > 0.0f) ? std::min(fitH, capH)
                                                     : capH;
                     ImGui::SetNextWindowPos(ImVec2(popX, popY),
                                             ImGuiCond_Always);
-                    ImGui::SetNextWindowSizeConstraints(
-                        ImVec2(popW, 120.0f * style::uiScale),
-                        ImVec2(popW, maxH));
+                    ImGui::SetNextWindowSize(ImVec2(popW, popH),
+                                             ImGuiCond_Always);
                 };
 
                 // Edit / Add modal.
