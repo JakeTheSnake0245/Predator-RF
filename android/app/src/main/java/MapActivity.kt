@@ -6,6 +6,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -14,6 +16,12 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
 
 class MapActivity : AppCompatActivity() {
     private lateinit var mapView: WebView
@@ -22,6 +30,28 @@ class MapActivity : AppCompatActivity() {
     private var mapReady = false
     private var lastLocation: Location? = null
     private var followMode = true
+
+    // Track polling — polls /api/v1/android-pull every 5 s and pushes
+    // the track list to the map's updateTracks() bridge method.
+    private val pollExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler  = Handler(Looper.getMainLooper())
+    private var pollCursor   = 0L
+    private var polling      = false
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            if (!polling) return
+            pollExecutor.execute {
+                fetchAndPushTracks()
+                mainHandler.postDelayed(this, POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    companion object {
+        // Read from shared prefs / BuildConfig; fall back to localhost.
+        private const val BACKEND_BASE = "http://127.0.0.1:5259"
+        private const val POLL_INTERVAL_MS = 5_000L
+    }
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -70,6 +100,7 @@ class MapActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 mapReady = true
                 lastLocation?.let { pushLocationToMap(it, followMode) }
+                startTrackPolling()
             }
         }
         mapView.loadUrl("file:///android_asset/res/maps/index.html")
@@ -81,15 +112,19 @@ class MapActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         startLocationUpdates()
+        if (mapReady) startTrackPolling()
     }
 
     override fun onPause() {
         super.onPause()
         stopLocationUpdates()
+        stopTrackPolling()
     }
 
     override fun onDestroy() {
         stopLocationUpdates()
+        stopTrackPolling()
+        pollExecutor.shutdownNow()
         mapView.destroy()
         super.onDestroy()
     }
@@ -158,5 +193,45 @@ class MapActivity : AppCompatActivity() {
     private fun pushLocationToMap(location: Location, follow: Boolean) {
         val js = "window.PredatorRFMap && window.PredatorRFMap.updatePosition(${location.latitude}, ${location.longitude}, ${location.accuracy}, ${if (follow) "true" else "false"});"
         mapView.evaluateJavascript(js, null)
+    }
+
+    private fun startTrackPolling() {
+        if (polling) return
+        polling = true
+        mainHandler.post(pollRunnable)
+    }
+
+    private fun stopTrackPolling() {
+        polling = false
+        mainHandler.removeCallbacks(pollRunnable)
+    }
+
+    private fun fetchAndPushTracks() {
+        try {
+            val url = URL("$BACKEND_BASE/api/v1/android-pull?since_ns=$pollCursor")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout    = 4000
+            conn.requestMethod  = "GET"
+            val code = conn.responseCode
+            if (code != 200) return
+            val body = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+            conn.disconnect()
+            val root   = JSONObject(body)
+            pollCursor = root.optLong("cursor", pollCursor)
+            val tracks = root.optJSONArray("tracks") ?: return
+            // Escape single quotes so the JS string literal is safe.
+            val json = tracks.toString().replace("'", "\\'")
+            mainHandler.post {
+                if (mapReady) {
+                    mapView.evaluateJavascript(
+                        "window.PredatorRFMap && window.PredatorRFMap.updateTracks('$json');",
+                        null
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            // Network error — silently retry on next interval.
+        }
     }
 }

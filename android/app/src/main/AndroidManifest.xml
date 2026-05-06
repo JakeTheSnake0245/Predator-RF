@@ -45,6 +45,15 @@
             android:label="Predator RF Map"
             android:theme="@style/Theme.AppCompat.NoActionBar"
             android:configChanges="orientation|keyboardHidden|screenSize" />
+
+        <!-- On-device Python backend: RNS daemon, TDOA, TrackManager, HTTP API.
+             Runs in the same process as the NativeActivity so env vars set by
+             Python (PREDATOR_RNS_SOCK) are immediately visible to C++ via getenv(). -->
+        <service
+            android:name="org.sdrpp.sdrpp.PredatorBackendService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
@@ -60,6 +69,11 @@
          for that flag — but we declare it so a future foreground-service
          migration doesn't need a manifest bump. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- PredatorBackendService: on-device Python backend (RNS + TDOA + HTTP API). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 13+: required to show the persistent foreground-service notification. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- USB host (required to enumerate SDR/GPS dongles via OTG). -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />

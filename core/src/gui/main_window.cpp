@@ -885,7 +885,11 @@ void MainWindow::draw() {
         if (io.MouseDown[0] &&
             io.MousePos.x >= wpos.x && io.MousePos.x < wpos.x + wsize.x &&
             io.MousePos.y >= wpos.y && io.MousePos.y < wpos.y + wsize.y) {
-            if (std::fabs(io.MouseDelta.y) > 0.5f && ImGui::GetScrollMaxY() > 0.0f) {
+            // 10 dp threshold separates deliberate drag from tap jitter.
+            // At 0.5 px even a clean tap would scroll the panel before
+            // the button could register on mouse-up, causing missed clicks.
+            const float kDragThresh = 10.0f * style::uiScale;
+            if (std::fabs(io.MouseDelta.y) > kDragThresh && ImGui::GetScrollMaxY() > 0.0f) {
                 float next = ImGui::GetScrollY() - io.MouseDelta.y;
                 ImGui::SetScrollY(std::clamp(next, 0.0f, ImGui::GetScrollMaxY()));
             }
@@ -6405,18 +6409,25 @@ void MainWindow::draw() {
                 }
 
                 // Per-interface live table.
+                // inner_width ensures horizontal scroll kicks in on narrow
+                // phone screens rather than squashing 9 columns into the
+                // available width (which makes the Actions column illegible).
+                const float rnsTableMinW = 580.0f * style::uiScale;
                 if (ImGui::BeginTable("rns_iface_table", 9,
                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                        ImGuiTableFlags_SizingStretchProp)) {
-                    ImGui::TableSetupColumn(T("Name"));
-                    ImGui::TableSetupColumn(T("Type"));
-                    ImGui::TableSetupColumn(T("Up"));
-                    ImGui::TableSetupColumn(T("Peers"));
-                    ImGui::TableSetupColumn(T("In/Out"));
-                    ImGui::TableSetupColumn(T("Last error"));
-                    ImGui::TableSetupColumn(T("IFAC"));
-                    ImGui::TableSetupColumn(T("On"));
-                    ImGui::TableSetupColumn(T("Actions"));
+                        ImGuiTableFlags_SizingFixedFit |
+                        ImGuiTableFlags_ScrollX,
+                        ImVec2(0, 0), rnsTableMinW)) {
+                    ImGui::TableSetupScrollFreeze(0, 1);
+                    ImGui::TableSetupColumn(T("Name"),      ImGuiTableColumnFlags_WidthFixed, 90.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("Type"),      ImGuiTableColumnFlags_WidthFixed, 80.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("Up"),        ImGuiTableColumnFlags_WidthFixed, 36.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("Peers"),     ImGuiTableColumnFlags_WidthFixed, 44.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("In/Out"),    ImGuiTableColumnFlags_WidthFixed, 80.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("Last error"),ImGuiTableColumnFlags_WidthFixed, 90.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("IFAC"),      ImGuiTableColumnFlags_WidthFixed, 46.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("On"),        ImGuiTableColumnFlags_WidthFixed, 30.0f * style::uiScale);
+                    ImGui::TableSetupColumn(T("Actions"),   ImGuiTableColumnFlags_WidthFixed, 130.0f * style::uiScale);
                     ImGui::TableHeadersRow();
                     for (auto& row : rnsList) {
                         ImGui::TableNextRow();
@@ -6561,11 +6572,16 @@ void MainWindow::draw() {
                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     // Scrollable body so the long per-type form is fully
                     // reachable on small screens; reserve space at the
-                    // bottom for the action button row.
-                    float btnRowH = ImGui::GetFrameHeightWithSpacing()
-                                    + ImGui::GetStyle().ItemSpacing.y;
+                    // bottom for the action button row. Use an explicit
+                    // positive height (instead of a negative reserve) so
+                    // the scrollable region is correct on the first frame.
+                    float btnAreaH = ImGui::GetFrameHeightWithSpacing()
+                                   + ImGui::GetStyle().ItemSpacing.y;
+                    float childH   = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    if (childH < 60.0f * style::uiScale)
+                        childH = 60.0f * style::uiScale;
                     ImGui::BeginChild("##rns_e_body",
-                                      ImVec2(0, -btnRowH), false,
+                                      ImVec2(0.0f, childH), false,
                                       ImGuiWindowFlags_HorizontalScrollbar);
                     ImGui::InputText(T("Name##rns_e"), rnsEditName,
                                      sizeof(rnsEditName));
@@ -6798,16 +6814,32 @@ void MainWindow::draw() {
                     ImGui::EndPopup();
                 }
 
-                // Log tail.
+                // Log tail — inline tap-to-edit buttons feed the pendEdit
+                // popup, keeping the Android soft keyboard above the input.
                 ImGui::Separator();
                 ImGui::Text("%s", T("Log tail"));
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(80);
-                ImGui::InputText("##rns_loglevel", rnsLogLevel,
-                                  sizeof(rnsLogLevel));
+                if (ImGui::Button(rnsLogLevel[0] ? rnsLogLevel : "level",
+                                   ImVec2(80.0f * style::uiScale, 0))) {
+                    openPendEdit(T("Log level"), std::string(rnsLogLevel),
+                        [&](std::string v) {
+                            snprintf(rnsLogLevel, sizeof(rnsLogLevel),
+                                     "%s", v.c_str());
+                        });
+                }
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(80);
-                ImGui::InputInt("##rns_loglimit", &rnsLogLimit);
+                {
+                    std::string limStr = std::to_string(rnsLogLimit);
+                    if (ImGui::Button(limStr.c_str(),
+                                       ImVec2(80.0f * style::uiScale, 0))) {
+                        openPendEdit(T("Log limit"), limStr,
+                            [&](std::string v) {
+                                char* end = nullptr;
+                                long  n   = std::strtol(v.c_str(), &end, 10);
+                                if (end != v.c_str()) rnsLogLimit = (int)n;
+                            });
+                    }
+                }
                 ImGui::SameLine();
                 if (ImGui::Button(T("Pull##rns_l"))) pollLogs();
                 if (ImGui::BeginChild("##rns_log_pane",
