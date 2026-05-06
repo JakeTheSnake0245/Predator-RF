@@ -372,14 +372,48 @@ class MainActivity : NativeActivity() {
     fun showSoftInput() {
         runOnUiThread {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            // Prefer the focusable invisible EditText so the IME has a real
-            // target to commitText() into. Fall back to the decor view's
-            // SHOW_FORCED path only if the capture view isn't installed
-            // (early frames before onCreate finishes).
             val capture = imeCaptureView
             if (capture != null) {
-                capture.requestFocus()
-                imm.showSoftInput(capture, 0)
+                // NativeActivity's NativeContentView aggressively reclaims
+                // focus, so we must FIGHT for it every time the IME is
+                // raised: bring the EditText to the front of the z-order,
+                // clear focus from whichever view currently owns it, then
+                // requestFocus on the EditText. If requestFocus returns
+                // false we log it — that's the smoking gun if typing
+                // doesn't work, visible in `adb logcat -s PredatorRF`.
+                capture.bringToFront()
+                window.decorView.clearFocus()
+                val gotFocus = capture.requestFocus()
+                if (!gotFocus) {
+                    Log.w(TAG, "imeCaptureView.requestFocus() returned false — " +
+                               "IME will commit text into the wrong view; " +
+                               "hasFocus=${capture.hasFocus()} " +
+                               "isFocusable=${capture.isFocusable} " +
+                               "windowToken=${capture.windowToken}")
+                }
+                // restartInput forces the IME to re-bind its InputConnection
+                // to the currently-focused view. Without this, the IME may
+                // keep its old binding (often to NativeContentView, which
+                // accepts no text) even after our requestFocus() succeeds.
+                imm.restartInput(capture)
+                val shown = imm.showSoftInput(capture, InputMethodManager.SHOW_FORCED)
+                Log.i(TAG, "showSoftInput: focus=$gotFocus shown=$shown " +
+                           "imeBot=$imeBottomInset")
+                // Post-frame reassert: NativeContentView can reclaim focus
+                // on the very next layout pass after our requestFocus(),
+                // which would silently rebind the IME to the wrong view
+                // and drop every keystroke. Re-check on the EditText's own
+                // handler one frame later and re-fight if needed.
+                capture.post {
+                    if (!capture.hasFocus()) {
+                        Log.w(TAG, "imeCapture lost focus on next frame — " +
+                                   "reasserting")
+                        capture.bringToFront()
+                        capture.requestFocus()
+                        imm.restartInput(capture)
+                        imm.showSoftInput(capture, InputMethodManager.SHOW_FORCED)
+                    }
+                }
             } else {
                 imm.showSoftInput(window.decorView, InputMethodManager.SHOW_FORCED)
             }
@@ -423,7 +457,10 @@ class MainActivity : NativeActivity() {
         val edit = EditText(this).apply {
             setBackgroundColor(0)
             setTextColor(0)
-            alpha = 0f
+            // alpha=0 makes some IMEs (notably Samsung Keyboard) refuse to
+            // bind because the view is treated as invisible. 0.01 is below
+            // human perception but counts as visible to the IME service.
+            alpha = 0.01f
             isFocusable = true
             isFocusableInTouchMode = true
             isClickable = false
@@ -434,6 +471,9 @@ class MainActivity : NativeActivity() {
                         InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
             imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
                          EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            // Defaults to TYPE_CLASS_TEXT which auto-lowercases the first
+            // letter — annoying for hostnames / hex IFAC keys. Disable.
+            privateImeOptions = "nm"
         }
         edit.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -481,11 +521,35 @@ class MainActivity : NativeActivity() {
             }
             false
         }
-        val params = FrameLayout.LayoutParams(1, 1).apply {
+        // 4×4 px (not 1×1) — some keyboards' visibility heuristics treat
+        // 1×1 views as invisible and refuse to bind. Still imperceptible
+        // at any sane DPI.
+        val params = FrameLayout.LayoutParams(4, 4).apply {
             gravity = Gravity.TOP or Gravity.START
         }
         addContentView(edit, params)
         imeCaptureView = edit
+
+        // Defer the initial bringToFront/requestFocus until the view is
+        // attached to the window — calling requestFocus before attachment
+        // is a silent no-op. Post to the EditText's own handler so we run
+        // after the next layout pass.
+        edit.post {
+            edit.bringToFront()
+            val ok = edit.requestFocus()
+            Log.i(TAG, "imeCaptureView installed: requestFocus=$ok " +
+                       "isAttached=${edit.isAttachedToWindow} " +
+                       "hasWindowFocus=${edit.hasWindowFocus()}")
+        }
+
+        // Make the FrameLayout root yield focus to descendants (us) on
+        // focus-search instead of grabbing it for the NativeContentView.
+        // The root is the parent of whatever addContentView appended into.
+        edit.post {
+            val root = edit.rootView as? android.view.ViewGroup
+            root?.descendantFocusability =
+                android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
     }
 
     // Queue for the Unicode characters to be polled from native code (via pollUnicodeChar())

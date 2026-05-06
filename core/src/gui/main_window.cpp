@@ -6611,8 +6611,43 @@ void MainWindow::draw() {
                     ImGui::BeginChild("##rns_e_body",
                                       ImVec2(0.0f, childH), false,
                                       ImGuiWindowFlags_HorizontalScrollbar);
+
+                    // Auto-scroll-active-into-view machinery. Two trigger
+                    // conditions where ImGui would otherwise leave the
+                    // focused InputText hidden under the soft keyboard:
+                    //   (1) the user just tapped a field (IsItemActivated)
+                    //   (2) the IME inset just grew (keyboard appeared
+                    //       after the tap), so the BeginChild shrank and
+                    //       the still-active field fell out of the visible
+                    //       region between this frame and the previous
+                    //       one.
+                    // We capture both edges once per modal frame, then
+                    // call iv() after every InputText/InputInt that the
+                    // operator can tap.
+                    static int s_prevImeBot = 0;
+                    int s_curImeBot = backend::getImeBottomInset();
+                    bool imeJustRose = (s_curImeBot > s_prevImeBot);
+                    s_prevImeBot = s_curImeBot;
+                    auto iv = [&]() {
+                        // IsItemActivated(): the user JUST tapped this
+                        // field — center it before the keyboard arrives.
+                        // IsItemActive() + imeJustRose: this field is
+                        // already focused and the keyboard has now
+                        // appeared, so the popup just shrunk and the
+                        // field would otherwise fall off-screen — pull
+                        // it back into view. Both checks rely on iv()
+                        // being called IMMEDIATELY after the matching
+                        // ImGui::Input* call, so "this item" refers to
+                        // the input we just submitted.
+                        if (ImGui::IsItemActivated()) {
+                            ImGui::SetScrollHereY(0.5f);
+                        } else if (imeJustRose && ImGui::IsItemActive()) {
+                            ImGui::SetScrollHereY(0.5f);
+                        }
+                    };
                     ImGui::InputText(T("Name##rns_e"), rnsEditName,
                                      sizeof(rnsEditName));
+                    iv();
                     if (rnsEditIsNew) {
                         ImGui::Combo(T("Type##rns_e"), &rnsEditTypeIdx,
                                      "tcp_client\0tcp_server\0udp\0i2p\0"
@@ -6628,6 +6663,7 @@ void MainWindow::draw() {
                                     &rnsEditReliable);
                     ImGui::InputText(T("Notes##rns_e"), rnsEditNotes,
                                      sizeof(rnsEditNotes));
+                    iv();
                     // Common settings (spec section B): apply to every
                     // interface type. `mode` selects RNS interface mode;
                     // `outgoing` gates outbound packets; the two hint
@@ -6639,8 +6675,10 @@ void MainWindow::draw() {
                     ImGui::Checkbox(T("Outgoing##rns_e"), &eOutgoing);
                     ImGui::InputInt(T("Bitrate hint bps (0=auto)##rns_e"),
                                     &eBitrateHint);
+                    iv();
                     ImGui::InputInt(T("Announce interval s (0=default)##rns_e"),
                                     &eAnnounceInt);
+                    iv();
                     // IFAC (Interface Access Code) — Reticulum
                     // pre-shared-key gate. Both netname and netkey
                     // must be set for it to take effect; size in
@@ -6649,93 +6687,134 @@ void MainWindow::draw() {
                         T("IFAC (pre-shared, both fields required)"));
                     ImGui::InputText(T("IFAC netname##rns_e"),
                                      eIfacNetname, sizeof(eIfacNetname));
+                    iv();
                     ImGui::InputText(T("IFAC netkey (passphrase)##rns_e"),
                                      eIfacNetkey, sizeof(eIfacNetkey),
                                      ImGuiInputTextFlags_Password);
+                    iv();
                     ImGui::InputInt(T("IFAC size bytes (0=default, 8..512)##rns_e"),
                                     &eIfacSize);
+                    iv();
                     ImGui::Separator();
                     const std::string t = kTypeNames[rnsEditTypeIdx];
                     if (t == "tcp_client") {
                         ImGui::InputText(T("Target host##rns_e"), eHost, sizeof(eHost));
+                        iv();
                         ImGui::InputInt (T("Target port##rns_e"), &ePort);
+                        iv();
                         ImGui::Checkbox (T("KISS framing##rns_e"), &eKissFraming);
                         ImGui::Checkbox (T("I2P tunneled##rns_e"), &eI2pTunnel);
                     } else if (t == "tcp_server") {
                         ImGui::InputText(T("Listen address (device-local)##rns_e"),
                                          eListen, sizeof(eListen));
+                        iv();
                         ImGui::InputInt (T("Listen port##rns_e"), &ePort);
+                        iv();
                         ImGui::Checkbox (T("Prefer IPv6##rns_e"), &eIpv6);
                         ImGui::Checkbox (T("I2P tunneled##rns_e"), &eI2pTunnel);
                     } else if (t == "udp") {
                         ImGui::InputText(T("Listen address (device-local)##rns_e"),
                                          eListen, sizeof(eListen));
+                        iv();
                         ImGui::InputInt (T("Listen port##rns_e"), &ePort);
+                        iv();
                         ImGui::InputText(T("Forward address##rns_e"),
                                          eFwdHost, sizeof(eFwdHost));
+                        iv();
                         ImGui::InputInt (T("Forward port##rns_e"), &eFwdPort);
+                        iv();
                     } else if (t == "i2p") {
                         ImGui::InputTextMultiline(T("Peers (.b32.i2p, one per line)##rns_e"),
                                                    ePeers, sizeof(ePeers),
                                                    ImVec2(0, 80));
+                        iv();
                         ImGui::InputText(T("I2P SAM address (device-local)##rns_e"),
                                          eSamAddr, sizeof(eSamAddr));
+                        iv();
                         ImGui::Checkbox(T("Connectable (accept inbound)##rns_e"),
                                         &eConnectable);
                     } else if (t == "auto_interface") {
                         ImGui::InputText(T("Group ID##rns_e"),
                                          eGroupId, sizeof(eGroupId));
+                        iv();
                         ImGui::Combo(T("Discovery scope##rns_e"), &eDiscoScope,
                                      "link\0admin\0site\0organisation\0global\0\0");
                         ImGui::InputInt(T("Discovery port (0=default)##rns_e"),
                                         &eDiscoPort);
+                        iv();
                         ImGui::InputInt(T("Data port (0=default)##rns_e"),
                                         &eDataPort);
+                        iv();
                         ImGui::InputTextMultiline(
                             T("Allowed NICs (device-local, one per line)##rns_e"),
                             eAllowedIfs, sizeof(eAllowedIfs), ImVec2(0, 60));
+                        iv();
                         ImGui::InputTextMultiline(
                             T("Ignored NICs (device-local, one per line)##rns_e"),
                             eIgnoredIfs, sizeof(eIgnoredIfs), ImVec2(0, 60));
+                        iv();
                     } else if (t == "rnode") {
                         ImGui::InputText(T("Serial port (device-local)##rns_e"),
                                          eRPort, sizeof(eRPort));
+                        iv();
                         ImGui::InputInt (T("Frequency Hz##rns_e"), &eFreq);
+                        iv();
                         ImGui::InputInt (T("Bandwidth Hz##rns_e"), &eBw);
+                        iv();
                         ImGui::InputInt (T("TX power dBm##rns_e"), &eTxPwr);
+                        iv();
                         ImGui::InputInt (T("Spreading factor (7-12)##rns_e"), &eSf);
+                        iv();
                         ImGui::InputInt (T("Coding rate (5-8)##rns_e"), &eCr);
+                        iv();
                         ImGui::Checkbox (T("Hardware flow control##rns_e"), &eFlowCtl);
                         ImGui::InputText(T("ID callsign (regulatory)##rns_e"),
                                          eIdCall, sizeof(eIdCall));
+                        iv();
                         ImGui::InputInt (T("ID interval s (0=off)##rns_e"), &eIdInt);
+                        iv();
                     } else if (t == "kiss_tnc" || t == "ax25_kiss") {
                         ImGui::InputText(T("Serial port (device-local)##rns_e"),
                                          eRPort, sizeof(eRPort));
+                        iv();
                         ImGui::InputInt (T("Baud##rns_e"), &eBaud);
+                        iv();
                         if (t == "ax25_kiss") {
                             ImGui::InputText(T("AX.25 port (device-local)##rns_e"),
                                              eAxPort, sizeof(eAxPort));
+                            iv();
                             ImGui::InputText(T("Callsign##rns_e"),
                                              eCallsign, sizeof(eCallsign));
+                            iv();
                             ImGui::InputInt (T("SSID (0-15)##rns_e"), &eSsid);
+                            iv();
                         }
                         ImGui::InputInt (T("Data bits (5-8)##rns_e"), &eDataBits);
+                        iv();
                         ImGui::Combo    (T("Parity##rns_e"), &eParityIdx,
                                          "none\0even\0odd\0\0");
                         ImGui::InputInt (T("Stop bits (1-2)##rns_e"), &eStopBits);
+                        iv();
                         ImGui::InputInt (T("Preamble ms##rns_e"), &ePreambleMs);
+                        iv();
                         ImGui::InputInt (T("TX tail ms##rns_e"), &eTxTailMs);
+                        iv();
                         ImGui::InputInt (T("Persistence (0-255)##rns_e"), &ePersist);
+                        iv();
                         ImGui::InputInt (T("Slot time ms##rns_e"), &eSlotMs);
+                        iv();
                         ImGui::Checkbox (T("Hardware flow control##rns_e"), &eFlowCtl);
                         ImGui::InputInt (T("Beacon interval s (0=off)##rns_e"), &eBeaconInt);
+                        iv();
                         ImGui::InputText(T("Beacon data##rns_e"),
                                          eBeaconData, sizeof(eBeaconData));
+                        iv();
                     } else if (t == "pipe") {
                         ImGui::InputText(T("Subprocess command##rns_e"),
                                          eCmd, sizeof(eCmd));
+                        iv();
                         ImGui::InputInt (T("Respawn delay s##rns_e"), &eRespawnDelay);
+                        iv();
                     }
                     ImGui::EndChild();  // ##rns_e_body
                     ImGui::Separator();
