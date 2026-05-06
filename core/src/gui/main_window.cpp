@@ -6529,32 +6529,55 @@ void MainWindow::draw() {
 
                 // Keyboard-safe modal sizing helper.
                 //
-                // Forces the popup to a large, screen-relative size every
-                // frame (NOT just constraints — constraints alone leave
-                // the window at its tiny default size when AlwaysAutoResize
-                // is off). The size fills `widthFrac` of the available
-                // window width and either `heightCapFrac` of the height
-                // or — when the Android soft keyboard is up — exactly the
-                // space between the top safe area and the keyboard top,
-                // whichever is smaller. The body of the modal is expected
-                // to be wrapped in a BeginChild that scrolls so every
-                // field is reachable.
+                // Anchors against the FULL DISPLAY (not the current ImGui
+                // window/child), because by the time the RNS panel runs we
+                // are deep inside nested child windows — `GetWindowPos()`
+                // and the captured `winSize` would refer to a small inner
+                // panel, producing a tiny modal stuck in a corner.
+                //
+                // Position uses the screen size minus the device safe area
+                // (notch / status bar / nav bar) and the soft keyboard
+                // height. We FORCE position+size with ImGuiCond_Always so
+                // ImGui doesn't fall back to its tiny default window size
+                // (which is what happens with SetNextWindowSizeConstraints
+                // alone when AlwaysAutoResize is off).
                 auto positionRnsModal = [&](float widthFrac,
                                             float heightCapFrac) {
-                    ImVec2 wp     = ImGui::GetWindowPos();
-                    float popW    = std::min(winSize.x - 2.0f * pad,
-                                             winSize.x * widthFrac);
-                    float popX    = wp.x + (winSize.x - popW) * 0.5f;
-                    float popY    = wp.y + pad;
-                    float screenH = ImGui::GetIO().DisplaySize.y;
-                    float imeBot  = (float)backend::getImeBottomInset();
-                    float kbTopY  = (imeBot > 0.0f) ? (screenH - imeBot)
-                                                    : screenH;
-                    float fitH    = std::max<float>(kbTopY - popY - pad,
-                                                    160.0f * style::uiScale);
-                    float capH    = winSize.y * heightCapFrac;
-                    float popH    = (imeBot > 0.0f) ? std::min(fitH, capH)
-                                                    : capH;
+                    ImVec2 disp = ImGui::GetIO().DisplaySize;
+                    auto   sa   = backend::getSafeAreaInsets();
+                    float  imeBot = (float)backend::getImeBottomInset();
+
+                    float left  = (float)sa.left;
+                    float right = (float)sa.right;
+                    float top   = (float)sa.top;
+                    float bot   = (float)((sa.bottom > (int)imeBot)
+                                           ? sa.bottom : (int)imeBot);
+
+                    // True visible rectangle. Never forced larger than what
+                    // is actually free of system bars / notch / keyboard —
+                    // forcing a minimum here would push the popup back
+                    // under the IME on small screens / large IME insets.
+                    float visibleW = std::max(disp.x - left - right, 1.0f);
+                    float visibleH = std::max(disp.y - top  - bot,   1.0f);
+
+                    float marginX = std::min(12.0f * style::uiScale,
+                                             visibleW * 0.05f);
+                    float marginY = std::min(12.0f * style::uiScale,
+                                             visibleH * 0.05f);
+
+                    // popW/popH are bounded BY visibleW/visibleH so the
+                    // popup can never extend off-screen even on tiny
+                    // displays. widthFrac/heightCapFrac are upper limits.
+                    float popW = std::min(visibleW * widthFrac,
+                                          visibleW - 2.0f * marginX);
+                    if (popW < 1.0f) popW = visibleW;
+                    float popH = std::min(visibleH * heightCapFrac,
+                                          visibleH - 2.0f * marginY);
+                    if (popH < 1.0f) popH = visibleH;
+
+                    float popX = left + (visibleW - popW) * 0.5f;
+                    float popY = top  + marginY;
+
                     ImGui::SetNextWindowPos(ImVec2(popX, popY),
                                             ImGuiCond_Always);
                     ImGui::SetNextWindowSize(ImVec2(popW, popH),

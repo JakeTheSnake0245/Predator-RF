@@ -21,9 +21,16 @@ import android.os.PowerManager;
 import android.provider.OpenableColumns;
 import android.view.View;
 import android.view.KeyEvent;
+import android.view.Gravity;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.util.Log;
 import android.content.res.AssetManager;
 import java.util.concurrent.CountDownLatch;
@@ -89,6 +96,17 @@ class MainActivity : NativeActivity() {
     // dedicated ime-inset, so we capture the no-keyboard bottom inset as
     // a baseline and treat any growth as the keyboard.
     private var legacyBaselineBottom : Int = -1;
+
+    // ── Soft IME text capture ───────────────────────────────────────────
+    // Modern soft keyboards (Gboard, SwiftKey, Samsung Keyboard) commit
+    // text via InputConnection.commitText() — they do NOT generate
+    // hardware KeyEvents for letter keys, so dispatchKeyEvent never fires
+    // and the original NativeActivity-only path silently drops every
+    // character. We work around this by adding a 1×1, fully-transparent,
+    // focusable EditText overlay; the IME targets that EditText and its
+    // TextWatcher pushes characters into the same unicodeCharacterQueue
+    // that pollUnicodeChar() drains for ImGui.
+    private var imeCaptureView: EditText? = null;
 
     // ── Thermal status (Android Q+) ─────────────────────────────────────
     // 0 = NONE, 1 = LIGHT, 2 = MODERATE, 3 = SEVERE, 4 = CRITICAL,
@@ -290,6 +308,7 @@ class MainActivity : NativeActivity() {
         // window/decor view exists.
         installInsetListener();
         installThermalListener();
+        installImeCaptureView();
 
         startLocationUpdates();
 
@@ -353,17 +372,120 @@ class MainActivity : NativeActivity() {
     fun showSoftInput() {
         runOnUiThread {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showSoftInput(window.decorView, InputMethodManager.SHOW_FORCED)
+            // Prefer the focusable invisible EditText so the IME has a real
+            // target to commitText() into. Fall back to the decor view's
+            // SHOW_FORCED path only if the capture view isn't installed
+            // (early frames before onCreate finishes).
+            val capture = imeCaptureView
+            if (capture != null) {
+                capture.requestFocus()
+                imm.showSoftInput(capture, 0)
+            } else {
+                imm.showSoftInput(window.decorView, InputMethodManager.SHOW_FORCED)
+            }
         }
     }
 
     fun hideSoftInput() {
         runOnUiThread {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.hideSoftInputFromWindow(window.decorView.windowToken,
-                                       InputMethodManager.HIDE_IMPLICIT_ONLY)
+            val capture = imeCaptureView
+            if (capture != null) {
+                imm.hideSoftInputFromWindow(capture.windowToken, 0)
+                capture.clearFocus()
+            } else {
+                imm.hideSoftInputFromWindow(window.decorView.windowToken,
+                                           InputMethodManager.HIDE_IMPLICIT_ONLY)
+            }
             hideSystemBars()
         }
+    }
+
+    /**
+     * Install the invisible EditText that captures soft-keyboard text.
+     *
+     * Notes:
+     *   - 1×1 pixel, alpha 0, gravity TOP|START — visually invisible.
+     *   - isClickable=false so the view never intercepts touches that
+     *     should reach the GLSurfaceView underneath.
+     *   - TYPE_TEXT_FLAG_NO_SUGGESTIONS / NO_AUTOCORRECT prevent the IME
+     *     from buffering several characters before committing them.
+     *   - IME_FLAG_NO_EXTRACT_UI / NO_FULLSCREEN keep landscape Gboard
+     *     from going fullscreen and covering the whole app.
+     *   - The TextWatcher reads NEW characters from the [start, start+count)
+     *     range and pushes each codepoint into unicodeCharacterQueue. We
+     *     reset the buffer once it grows past a threshold so it doesn't
+     *     leak memory across long edit sessions.
+     *   - KEYCODE_DEL is bridged to ASCII 0x08 (Backspace) so the existing
+     *     PollUnicodeChars()/io.AddInputCharacter() pipeline handles it.
+     */
+    private fun installImeCaptureView() {
+        val edit = EditText(this).apply {
+            setBackgroundColor(0)
+            setTextColor(0)
+            alpha = 0f
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isClickable = false
+            isLongClickable = false
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or
+                        InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                        InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
+                         EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        }
+        edit.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun afterTextChanged(s: Editable?) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (s == null) return
+                // Soft-IME deletion path: many keyboards (Gboard, SwiftKey)
+                // do NOT fire KEYCODE_DEL — they call deleteSurroundingText
+                // on the InputConnection, which arrives here as
+                // (before > 0, count == 0). Bridge to ASCII Backspace once
+                // per deleted UTF-16 unit so ImGui's InputText shrinks by
+                // the same amount the user expected.
+                if (count == 0 && before > 0) {
+                    repeat(before) { unicodeCharacterQueue.offer(0x08) }
+                    return
+                }
+                if (count <= 0) return
+                // Walk the inserted span by Unicode CODE POINT, not UTF-16
+                // unit, so surrogate-pair emoji (U+1F600 etc.) and other
+                // astral characters arrive intact. Character.codePointAt
+                // returns the full code point at the given UTF-16 index;
+                // charCount() is 2 for surrogate pairs, 1 otherwise.
+                val end = (start + count).coerceAtMost(s.length)
+                var i = start
+                while (i < end) {
+                    val cp = Character.codePointAt(s, i)
+                    if (cp != 0) unicodeCharacterQueue.offer(cp)
+                    i += Character.charCount(cp)
+                }
+                // Don't let the buffer grow without bound across an edit
+                // session. Reset on the next UI tick so we don't recurse.
+                if (s.length > 32) {
+                    edit.post {
+                        edit.removeTextChangedListener(this)
+                        edit.setText("")
+                        edit.addTextChangedListener(this)
+                    }
+                }
+            }
+        })
+        edit.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                keyCode == KeyEvent.KEYCODE_DEL) {
+                unicodeCharacterQueue.offer(0x08)  // ASCII Backspace
+            }
+            false
+        }
+        val params = FrameLayout.LayoutParams(1, 1).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+        addContentView(edit, params)
+        imeCaptureView = edit
     }
 
     // Queue for the Unicode characters to be polled from native code (via pollUnicodeChar())

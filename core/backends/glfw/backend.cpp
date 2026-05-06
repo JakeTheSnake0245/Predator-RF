@@ -257,6 +257,11 @@ namespace backend {
         return 0;
     }
 
+    SafeAreaInsets getSafeAreaInsets() {
+        // Desktop windows have no notch / status-bar / nav-bar safe area.
+        return SafeAreaInsets{};
+    }
+
     int renderLoop() {
         // Main loop
         while (!glfwWindowShouldClose(window)) {

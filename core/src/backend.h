@@ -23,4 +23,16 @@ namespace backend {
     // sticky together defeat windowSoftInputMode="adjustResize" — the GL
     // surface stays full-screen so DisplaySize never shrinks for us.
     int getImeBottomInset();
+
+    // Device safe-area insets (notch / status bar / nav bar) in raw screen
+    // pixels. All zero on backends without insets (desktop / GLFW). The
+    // GUI layer uses these to keep absolute-positioned popups clear of
+    // camera cutouts and the system bars.
+    struct SafeAreaInsets {
+        int top    = 0;
+        int bottom = 0;
+        int left   = 0;
+        int right  = 0;
+    };
+    SafeAreaInsets getSafeAreaInsets();
 }
