@@ -1,5 +1,6 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'com.chaquo.python'
 
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
@@ -19,6 +20,16 @@ def sdrKitRoot = (localProperties.getProperty('sdr.kit.dir')
         ?: System.getenv('SDR_KIT_ROOT')
         ?: (repoSdrKit.exists() ? repoSdrKit.absolutePath : '/sdr-kit')).replace('\\', '/')
 
+// Resolution order for the Python backend source:
+//   1) `predator.rf.dir` in android/local.properties
+//   2) PREDATOR_RF_ROOT environment variable
+//   3) ~/Downloads/Predator-RF (default location on the dev machine)
+def predatorRfRoot = (
+    localProperties.getProperty('predator.rf.dir')
+        ?: System.getenv('PREDATOR_RF_ROOT')
+        ?: new File(System.getProperty('user.home'), 'Downloads/Predator-RF').absolutePath
+).replace('\\', '/')
+
 android {
     namespace "org.sdrpp.sdrpp"
     compileSdkVersion 33
@@ -32,6 +43,38 @@ android {
 
         ndk {
             abiFilters "arm64-v8a"
+        }
+
+        python {
+            // Python 3.10 — highest version with pre-built scipy/pynacl/cryptography
+            // wheels in the Chaquopy pypi-13.1 mirror for android arm64.
+            // (scipy has no cp311 Android wheel; pydantic-core has no Android wheel at all.)
+            version "3.10"
+            // buildPython must match the target version so pip's python_requires checks
+            // resolve correctly.  Python 3.13 removed `cgi` (breaks Chaquopy 15 pip).
+            buildPython "C:/Users/cjake/AppData/Local/Programs/Python/Python310/python.exe"
+            pip {
+                // ── HTTP API ──────────────────────────────────────────
+                // fastapi==0.99.1 is the last release that supports pydantic v1.
+                // pydantic v2 requires pydantic-core (Rust) which has no Android wheel.
+                install "fastapi==0.99.1"
+                install "uvicorn>=0.29.0"        // plain uvicorn, no uvloop/httptools extras
+                install "pydantic>=1.10.0,<2.0.0"
+                install "aiohttp>=3.9.0"
+                // ── Signal processing (TDOA) ──────────────────────────
+                // numpy==1.23.3: only cp310 android arm64 wheel in the Chaquopy mirror.
+                // scipy 1.8.1 requires numpy<1.25.0, so 1.23.3 is the right pin.
+                install "numpy==1.23.3"
+                // scipy==1.8.1: highest version with a cp310 android_21_arm64_v8a wheel.
+                install "scipy==1.8.1"
+                install "psutil>=5.9.0"
+                // ── RNS daemon ────────────────────────────────────────
+                install "rns==1.2.0"
+                // cbor2 6.0+ added a Rust extension with no Android wheel; 5.x is pure Python.
+                install "cbor2>=5.6.0,<6.0.0"
+                install "argon2-cffi>=23.1.0"
+                install "pynacl>=1.5.0"
+            }
         }
 
         externalNativeBuild {
@@ -100,6 +143,10 @@ android {
     sourceSets {
         main {
             assets.srcDirs += ['assets']
+            // Package the Python backend into the APK so Chaquopy can import it.
+            // On the dev machine this resolves to ~/Downloads/Predator-RF.
+            // Override via `predator.rf.dir` in local.properties or PREDATOR_RF_ROOT env var.
+            python.srcDirs = [predatorRfRoot]
         }
     }
 }

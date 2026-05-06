@@ -654,6 +654,11 @@ extern "C" {
         // Grab files dir
         std::string appdir = backend::getAppFilesDir();
 
+        // Set HOME so that getenv("HOME") in kujhad_rns.h (and any
+        // embedded Python via expanduser) resolves to the app's private
+        // data directory rather than /tmp (Android does not set HOME).
+        setenv("HOME", appdir.c_str(), 1);
+
         // Call main
         char* rootpath = new char[appdir.size() + 1];
         strcpy(rootpath, appdir.c_str());

@@ -27,6 +27,7 @@ if _project_root not in sys.path:
 
 from backend.config import config
 from backend.fusion.track_manager import TrackManager
+from backend.fusion.proximity_estimator import ProximityEstimator
 from backend.fusion.cross_station_dedup import CrossStationDedup
 from backend.coordination.kujhad_client import KujhadFleetManager
 from backend.intelligence.anomaly_detector import AnomalyDetector
@@ -59,7 +60,8 @@ class PredatorBackend:
             learning_window_hours=config.baseline_learning_window_hours)
         self.anomaly_detector = AnomalyDetector(self.baseline)
         self.decision_engine = DecisionEngine(self.anomaly_detector)
-        self.track_manager = TrackManager()
+        _proximity = (ProximityEstimator() if config.rssi_proximity_enabled else None)
+        self.track_manager = TrackManager(proximity_estimator=_proximity)
         self.fleet_manager = KujhadFleetManager()
 
         # TDOA geolocation — needs ≥2 GPS-synced nodes hearing the same
@@ -208,9 +210,10 @@ class PredatorBackend:
         # few seconds of data — exactly when an operator most wants it.
         self._pending_tasks: set[asyncio.Task] = set()
 
-        # Wire event callback
+        # Wire event callbacks
         self.fleet_manager.on_event(self._on_rf_event)
         self.track_manager.on_new_track(self._on_new_track)
+        self.track_manager.on_update(self._on_track_update)
         # CoC events feed the SAME callback so they go through baseline,
         # tracking, anomaly detection, decisioning, persistence, CoT and
         # AutoTasker — exactly like a local-fleet event would. They keep
@@ -338,6 +341,11 @@ class PredatorBackend:
         track.location_method = "tdoa"
         track.location_error_radius_m = 50.0 + (
             1.0 - max(0.0, min(1.0, result.location_confidence))) * 4950.0
+        # Store the actual 1-sigma error ellipse so the Android map can
+        # render it accurately instead of approximating with a circle.
+        track.tdoa_ellipse_a_m = result.ellipse_a_m
+        track.tdoa_ellipse_b_m = result.ellipse_b_m
+        track.tdoa_ellipse_theta_deg = result.ellipse_theta_deg
         logger.info("Track %s located: (%.5f, %.5f) conf=%.2f via %d nodes",
                     emitter_id[:8], result.estimated_lat, result.estimated_lon,
                     result.location_confidence,
@@ -443,6 +451,12 @@ class PredatorBackend:
         logger.info("New track: %s at %.4f MHz",
                     track.emitter_id[:8], track.primary_frequency / 1e6)
 
+    def _on_track_update(self, track):
+        metrics.gauge("predator_track_confidence",
+                      track.confidence,
+                      labels={"emitter": track.emitter_id[:8]},
+                      help_text="Current confidence score for an emitter track")
+
     async def start(self):
         logger.info("Predator-SDR Backend starting...")
         # Operator-visible gate banner — at-a-glance check of which
@@ -503,6 +517,10 @@ class PredatorBackend:
                 self._rns_control.start()
                 logger.info("RNS control socket: %s",
                             self._rns_control.sock_path)
+                # Export the socket path so kujhad_rns.h (C++) and
+                # RnsBridge.kt (Kotlin) can find it via PREDATOR_RNS_SOCK.
+                import os as _os
+                _os.environ["PREDATOR_RNS_SOCK"] = self._rns_control.sock_path
             except Exception as exc:
                 logger.warning("RNS control socket start failed: %s", exc)
                 self._rns_control = None

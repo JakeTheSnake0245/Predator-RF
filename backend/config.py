@@ -104,7 +104,7 @@ class BackendConfig:
     # tagged source_transport="rns". State (identity + interface config)
     # lives under `rns_state_dir`.
     rns_enabled: bool = field(
-        default_factory=lambda: _env_bool("RNS_ENABLED", False))
+        default_factory=lambda: _env_bool("RNS_ENABLED", True))
     rns_state_dir: str = field(
         default_factory=lambda: _env("RNS_STATE_DIR", ""))
     # Per spec section C: inbound CoT received over RNS is NOT echoed

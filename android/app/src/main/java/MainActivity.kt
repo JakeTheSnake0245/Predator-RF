@@ -274,6 +274,16 @@ class MainActivity : NativeActivity() {
             usbManager!!.requestPermission(dev, permissionIntent);
         }
 
+        // Start the on-device Python backend (RNS + TDOA + HTTP API) before
+        // the native SDR++ loop so the daemon socket is ready when the C++
+        // RNS panel first tries to connect.
+        val backendIntent = Intent(this, PredatorBackendService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(backendIntent)
+        } else {
+            startService(backendIntent)
+        }
+
         super.onCreate(savedInstanceState)
 
         // Install inset + thermal listeners after super.onCreate so the

@@ -390,13 +390,6 @@
 
         let styleReady = false;
 
-        map.on('load', () => {
-            styleReady = true;
-            discoverLayers();
-            addPositionLayer();
-            add3DBuildingLayer();
-        });
-
         function discoverLayers() {
             const layers = map.getStyle().layers;
             layers.forEach(layer => {
@@ -564,6 +557,114 @@
             return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } };
         }
 
+        /* ── TDOA ellipse GeoJSON helpers ── */
+
+        function ellipseRing(lat, lng, a_m, b_m, theta_deg, pts) {
+            pts = pts || 64;
+            const earthR = 6371000;
+            const thetaRad = (theta_deg || 0) * Math.PI / 180;
+            const coords = [];
+            for (let i = 0; i <= pts; i++) {
+                const angle = (i / pts) * 2 * Math.PI;
+                const ex = a_m * Math.cos(angle) * Math.cos(thetaRad)
+                          - b_m * Math.sin(angle) * Math.sin(thetaRad);
+                const ny = a_m * Math.cos(angle) * Math.sin(thetaRad)
+                          + b_m * Math.sin(angle) * Math.cos(thetaRad);
+                const dLat = (ny / earthR) * (180 / Math.PI);
+                const dLng = (ex / earthR) * (180 / Math.PI) / Math.cos(lat * Math.PI / 180);
+                coords.push([lng + dLng, lat + dLat]);
+            }
+            return coords;
+        }
+
+        function tracksToEllipseGeoJSON(tracks) {
+            const features = [];
+            for (const t of tracks) {
+                if (!t.estimated_lat || !t.estimated_lon) continue;
+                if (t.location_method !== 'tdoa') continue;
+                const lat = t.estimated_lat, lng = t.estimated_lon;
+                const a = t.tdoa_ellipse_a_m || t.location_error_radius_m || 200;
+                const b = t.tdoa_ellipse_b_m || a;
+                const theta = t.tdoa_ellipse_theta_deg || 0;
+                features.push({
+                    type: 'Feature',
+                    properties: { emitter_id: t.emitter_id, threat_level: t.threat_level || 'unknown' },
+                    geometry: { type: 'Polygon', coordinates: [ellipseRing(lat, lng, a, b, theta)] }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        function tracksToProximityGeoJSON(tracks) {
+            const features = [];
+            for (const t of tracks) {
+                if (!t.estimated_lat || !t.estimated_lon) continue;
+                if (t.location_method !== 'rssi_proximity') continue;
+                const r = t.location_error_radius_m || 500;
+                features.push({
+                    type: 'Feature',
+                    properties: { emitter_id: t.emitter_id, threat_level: t.threat_level || 'unknown' },
+                    geometry: { type: 'Polygon', coordinates: [ellipseRing(t.estimated_lat, t.estimated_lon, r, r, 0)] }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        function trackDotGeoJSON(tracks) {
+            const features = [];
+            for (const t of tracks) {
+                if (!t.estimated_lat || !t.estimated_lon) continue;
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        emitter_id: t.emitter_id,
+                        threat_level: t.threat_level || 'unknown',
+                        freq_mhz: t.primary_frequency ? (t.primary_frequency / 1e6).toFixed(3) : '',
+                    },
+                    geometry: { type: 'Point', coordinates: [t.estimated_lon, t.estimated_lat] }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        function addEmitterLayers() {
+            map.addSource('_tdoa_ellipses', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addSource('_prox_circles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addSource('_emitter_dots', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+            map.addLayer({ id: '_tdoa_fill', source: '_tdoa_ellipses', type: 'fill',
+                paint: { 'fill-color': ['match', ['get', 'threat_level'],
+                    'critical', '#ff3b3b', 'high', '#ff8c00', 'medium', '#d8c96a', 'low', '#83d099', '#7a9e7e'],
+                    'fill-opacity': 0.15 } });
+            map.addLayer({ id: '_tdoa_ring', source: '_tdoa_ellipses', type: 'line',
+                paint: { 'line-color': ['match', ['get', 'threat_level'],
+                    'critical', '#ff3b3b', 'high', '#ff8c00', 'medium', '#d8c96a', 'low', '#83d099', '#7a9e7e'],
+                    'line-width': 1.5, 'line-opacity': 0.8 } });
+            map.addLayer({ id: '_prox_fill', source: '_prox_circles', type: 'fill',
+                paint: { 'fill-color': '#d8c96a', 'fill-opacity': 0.08 } });
+            map.addLayer({ id: '_prox_ring', source: '_prox_circles', type: 'line',
+                paint: { 'line-color': '#d8c96a', 'line-width': 1, 'line-opacity': 0.5,
+                    'line-dasharray': [4, 3] } });
+            map.addLayer({ id: '_emitter_dots_layer', source: '_emitter_dots', type: 'circle',
+                paint: { 'circle-radius': 6,
+                    'circle-color': ['match', ['get', 'threat_level'],
+                        'critical', '#ff3b3b', 'high', '#ff8c00', 'medium', '#d8c96a', 'low', '#83d099', '#7a9e7e'],
+                    'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 1.5, 'circle-opacity': 0.92 } });
+            map.addLayer({ id: '_emitter_labels', source: '_emitter_dots', type: 'symbol',
+                layout: { 'text-field': ['get', 'freq_mhz'],
+                    'text-font': ['literal', ['Noto Sans Regular']],
+                    'text-size': 10, 'text-offset': [0, 1.2], 'text-anchor': 'top' },
+                paint: { 'text-color': '#b0c8b4', 'text-halo-color': '#0b0e0a', 'text-halo-width': 1 } });
+        }
+
+        map.on('load', () => {
+            styleReady = true;
+            discoverLayers();
+            addPositionLayer();
+            add3DBuildingLayer();
+            addEmitterLayers();
+        });
+
         /* ── Android bridge ── */
         window.PredatorRFMap = {
             updatePosition(lat, lon, accuracy, follow) {
@@ -580,6 +681,19 @@
                         duration: 300
                     });
                 }
+            },
+
+            updateTracks(tracksJson) {
+                if (!styleReady) return;
+                let tracks;
+                try { tracks = typeof tracksJson === 'string' ? JSON.parse(tracksJson) : tracksJson; }
+                catch(e) { return; }
+                if (!Array.isArray(tracks)) return;
+                try {
+                    map.getSource('_tdoa_ellipses').setData(tracksToEllipseGeoJSON(tracks));
+                    map.getSource('_prox_circles').setData(tracksToProximityGeoJSON(tracks));
+                    map.getSource('_emitter_dots').setData(trackDotGeoJSON(tracks));
+                } catch(e) {}
             }
         };
     </script>

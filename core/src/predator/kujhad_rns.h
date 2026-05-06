@@ -23,8 +23,12 @@ namespace predator {
 
 inline std::string kujhadRnsSocketPath() {
     if (geteuid() == 0) return "/run/predator-rns.sock";
+    // Explicit override wins — the Python backend exports this after
+    // binding the socket so both C++ and Kotlin see the same path.
+    const char* explicit_sock = std::getenv("PREDATOR_RNS_SOCK");
+    if (explicit_sock && explicit_sock[0]) return std::string(explicit_sock);
     const char* home = std::getenv("HOME");
-    if (!home) home = "/tmp";
+    if (!home) home = "/tmp";  // fallback (should never hit — backend.cpp sets HOME)
     return std::string(home) + "/.local/state/predator-rns/control.sock";
 }
 
