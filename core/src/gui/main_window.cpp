@@ -6516,15 +6516,57 @@ void MainWindow::draw() {
                         "RNode/LoRa, KISS TNC, AX.25, I2P, or Pipe)."));
                 }
 
+                // Keyboard-safe modal positioning helper.
+                // Anchors the popup high inside the safe area and clamps its
+                // max height so the bottom row (Save/Cancel/Close) stays
+                // above the Android soft keyboard. Mirrors the logic used
+                // by the ##pend_edit popup so every text-entry modal in
+                // this panel is reachable on a phone in landscape.
+                auto positionRnsModal = [&](float widthFrac,
+                                            float heightCapFrac) {
+                    ImVec2 wp     = ImGui::GetWindowPos();
+                    float popW    = std::min(winSize.x - 4.0f * pad,
+                                             winSize.x * widthFrac);
+                    float popX    = wp.x + (winSize.x - popW) * 0.5f;
+                    float popY    = wp.y + pad;
+                    float screenH = ImGui::GetIO().DisplaySize.y;
+                    float imeBot  = (float)backend::getImeBottomInset();
+                    float kbTopY  = (imeBot > 0.0f) ? (screenH - imeBot)
+                                                    : screenH;
+                    float fitH    = std::max<float>(kbTopY - popY - pad,
+                                                    160.0f * style::uiScale);
+                    float capH    = winSize.y * heightCapFrac;
+                    float maxH    = (imeBot > 0.0f) ? std::min(fitH, capH)
+                                                    : capH;
+                    ImGui::SetNextWindowPos(ImVec2(popX, popY),
+                                            ImGuiCond_Always);
+                    ImGui::SetNextWindowSizeConstraints(
+                        ImVec2(popW, 120.0f * style::uiScale),
+                        ImVec2(popW, maxH));
+                };
+
                 // Edit / Add modal.
                 if (rnsEditOpen) {
                     ImGui::OpenPopup(rnsEditIsNew ? T("Add RNS interface")
                                                   : T("Edit RNS interface"));
                 }
+                if (ImGui::IsPopupOpen(rnsEditIsNew ? T("Add RNS interface")
+                                                    : T("Edit RNS interface"))) {
+                    positionRnsModal(0.92f, 0.90f);
+                }
                 if (ImGui::BeginPopupModal(
                         rnsEditIsNew ? T("Add RNS interface")
                                      : T("Edit RNS interface"),
-                        nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                        nullptr,
+                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
+                    // Scrollable body so the long per-type form is fully
+                    // reachable on small screens; reserve space at the
+                    // bottom for the action button row.
+                    float btnRowH = ImGui::GetFrameHeightWithSpacing()
+                                    + ImGui::GetStyle().ItemSpacing.y;
+                    ImGui::BeginChild("##rns_e_body",
+                                      ImVec2(0, -btnRowH), false,
+                                      ImGuiWindowFlags_HorizontalScrollbar);
                     ImGui::InputText(T("Name##rns_e"), rnsEditName,
                                      sizeof(rnsEditName));
                     if (rnsEditIsNew) {
@@ -6651,6 +6693,7 @@ void MainWindow::draw() {
                                          eCmd, sizeof(eCmd));
                         ImGui::InputInt (T("Respawn delay s##rns_e"), &eRespawnDelay);
                     }
+                    ImGui::EndChild();  // ##rns_e_body
                     ImGui::Separator();
                     if (ImGui::Button(T("Validate##rns_e"))) {
                         json cfg = buildCfgJson();
@@ -6687,8 +6730,11 @@ void MainWindow::draw() {
 
                 // Export modal.
                 if (rnsExportOpen) ImGui::OpenPopup(T("Export RNS config"));
+                if (ImGui::IsPopupOpen(T("Export RNS config"))) {
+                    positionRnsModal(0.85f, 0.80f);
+                }
                 if (ImGui::BeginPopupModal(T("Export RNS config"), nullptr,
-                                            ImGuiWindowFlags_AlwaysAutoResize)) {
+                                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     ImGui::InputText(T("Passphrase##rns_x"),
                                      rnsExportPass, sizeof(rnsExportPass),
                                      ImGuiInputTextFlags_Password);
@@ -6722,12 +6768,15 @@ void MainWindow::draw() {
 
                 // Import modal.
                 if (rnsImportOpen) ImGui::OpenPopup(T("Import RNS config"));
+                if (ImGui::IsPopupOpen(T("Import RNS config"))) {
+                    positionRnsModal(0.92f, 0.85f);
+                }
                 if (ImGui::BeginPopupModal(T("Import RNS config"), nullptr,
-                                            ImGuiWindowFlags_AlwaysAutoResize)) {
+                                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     ImGui::InputTextMultiline(T("Token##rns_i"),
                                                rnsImportToken,
                                                sizeof(rnsImportToken),
-                                               ImVec2(420, 80));
+                                               ImVec2(0, 80.0f * style::uiScale));
                     ImGui::InputText(T("Passphrase##rns_i"),
                                      rnsImportPass, sizeof(rnsImportPass),
                                      ImGuiInputTextFlags_Password);
