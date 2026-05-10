@@ -318,11 +318,44 @@ namespace backend {
                 // keyboard stays up after closing a modal, eats screen
                 // space, and (because our positionRnsModal clamps to
                 // display − ime) shrinks every popup that opens next.
+                //
+                // Falling edge is DEBOUNCED: a tap on an InputText inside
+                // a modal can briefly drop io.WantTextInput for one or
+                // two frames when the IME rises and the popup re-anchors
+                // (BeginChild shrinks, the active InputText is briefly
+                // clipped, ImGui's active-id machinery skips a beat).
+                // Without the debounce, that transient drop fires
+                // HideSoftKeyboardInput before the IME has even finished
+                // sliding up — the operator sees the keyboard appear and
+                // immediately auto-close, and can't enter any text. We
+                // require N consecutive frames of !WantTextInput before
+                // hiding. Rising edge stays instant so the IME pops up
+                // the moment the operator taps a field.
+                //
+                // 6 frames ≈ 100ms at 60fps — long enough to ride
+                // through any single-frame blip during popup re-layout
+                // but still snappy enough that closing a modal hides the
+                // IME without the operator noticing the delay.
                 static bool WantTextInputLast = false;
-                if (io.WantTextInput && !WantTextInputLast) {
-                    ShowSoftKeyboardInput();
-                } else if (!io.WantTextInput && WantTextInputLast) {
-                    HideSoftKeyboardInput();
+                static int  WantTextFalseStreak = 0;
+                const  int  kHideDebounceFrames = 6;
+                if (io.WantTextInput) {
+                    WantTextFalseStreak = 0;
+                    if (!WantTextInputLast) {
+                        ShowSoftKeyboardInput();
+                    }
+                } else {
+                    if (WantTextInputLast) {
+                        // First frame of !WantTextInput — start the
+                        // streak counter but don't hide yet.
+                        WantTextFalseStreak = 1;
+                    } else if (WantTextFalseStreak > 0) {
+                        WantTextFalseStreak++;
+                        if (WantTextFalseStreak >= kHideDebounceFrames) {
+                            HideSoftKeyboardInput();
+                            WantTextFalseStreak = 0;
+                        }
+                    }
                 }
                 WantTextInputLast = io.WantTextInput;
 
