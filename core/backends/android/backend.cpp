@@ -416,16 +416,31 @@ namespace backend {
                 
                 if (dsize.x > 0 && dsize.y > 0) {
                     // Inset the main window inside the system safe area
-                    // (status bar / nav bar / camera cutout) AND above the
-                    // soft keyboard if it's visible. Without these the
-                    // top-row menus can fall under a notch and the focused
-                    // InputText can hide under the IME.
+                    // (status bar / nav bar / camera cutout) ONLY.
+                    //
+                    // We deliberately DO NOT subtract `imeBottomInset`
+                    // here. With `windowSoftInputMode="adjustNothing"`
+                    // in AndroidManifest.xml, the IME floats over the
+                    // GL surface — the surface itself is NOT resized
+                    // when the keyboard appears. That means
+                    // `dsize` (== `ImGui::GetIO().DisplaySize`) stays
+                    // at full screen size, the main ImGui window stays
+                    // full size, and any popups inside it (RNS Add
+                    // Interface, etc.) keep their geometry constant
+                    // across the IME slide-up animation. This is what
+                    // prevents ImGui from clearing the active id of
+                    // the focused InputText — the original bug where
+                    // the keyboard appeared on tap, stayed for ~1.5s,
+                    // then auto-closed because `WantTextInput` had
+                    // gone false. The IME's bottom inset is still
+                    // reported via `getImeBottomInset()` and used by
+                    // the modal's iv() to scroll the active field
+                    // above the keyboard line.
                     SafeAreaInsets sa = getSafeAreaInsets();
-                    int imeBot = getImeBottomInset();
                     float left   = (float)sa.left;
                     float top    = (float)sa.top;
                     float right  = (float)sa.right;
-                    float bottom = (float)((sa.bottom > imeBot) ? sa.bottom : imeBot);
+                    float bottom = (float)sa.bottom;
                     float winW = dsize.x - left - right;
                     float winH = dsize.y - top  - bottom;
                     if (winW < 1.0f) winW = 1.0f;
