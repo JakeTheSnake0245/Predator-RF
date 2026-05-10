@@ -59,10 +59,15 @@ namespace style {
             return false;
         }
 
-        // Create base font range
+        // Create base font range. The extra "icon" range (U+2600..U+26FF
+        // Miscellaneous Symbols) is added so the gear glyph U+2699 used by
+        // the per-marker action sheet button on the Hits page renders
+        // instead of falling back to "?".
         ImFontGlyphRangesBuilder baseBuilder;
         baseBuilder.AddRanges(fonts->GetGlyphRangesDefault());
         baseBuilder.AddRanges(fonts->GetGlyphRangesCyrillic());
+        static const ImWchar iconRange[] = { 0x2600, 0x26FF, 0 };
+        baseBuilder.AddRanges(iconRange);
         baseBuilder.BuildRanges(&baseRanges);
 
         // Create big font range

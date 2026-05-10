@@ -1372,13 +1372,81 @@ void MainWindow::draw() {
         std::sort(blFileList.begin(), blFileList.end(), std::greater<std::string>());
     };
 
-    auto extractionPath = [&](bool voice, const std::string& baseName, const char* extension) {
+    // Per-marker subfolder name. Format: "M<slot>_<freqMHz>" with the
+    // frequency rendered as "<integer-MHz>M<3-digit-kHz-fraction>" so the
+    // folder name is filesystem-safe (no '.') and sorts naturally. Returns
+    // empty string when slot is 0 / freq invalid so callers can fall back
+    // to the global folder.
+    auto markerSubdirName = [](int slot, double frequencyHz) -> std::string {
+        if (slot <= 0 || frequencyHz <= 0.0) { return ""; }
+        long long mhz = (long long)(frequencyHz / 1.0e6);
+        long long khz = (long long)std::llround((frequencyHz - (double)mhz * 1.0e6) / 1.0e3);
+        if (khz >= 1000) { mhz += 1; khz -= 1000; }
+        char buf[64];
+        snprintf(buf, sizeof(buf), "M%d_%lldM%03lld", slot, mhz, khz);
+        return std::string(buf);
+    };
+
+    // extractionPath: when subdir is non-empty the file is written under
+    // <voice|data>/<subdir>/ so per-marker outputs cluster together. The
+    // subdir is created on demand (filesystem::create_directories is a
+    // no-op when it already exists).
+    auto extractionPath = [&](bool voice, const std::string& baseName, const char* extension, const std::string& subdir = "") {
         FolderSelect& selector = voice ? voiceFolderSelect : dataFolderSelect;
         std::string configuredPath = voice ? voiceOutputPath : dataOutputPath;
         std::filesystem::path dir = selector.expandString(configuredPath);
+        if (!subdir.empty()) { dir /= subdir; }
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         return (dir / (baseName + extension)).string();
+    };
+
+    // Per-marker IQ folder under <root>/iq/<subdir>/. Created on demand;
+    // returns the directory path (NOT a file path). Used by the marker
+    // actions popup so the operator sees where the SDR++ Recorder should
+    // be pointed when Record IQ is enabled.
+    auto markerIqDir = [&](const std::string& subdir) -> std::string {
+        std::string root = (std::string)core::args["root"];
+        std::filesystem::path dir = std::filesystem::path(root) / "iq";
+        if (!subdir.empty()) { dir /= subdir; }
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        return dir.string();
+    };
+
+    // Lookup helper: given an event frequency, find a hit that owns it
+    // (via cluster band) and has the requested per-marker action flag set.
+    // Returns the marker subfolder string, or "" if no match. Used by
+    // appendPredatorEvent to route voice/data files to per-marker folders.
+    auto markerSubdirForFrequency = [&](double frequencyHz, const char* actionFlag) -> std::string {
+        if (frequencyHz <= 0.0 || actionFlag == nullptr) { return ""; }
+        // Pick the CLOSEST-frequency match (not first-match) so overlapping
+        // marker-assigned hits route deterministically to the marker whose
+        // tuned center is nearest the event. Ties on |Δf| break on marker
+        // slot (lower wins) so reordering the hits array does not reroute
+        // existing clip destinations.
+        int bestIdx = -1;
+        double bestDelta = 1.0e18;
+        int bestSlot = 0x7fffffff;
+        double bestFreq = 0.0;
+        for (int i = 0; i < hits.size(); i++) {
+            if (!readJsonBool(hits[i], "markerAssigned", false)) { continue; }
+            if (!readJsonBool(hits[i], actionFlag, false))       { continue; }
+            double hitFreq      = readJsonDouble(hits[i], "frequency",  0.0);
+            double clusterWidth = std::max<double>(readJsonDouble(hits[i], "clusterHz", hitClusterHz), 100.0);
+            double delta = std::abs(frequencyHz - hitFreq);
+            if (delta > clusterWidth) { continue; }
+            int slot = (int)readJsonDouble(hits[i], "markerSlot", 0.0);
+            if (slot <= 0) { slot = std::max<int>(1, std::min<int>(predatorMarkerSlots, i + 1)); }
+            if (delta < bestDelta || (delta == bestDelta && slot < bestSlot)) {
+                bestDelta = delta;
+                bestSlot  = slot;
+                bestFreq  = hitFreq;
+                bestIdx   = i;
+            }
+        }
+        if (bestIdx < 0) { return ""; }
+        return markerSubdirName(bestSlot, bestFreq);
     };
 
     auto appendPredatorEvent = [&](const char* type, double frequency, const std::string& label, float strengthDb, bool persist, const std::string& decoder = "None", const std::string& hitState = "unknown") {
@@ -1401,8 +1469,15 @@ void MainWindow::draw() {
         row["voicePath"] = voiceOutputPath;
         row["dataPath"] = dataOutputPath;
         row["clipBaseName"] = eventId;
-        row["voiceClipPath"] = extractionPath(true, eventId, ".wav");
-        row["dataClipPath"] = extractionPath(false, eventId, ".json");
+        // Per-marker routing: if the event's frequency belongs to a hit
+        // that has the corresponding mAct* flag set, write the file under
+        // <voice|data>/M<slot>_<freqMHz>/ instead of the global folder.
+        // Empty subdir falls through to legacy behavior.
+        std::string voiceSub = markerSubdirForFrequency(frequency, "mActVoice");
+        std::string dataSub  = markerSubdirForFrequency(frequency, "mActData");
+        row["voiceClipPath"]  = extractionPath(true,  eventId, ".wav",  voiceSub);
+        row["dataClipPath"]   = extractionPath(false, eventId, ".json", dataSub);
+        row["markerSubdir"]   = voiceSub.empty() ? dataSub : voiceSub;
         row["hasAudio"] = false;
         row["hasData"] = false;
         row["source"] = sourceName.empty() ? "None" : sourceName;
@@ -3832,6 +3907,84 @@ void MainWindow::draw() {
                                 }
                             }
                             detectedHitsChanged = true;
+                        }
+                        // ── Gear icon: per-marker action sheet ────────────
+                        // Opens a popup with checkboxes for Record IQ /
+                        // Save Voice / Save Data plus the auto-created
+                        // per-marker output folders. Disabled when the hit
+                        // has no marker assigned (the actions only make
+                        // sense once a marker VFO exists).
+                        ImGui::SameLine();
+                        if (!markerAssigned) { ImGui::BeginDisabled(); }
+                        if (ImGui::Button(T("\xE2\x9A\x99##marker_actions"))) {
+                            ImGui::OpenPopup("##marker_actions_popup");
+                        }
+                        if (!markerAssigned) { ImGui::EndDisabled(); }
+                        if (ImGui::IsItemHovered() && markerAssigned) {
+                            ImGui::SetTooltip("%s", T("Marker actions: record IQ, save decoded voice/data"));
+                        }
+                        if (ImGui::BeginPopup("##marker_actions_popup")) {
+                            int slot = (int)readJsonDouble(hits[i], "markerSlot", 0.0);
+                            if (slot <= 0) { slot = std::max<int>(1, std::min<int>(predatorMarkerSlots, i + 1)); }
+                            std::string subdir = markerSubdirName(slot, hitFrequency);
+                            ImGui::Text("Marker M%d  %s", slot, formatFrequency(hitFrequency).c_str());
+                            ImGui::Separator();
+                            bool actIq    = readJsonBool(hits[i], "mActIq",    false);
+                            bool actVoice = readJsonBool(hits[i], "mActVoice", false);
+                            bool actData  = readJsonBool(hits[i], "mActData",  false);
+                            if (ImGui::Checkbox(T("Record raw IQ (.wav)"), &actIq)) {
+                                hits[i]["mActIq"] = actIq;
+                                if (actIq) { (void)markerIqDir(subdir); }
+                                detectedHitsChanged = true;
+                            }
+                            if (ImGui::Checkbox(T("Save decoded voice"), &actVoice)) {
+                                hits[i]["mActVoice"] = actVoice;
+                                if (actVoice) {
+                                    std::error_code ec;
+                                    std::filesystem::create_directories(
+                                        voiceFolderSelect.expandString(voiceOutputPath) + "/" + subdir, ec);
+                                }
+                                detectedHitsChanged = true;
+                            }
+                            if (ImGui::Checkbox(T("Save decoded data"), &actData)) {
+                                hits[i]["mActData"] = actData;
+                                if (actData) {
+                                    std::error_code ec;
+                                    std::filesystem::create_directories(
+                                        dataFolderSelect.expandString(dataOutputPath) + "/" + subdir, ec);
+                                }
+                                detectedHitsChanged = true;
+                            }
+                            ImGui::Separator();
+                            ImGui::TextDisabled("%s", T("Output folders (auto-created):"));
+                            if (actIq) {
+                                ImGui::TextWrapped("IQ:    %s", markerIqDir(subdir).c_str());
+                            }
+                            if (actVoice) {
+                                ImGui::TextWrapped("Voice: %s/%s/",
+                                    voiceFolderSelect.expandString(voiceOutputPath).c_str(),
+                                    subdir.c_str());
+                            }
+                            if (actData) {
+                                ImGui::TextWrapped("Data:  %s/%s/",
+                                    dataFolderSelect.expandString(dataOutputPath).c_str(),
+                                    subdir.c_str());
+                            }
+                            if (!actIq && !actVoice && !actData) {
+                                ImGui::TextDisabled("%s", T("(no actions selected)"));
+                            }
+                            if (actIq) {
+                                ImGui::Separator();
+                                ImGui::TextWrapped("%s", T("Raw IQ recording: open the side-menu Recorder, set mode to Baseband, and select VFO 'Predator M") );
+                                ImGui::SameLine(0.0f, 0.0f);
+                                ImGui::Text("%d'", slot);
+                                ImGui::TextWrapped("%s", T("then press Start. Files land in the IQ folder above."));
+                            }
+                            ImGui::Separator();
+                            if (ImGui::Button(T("Close##marker_actions_close"), ImVec2(-1, 0))) {
+                                ImGui::CloseCurrentPopup();
+                            }
+                            ImGui::EndPopup();
                         }
                         ImGui::SameLine();
                         ImGui::SetNextItemWidth(std::max<float>(140.0f * style::uiScale, ImGui::GetContentRegionAvail().x * 0.45f));

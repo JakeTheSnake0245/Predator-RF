@@ -24,7 +24,7 @@ _Populate as you build_
 - `core/src/predator/kujhad_fleet.h`: Header-only Kujhad Fleet hub-and-spoke peer protocol (HTTP/TLS server).
 - `core/src/predator/decoder_ingest.h`: Header-only receive-only decoder ingestion base class.
 - `decoder_modules/rtl433_decoder/`: Native rtl_433 ISM decoder module.
-- `core/src/gui/style.cpp`: Contains `applyTouchFriendlyTweaks()` for Android UI adjustments.
+- `core/src/gui/style.cpp`: Contains `applyTouchFriendlyTweaks()` for Android UI adjustments. Base font glyph range adds Misc-Symbols (U+2600..U+26FF) for the gear icon (U+2699) used by the Hits page per-marker action sheet.
 - `docs/android_build.md`: End-to-end APK build guide.
 - `android/sdr-kit/arm64-v8a/`: Prebuilt native SDR libraries for Android.
 - `scripts/fetch-sdr-kit.sh`: Script to refresh `android/sdr-kit/`.
