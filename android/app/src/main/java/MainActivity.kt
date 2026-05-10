@@ -372,6 +372,29 @@ class MainActivity : NativeActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             thermalListener?.let { powerManager?.removeThermalStatusListener(it) }
         }
+        // Unregister the USB permission receiver registered in onCreate.
+        // Without this, every activity teardown leaks an IntentReceiver
+        // (logcat: "Activity ... has leaked IntentReceiver ... usbReceiver$1")
+        // and over a session the leaked receivers accumulate, slowing
+        // broadcast dispatch and contributing to ANR pressure. Wrapped in
+        // try/catch because Android throws IllegalArgumentException if the
+        // receiver was never registered (e.g. onCreate threw before line 296).
+        try {
+            unregisterReceiver(usbReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Receiver was not registered — safe to ignore.
+        }
+        // Belt-and-suspenders: stopLocationUpdates() runs in onPause, but if
+        // the OS kills the activity without firing onPause (e.g. low-memory
+        // forced destroy) the GPS/network listener leaks and keeps the
+        // location stack pinned. Calling it again here is idempotent —
+        // removeUpdates(listener) is a no-op if the listener was already
+        // removed.
+        try {
+            stopLocationUpdates()
+        } catch (e: Exception) {
+            // Defensive — never let cleanup throw out of onDestroy.
+        }
         super.onDestroy();
     }
 
