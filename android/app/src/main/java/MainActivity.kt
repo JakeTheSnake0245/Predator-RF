@@ -107,6 +107,14 @@ class MainActivity : NativeActivity() {
     // TextWatcher pushes characters into the same unicodeCharacterQueue
     // that pollUnicodeChar() drains for ImGui.
     private var imeCaptureView: EditText? = null;
+    // Reference to NativeActivity's NativeContentView (the GLSurfaceView
+    // sibling of imeCaptureView in the content frame). We toggle its
+    // focusability off while the IME is wanted so it physically cannot
+    // steal focus from imeCaptureView mid-edit. Touch dispatch does NOT
+    // require focusability (only key dispatch does), so taps still reach
+    // ImGui via NativeContentView -> native_app_glue. Found by iterating
+    // android.R.id.content's children in installImeCaptureView.
+    private var nativeContentView: android.view.View? = null
     // True between showSoftInput() and hideSoftInput(). The capture view's
     // OnFocusChangeListener uses this to decide whether to re-fight when
     // NativeContentView reclaims focus mid-edit. Without it we'd thrash
@@ -390,6 +398,27 @@ class MainActivity : NativeActivity() {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             val capture = imeCaptureView
             if (capture != null) {
+                // PRIMARY DEFENCE: physically prevent NativeContentView
+                // from being a focus candidate while the IME is wanted.
+                // Without this, NCV can re-grab focus on every layout
+                // pass triggered by the IME slide-up animation, the
+                // OnFocusChangeListener re-fight loses the race, and
+                // the IME closes itself because its bound view (NCV)
+                // isn't focused or accepts no text. Restored in
+                // hideSoftInput().
+                nativeContentView?.let {
+                    it.isFocusable = false
+                    it.isFocusableInTouchMode = false
+                    // One-time-per-show validation log — confirms we're
+                    // toggling the RIGHT view (NativeContentView, not
+                    // some accidental sibling). If the size doesn't
+                    // approximate the screen or hasWindowFocus reports
+                    // an unexpected state, the lookup picked wrong.
+                    Log.d(TAG, "NCV focusability disabled: ${it.javaClass.simpleName} " +
+                               "size=${it.width}x${it.height} " +
+                               "hasWindowFocus=${it.hasWindowFocus()} " +
+                               "hasFocus=${it.hasFocus()}")
+                }
                 // NativeActivity's NativeContentView aggressively reclaims
                 // focus, so we must FIGHT for it every time the IME is
                 // raised: bring the EditText to the front of the z-order,
@@ -452,6 +481,13 @@ class MainActivity : NativeActivity() {
             } else {
                 imm.hideSoftInputFromWindow(window.decorView.windowToken,
                                            InputMethodManager.HIDE_IMPLICIT_ONLY)
+            }
+            // Restore NCV focusability so hardware-key navigation and
+            // any non-IME focus traversal continues to work normally
+            // when no field is active.
+            nativeContentView?.let {
+                it.isFocusable = true
+                it.isFocusableInTouchMode = true
             }
             hideSystemBars()
         }
@@ -605,6 +641,70 @@ class MainActivity : NativeActivity() {
         }
         addContentView(edit, params)
         imeCaptureView = edit
+
+        // Locate NativeActivity's NativeContentView so showSoftInput()
+        // can disable its focusability while the IME is wanted. NCV is
+        // a sibling of our EditText inside android.R.id.content (both
+        // were added via addContentView). NativeActivity's NCV is
+        // always a SurfaceView subclass (it owns the GL surface), so
+        // we filter by SurfaceView class membership rather than just
+        // "any non-EditText child" — that survives future OEM debug
+        // overlays / injected children and won't toggle the wrong view.
+        // Run on the next UI tick so addContentView has settled.
+        edit.post {
+            val content = window.findViewById<android.view.ViewGroup>(android.R.id.content)
+            if (content != null) {
+                var candidate: android.view.View? = null
+                for (i in 0 until content.childCount) {
+                    val child = content.getChildAt(i)
+                    if (child === edit) continue
+                    // Class-name check (works on stripped builds where
+                    // direct class reference would link against android.jar
+                    // internals). NativeContentView extends SurfaceView.
+                    val cls = child.javaClass.name
+                    val isSurfaceView = (child is android.view.SurfaceView) ||
+                                        cls.endsWith("NativeContentView") ||
+                                        cls.contains(".NativeActivity\$")
+                    if (isSurfaceView) {
+                        candidate = child
+                        break
+                    }
+                }
+                // Fallback: if no SurfaceView matched (unusual OEM
+                // wrapper), accept the first non-EditText child but
+                // ONLY if it covers most of the screen (>= 80% of
+                // content area) — that filters out small overlays.
+                if (candidate == null) {
+                    val cw = content.width
+                    val ch = content.height
+                    for (i in 0 until content.childCount) {
+                        val child = content.getChildAt(i)
+                        if (child === edit) continue
+                        val frac = if (cw > 0 && ch > 0)
+                            (child.width.toLong() * child.height) /
+                                (cw.toLong() * ch).toFloat()
+                        else 0.0f
+                        if (frac >= 0.80f) {
+                            candidate = child
+                            Log.w(TAG, "NCV fallback-by-size matched ${child.javaClass.simpleName} " +
+                                       "(${child.width}x${child.height}, ${(frac*100).toInt()}% of content)")
+                            break
+                        }
+                    }
+                }
+                nativeContentView = candidate
+                if (candidate != null) {
+                    Log.i(TAG, "NativeContentView located: ${candidate.javaClass.simpleName} " +
+                               "size=${candidate.width}x${candidate.height} " +
+                               "focusable=${candidate.isFocusable} " +
+                               "focusableInTouchMode=${candidate.isFocusableInTouchMode}")
+                } else {
+                    Log.w(TAG, "NativeContentView NOT found in android.R.id.content — " +
+                               "IME focus-fight will fall back to OnFocusChangeListener only " +
+                               "(content children=${content.childCount})")
+                }
+            }
+        }
 
         // Defer the initial bringToFront/requestFocus until the view is
         // attached to the window — calling requestFocus before attachment
