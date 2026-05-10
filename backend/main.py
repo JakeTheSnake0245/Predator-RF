@@ -393,7 +393,7 @@ class PredatorBackend:
         # Local ATAK forward (UDP). Spec: peer-relayed CoT must reach
         # the device's local TAK app so operators see what the mesh
         # delivered, not just what their own sensor produced.
-        port = int(getattr(self.config, "rns_atak_local_port", 0) or 0)
+        port = int(getattr(config, "rns_atak_local_port", 0) or 0)
         if port > 0:
             try:
                 if not hasattr(self, "_atak_local_sock"):
@@ -401,7 +401,7 @@ class PredatorBackend:
                     self._atak_local_sock = _s.socket(
                         _s.AF_INET, _s.SOCK_DGRAM)
                     self._atak_local_sock.setblocking(False)
-                host = getattr(self.config, "rns_atak_local_host",
+                host = getattr(config, "rns_atak_local_host",
                                "127.0.0.1") or "127.0.0.1"
                 self._atak_local_sock.sendto(xml, (host, port))
             except Exception as exc:

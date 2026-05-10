@@ -347,6 +347,16 @@ class MainActivity : NativeActivity() {
 
     public override fun onPause() {
         stopLocationUpdates();
+        // Drop the IME on background. Otherwise imeKeepFocus stays true
+        // across a backgrounding trip and the OnFocusChangeListener
+        // re-fights for focus on every focus event from system UI
+        // (notification shade dismissal, status bar, split-screen pane
+        // switch), forcing the keyboard back open at random moments.
+        // hideSoftInput() flips imeKeepFocus=false and calls clearFocus
+        // on the capture view, breaking the loop.
+        if (imeKeepFocus) {
+            hideSoftInput();
+        }
         super.onPause();
     }
 
@@ -622,10 +632,25 @@ class MainActivity : NativeActivity() {
     private var unicodeCharacterQueue: LinkedBlockingQueue<Int> = LinkedBlockingQueue()
 
     // We assume dispatchKeyEvent() of the NativeActivity is actually called for every
-    // KeyEvent and not consumed by any View before it reaches here
+    // KeyEvent and not consumed by any View before it reaches here.
+    //
+    // IMPORTANT: when the invisible imeCaptureView has focus (which it
+    // does whenever ImGui wants text input), hardware-keyboard letter
+    // keys are ALSO delivered to the EditText, where the TextWatcher
+    // commits them via unicodeCharacterQueue. Without the focus check
+    // below, every printable hardware-keyboard character would be
+    // enqueued TWICE — once here, once by the TextWatcher — and the
+    // operator would see "hheelllloo" while typing on a Bluetooth
+    // keyboard. Non-printable keys (Enter, Tab, arrows) return 0 from
+    // getUnicodeChar() and are handled by ImGui's IO key state, not by
+    // the queue, so dropping them here costs nothing.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
-            unicodeCharacterQueue.offer(event.getUnicodeChar(event.metaState))
+            val capture = imeCaptureView
+            val captureOwnsKeys = capture != null && capture.hasFocus()
+            if (!captureOwnsKeys) {
+                unicodeCharacterQueue.offer(event.getUnicodeChar(event.metaState))
+            }
         }
         return super.dispatchKeyEvent(event)
     }

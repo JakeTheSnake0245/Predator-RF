@@ -6858,9 +6858,26 @@ void MainWindow::draw() {
                 }
                 if (ImGui::BeginPopupModal(T("Export RNS config"), nullptr,
                                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
+                    // Same active-field-rescue pattern as the RNS Add/Edit
+                    // modal: when the soft keyboard rises and shrinks the
+                    // popup, the active InputText can fall under the IME.
+                    // SetScrollHereY pulls it back into the visible part
+                    // of the popup. Called immediately after each Input*.
+                    static int s_prevImeBotX = 0;
+                    int s_curImeBotX = backend::getImeBottomInset();
+                    bool imeJustRoseX = (s_curImeBotX > s_prevImeBotX);
+                    s_prevImeBotX = s_curImeBotX;
+                    auto ivX = [&]() {
+                        if (ImGui::IsItemActivated()) {
+                            ImGui::SetScrollHereY(0.5f);
+                        } else if (imeJustRoseX && ImGui::IsItemActive()) {
+                            ImGui::SetScrollHereY(0.5f);
+                        }
+                    };
                     ImGui::InputText(T("Passphrase##rns_x"),
                                      rnsExportPass, sizeof(rnsExportPass),
                                      ImGuiInputTextFlags_Password);
+                    ivX();
                     ImGui::Checkbox(T("Include identity##rns_x"),
                                     &rnsExportIdent);
                     if (ImGui::Button(T("Mint token##rns_x"))) {
@@ -6896,13 +6913,32 @@ void MainWindow::draw() {
                 }
                 if (ImGui::BeginPopupModal(T("Import RNS config"), nullptr,
                                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
+                    // Same iv() pattern. The Passphrase field below the
+                    // 80px Token multiline is the highest-risk spot in
+                    // the import modal: it sits at the bottom of a tall
+                    // popup that gets clamped smaller when the keyboard
+                    // rises, so without this rescue it can land under
+                    // the IME.
+                    static int s_prevImeBotI = 0;
+                    int s_curImeBotI = backend::getImeBottomInset();
+                    bool imeJustRoseI = (s_curImeBotI > s_prevImeBotI);
+                    s_prevImeBotI = s_curImeBotI;
+                    auto ivI = [&]() {
+                        if (ImGui::IsItemActivated()) {
+                            ImGui::SetScrollHereY(0.5f);
+                        } else if (imeJustRoseI && ImGui::IsItemActive()) {
+                            ImGui::SetScrollHereY(0.5f);
+                        }
+                    };
                     ImGui::InputTextMultiline(T("Token##rns_i"),
                                                rnsImportToken,
                                                sizeof(rnsImportToken),
                                                ImVec2(0, 80.0f * style::uiScale));
+                    ivI();
                     ImGui::InputText(T("Passphrase##rns_i"),
                                      rnsImportPass, sizeof(rnsImportPass),
                                      ImGuiInputTextFlags_Password);
+                    ivI();
                     if (ImGui::Button(T("Apply##rns_i"))) {
                         std::string err;
                         auto raw = predator::kujhadRnsImport(rnsImportToken,
