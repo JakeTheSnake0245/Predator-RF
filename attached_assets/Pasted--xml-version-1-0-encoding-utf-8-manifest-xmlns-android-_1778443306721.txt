@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:versionCode="1"
+    android:versionName="1.1.0"
+    android:compileSdkVersion="33"
+    android:compileSdkVersionCodename="13"
+    package="org.sdrpp.sdrpp"
+    platformBuildVersionCode="33"
+    platformBuildVersionName="13">
+
+    <uses-sdk
+        android:minSdkVersion="28"
+        android:targetSdkVersion="33" />
+
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
+    <uses-permission
+        android:name="android.permission.INTERNET" />
+
+    <uses-permission
+        android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <uses-permission
+        android:name="android.permission.WAKE_LOCK" />
+
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
+    <application
+        android:label="Predator RF"
+        android:hasCode="true"
+        android:debuggable="true"
+        android:testOnly="true"
+        android:allowBackup="false"
+        android:extractNativeLibs="false"
+        android:fullBackupContent="false"
+        android:appComponentFactory="androidx.core.app.CoreComponentFactory">
+
+        <activity
+            android:theme="@ref/0x1030007"
+            android:icon="@ref/0x7f0a0000"
+            android:name="org.sdrpp.sdrpp.MainActivity"
+            android:exported="true"
+            android:screenOrientation="6"
+            android:configChanges="0x4b0"
+            android:windowSoftInputMode="0x10"
+            android:resizeableActivity="true">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="sdrpp_core" />
+
+            <meta-data
+                android:name="android.notch_support"
+                android:value="true" />
+
+            <intent-filter>
+
+                <action
+                    android:name="android.intent.action.MAIN" />
+
+                <category
+                    android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter>
+
+                <action
+                    android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@ref/0x7f0e0000" />
+        </activity>
+
+        <activity
+            android:theme="@ref/0x7f0c0107"
+            android:label="Predator RF Map"
+            android:name="org.sdrpp.sdrpp.MapActivity"
+            android:configChanges="0x4a0" />
+
+        <service
+            android:name="org.sdrpp.sdrpp.PredatorBackendService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="0x1" />
+    </application>
+</manifest>
