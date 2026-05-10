@@ -14,7 +14,7 @@
             android:exported="true"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|keyboardHidden|screenSize|keyboard"
-            android:windowSoftInputMode="adjustResize"
+            android:windowSoftInputMode="adjustNothing"
             android:resizeableActivity="true">
             <meta-data android:name="android.app.lib_name" android:value="sdrpp_core" />
             <!-- Notch / cutout: render to the edges in landscape. MainActivity
