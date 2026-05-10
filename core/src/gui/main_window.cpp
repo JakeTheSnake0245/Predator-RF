@@ -5938,6 +5938,18 @@ void MainWindow::draw() {
                 static json        rnsLogs   = json::array();
                 static double      rnsLastPoll = 0.0;
                 static bool        rnsAutoRefresh = true;
+                // Reachability tracking — pollDaemon writes both. Used by
+                // the status header to differentiate STARTING (panel just
+                // opened, daemon may still be importing Python) from UP
+                // (recent successful poll) from DOWN (poll failed and a
+                // grace window has elapsed). Without these the operator
+                // sees "Daemon: ?" indefinitely while the backend boots
+                // and has no way to tell connection failure from "no data
+                // yet". -1.0 = never.
+                static double      rnsLastOkPoll  = -1.0;
+                static double      rnsLastFailPoll = -1.0;
+                static std::string rnsLastFailErr;
+                static double      rnsPanelFirstSeen = -1.0;
                 static int         rnsLogLimit = 50;
                 static char        rnsLogLevel[8] = "INFO";
 
@@ -6035,26 +6047,59 @@ void MainWindow::draw() {
                 auto pollDaemon = [&]() {
                     std::string err;
                     rnsStatusRaw = predator::kujhadRnsCallStatus(err);
+                    double tnow = ImGui::GetTime();
+                    // Hard transport failure: kujhadRnsRequest sets err
+                    // and returns "" when the Unix socket connect fails
+                    // (daemon not started, killed, or path mismatch).
+                    // Don't try to parse — record the failure and bail.
+                    if (!err.empty() || rnsStatusRaw.empty()) {
+                        rnsLastFailPoll = tnow;
+                        rnsLastFailErr = err.empty()
+                            ? std::string("empty response from daemon")
+                            : err;
+                        // Clear cached interface list so the table
+                        // doesn't show stale rows the operator could
+                        // accidentally act on while the daemon is down.
+                        rnsStatus = json::object();
+                        rnsList = json::array();
+                        return;
+                    }
                     try {
                         auto resp = json::parse(rnsStatusRaw);
                         if (resp.contains("ok") && !resp["ok"].get<bool>()) {
+                            // Daemon is reachable but reported an error
+                            // (e.g. RNS subsystem down). Still counts as
+                            // a successful poll for reachability — the
+                            // socket answered. Clear stale interface
+                            // rows since the daemon explicitly said it
+                            // can't serve them right now.
+                            rnsLastOkPoll = tnow;
+                            rnsLastFailErr.clear();
                             rnsBanner = resp.value("error",
                                                     std::string("daemon error"));
                             rnsStatus = json::object();
+                            rnsList = json::array();
                         } else if (resp.contains("result")) {
+                            rnsLastOkPoll = tnow;
+                            rnsLastFailErr.clear();
                             rnsStatus = resp["result"];
                             rnsList = rnsStatus.value("interfaces",
                                                        json::array());
                         } else {
+                            rnsLastOkPoll = tnow;
+                            rnsLastFailErr.clear();
                             rnsStatus = resp;
                             rnsList = rnsStatus.value("interfaces",
                                                        json::array());
                         }
                     } catch (...) {
-                        rnsBanner = err.empty()
-                            ? std::string("daemon: invalid JSON response")
-                            : err;
+                        // Connected but the response wasn't JSON — the
+                        // socket answered but we can't trust any of it.
+                        // Treat as fail and clear cached rows.
+                        rnsLastFailPoll = tnow;
+                        rnsLastFailErr = "daemon: invalid JSON response";
                         rnsStatus = json::object();
+                        rnsList = json::array();
                     }
                 };
 
@@ -6359,8 +6404,20 @@ void MainWindow::draw() {
                 };
 
                 // Auto-poll once per second so the live counters update
-                // even when the operator isn't clicking buttons.
+                // even when the operator isn't clicking buttons. Also
+                // record the first frame the panel was visible so the
+                // status header can show "Starting..." for a grace
+                // window after launch instead of "DOWN" while the
+                // Python backend is still importing.
                 double now = ImGui::GetTime();
+                if (rnsPanelFirstSeen < 0.0) {
+                    rnsPanelFirstSeen = now;
+                    // Force a first poll immediately on open so the
+                    // header doesn't sit on "?" for up to a second.
+                    pollDaemon();
+                    pollLogs();
+                    rnsLastPoll = now;
+                }
                 if (rnsAutoRefresh && now - rnsLastPoll > 1.0) {
                     pollDaemon();
                     pollLogs();
@@ -6397,13 +6454,63 @@ void MainWindow::draw() {
                     rnsImportOpen = true;
                 }
 
-                // Live status header.
+                // Live status header — show actual reachability instead
+                // of just whatever the last successful poll happened to
+                // contain. Three colored states the operator can act on:
+                //   STARTING (yellow) — panel just opened, no successful
+                //     poll yet, but we're inside the boot grace window.
+                //     The Python backend takes ~3-8s to import + start
+                //     uvicorn + RNS daemon on first launch.
+                //   UP (green) — last successful poll < 3s ago. Save /
+                //     Validate / Restart actions are safe to attempt.
+                //   DOWN (red) — last poll failed AND we're past the
+                //     grace window. Shows the connect error inline so
+                //     the operator knows whether it's a daemon crash, a
+                //     missing PREDATOR_RNS_SOCK env, or a path mismatch.
+                const double bootGraceSec = 15.0;
+                const double upWindowSec  = 3.0;
+                bool ever = (rnsLastOkPoll >= 0.0);
+                bool recentOk = ever && (now - rnsLastOkPoll < upWindowSec);
+                bool inBootGrace = (now - rnsPanelFirstSeen < bootGraceSec);
+                ImVec4 stColor;
+                const char* stLabel;
+                if (recentOk) {
+                    stColor = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
+                    stLabel = "UP";
+                } else if (!ever && inBootGrace) {
+                    stColor = ImVec4(0.95f, 0.85f, 0.3f, 1.0f);
+                    stLabel = "STARTING";
+                } else {
+                    stColor = ImVec4(0.95f, 0.4f, 0.4f, 1.0f);
+                    stLabel = "DOWN";
+                }
+                ImGui::TextColored(stColor, "Backend: %s", stLabel);
+                ImGui::SameLine();
+                if (ImGui::SmallButton(T("Reconnect##rns"))) {
+                    // Force a fresh probe + reset the boot grace window
+                    // so the operator can manually re-check after the
+                    // service auto-restarts (or after they kill+restart
+                    // it from settings).
+                    rnsPanelFirstSeen = now;
+                    rnsLastFailErr.clear();
+                    pollDaemon();
+                    pollLogs();
+                    rnsLastPoll = now;
+                }
                 std::string daemonState = rnsStatus.value("daemon",
                                                           std::string("?"));
                 std::string ident = rnsStatus.value("identity_hash",
                                                     std::string(""));
                 ImGui::Text("%s %s   %s %s", T("Daemon:"), daemonState.c_str(),
                             T("ID:"), ident.c_str());
+                // When DOWN, surface the actual transport error so the
+                // operator can distinguish "socket path not exported"
+                // from "connect refused" from "no such file". Without
+                // this they only see the generic "Daemon: ?" header.
+                if (!recentOk && !rnsLastFailErr.empty()) {
+                    ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.6f, 1.0f),
+                                       "%s", rnsLastFailErr.c_str());
+                }
                 if (!rnsBanner.empty()) {
                     ImGui::TextWrapped("%s", rnsBanner.c_str());
                 }
