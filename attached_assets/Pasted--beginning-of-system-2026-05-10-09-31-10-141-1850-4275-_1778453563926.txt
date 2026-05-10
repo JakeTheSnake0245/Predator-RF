@@ -1,0 +1,1082 @@
+--------- beginning of system
+2026-05-10 09:31:10.141  1850-4275  WindowManager           pid-1850                             E  win=Window{66816dd u0 org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:204 com.android.server.wm.ActivityClientController.activityStopped:95 android.app.IActivityClientController$Stub.onTransact:722 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1541 android.os.Binder.execTransact:1480 
+---------------------------- PROCESS STARTED (9984) for package org.sdrpp.sdrpp ----------------------------
+2026-05-10 09:31:13.534  1850-4042  WindowManager           system_server                        E  win=Window{66816dd u0 org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:204 com.android.server.wm.ActivityClientController.activityStopped:95 android.app.IActivityClientController$Stub.onTransact:722 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1541 android.os.Binder.execTransact:1480 
+2026-05-10 09:31:14.435 11068-11068 ActivityThread          pid-11068                            E  Activity org.sdrpp.sdrpp.MainActivity has leaked IntentReceiver org.sdrpp.sdrpp.MainActivityKt$usbReceiver$1@dff76c5 that was originally registered here. Are you missing a call to unregisterReceiver()? (Ask Gemini)
+                                                                                                    android.app.IntentReceiverLeaked: Activity org.sdrpp.sdrpp.MainActivity has leaked IntentReceiver org.sdrpp.sdrpp.MainActivityKt$usbReceiver$1@dff76c5 that was originally registered here. Are you missing a call to unregisterReceiver()?
+                                                                                                    	at android.app.LoadedApk$ReceiverDispatcher.<init>(LoadedApk.java:1957)
+                                                                                                    	at android.app.LoadedApk.getReceiverDispatcher(LoadedApk.java:1667)
+                                                                                                    	at android.app.ContextImpl.registerReceiverInternal(ContextImpl.java:1934)
+                                                                                                    	at android.app.ContextImpl.registerReceiver(ContextImpl.java:1893)
+                                                                                                    	at android.app.ContextImpl.registerReceiver(ContextImpl.java:1880)
+                                                                                                    	at android.content.ContextWrapper.registerReceiver(ContextWrapper.java:780)
+                                                                                                    	at org.sdrpp.sdrpp.MainActivity.onCreate(MainActivity.kt:296)
+                                                                                                    	at android.app.Activity.performCreate(Activity.java:9363)
+                                                                                                    	at android.app.Activity.performCreate(Activity.java:9332)
+                                                                                                    	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1526)
+                                                                                                    	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4436)
+                                                                                                    	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4685)
+                                                                                                    	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:112)
+                                                                                                    	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:174)
+                                                                                                    	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:109)
+                                                                                                    	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:81)
+                                                                                                    	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2895)
+                                                                                                    	at android.os.Handler.dispatchMessage(Handler.java:107)
+                                                                                                    	at android.os.Looper.loopOnce(Looper.java:257)
+                                                                                                    	at android.os.Looper.loop(Looper.java:342)
+                                                                                                    	at android.app.ActivityThread.main(ActivityThread.java:9634)
+                                                                                                    	at java.lang.reflect.Method.invoke(Native Method)
+                                                                                                    	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:619)
+                                                                                                    	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:929)
+2026-05-10 09:31:32.077  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 09:32:44.141  1850-15990 ActivityManager         system_server                        E  ANR in org.sdrpp.sdrpp (org.sdrpp.sdrpp/.MainActivity)
+                                                                                                    PID: 15395
+                                                                                                    Reason: Input dispatching timed out (5f36b34 org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity (server) is not responding. Waited 10011ms for MotionEvent).
+                                                                                                    Parent: org.sdrpp.sdrpp/.MainActivity
+                                                                                                    ErrorId: f05ccb55-4881-49f1-8181-8bdcec2d9c89
+                                                                                                    Frozen: s[false] g[false]
+                                                                                                    Load: 4.67 / 5.62 / 5.49
+                                                                                                    ------ Current CPU Core Info ------
+                                                                                                    - offline : 
+                                                                                                    - online : 0-7
+                                                                                                    - AP Temp = 366
+                                                                                                                                 0           1           2           3           4           5           6           7
+                                                                                                    ------------------------------------------------------------------------------------------------------------------
+                                                                                                    scaling_cur_freq       1804800     1804800     1804800     1804800     2112000     2112000     2112000      844800
+                                                                                                    scaling_governor     schedutil   schedutil   schedutil   schedutil   schedutil   schedutil   schedutil   schedutil
+                                                                                                    scaling_max_freq       1804800     1804800     1804800     1804800     2035200     2035200     2035200     2035200
+                                                                                                    ------------------------------------------------------------------------------------------------------------------
+                                                                                                    ----- Output from /proc/pressure/memory -----
+                                                                                                    some avg10=0.00 avg60=0.09 avg300=0.05 total=13739667
+                                                                                                    full avg10=0.00 avg60=0.02 avg300=0.00 total=6161806
+                                                                                                    ----- End output from /proc/pressure/memory -----
+                                                                                                    ----- Output from /proc/pressure/cpu -----
+                                                                                                    some avg10=4.78 avg60=7.97 avg300=7.70 total=432611902
+                                                                                                    ----- End output from /proc/pressure/cpu -----
+                                                                                                    ----- Output from /proc/pressure/io -----
+                                                                                                    some avg10=0.00 avg60=0.07 avg300=0.03 total=37256187
+                                                                                                    full avg10=0.00 avg60=0.04 avg300=0.01 total=14550906
+                                                                                                    ----- End output from /proc/pressure/io -----
+                                                                                                    
+                                                                                                    CPU usage from 32832ms to -1ms ago (2026-05-10 16:32:08.426 to 2026-05-10 16:32:41.259):
+                                                                                                      26% 15395/org.sdrpp.sdrpp: 18% user + 7.1% kernel / faults: 105864 minor 25 major
+                                                                                                      19% 1850/system_server: 11% user + 8% kernel / faults: 6475 minor 18 major
+                                                                                                      15% 1693/surfaceflinger: 10% user + 4.5% kernel / faults: 20 minor
+                                                                                                      5.5% 10934/adbd: 1.7% user + 3.7% kernel / faults: 1159 minor
+                                                                                                      4.4% 1512/vendor.qti.hardware.display.composer-service: 2.1% user + 2.3% kernel / faults: 2 minor
+                                                                                                      3.2% 396/kworker/u16:8-five_hook_wq: 0% user + 3.2% kernel / faults: 3 minor
+                                                                                                      2.7% 10817/kworker/u16:2-memlat_wq: 0% user + 2.7% kernel
+                                                                                                      2.7% 13408/kworker/u16:4-adb: 0% user + 2.7% kernel / faults: 4 minor
+                                                                                                      2.4% 728/logd: 0.7% user + 1.6% kernel / faults: 93 minor
+                                                                                                      2.1% 12059/logcat: 0.3% user + 1.7% kernel
+                                                                                                    14% TOTAL: 6.8% user + 6.3% kernel + 0% iowait + 0.7% irq + 0.1% softirq
+                                                                                                    CPU usage from 1492ms to 1877ms later (2026-05-10 16:32:42.750 to 2026-05-10 16:32:43.135):
+                                                                                                      150% 1850/system_server: 80% user + 70% kernel / faults: 2534 minor 38 major
+                                                                                                        86% 1860/Signal Catcher: 61% user + 24% kernel
+                                                                                                        36% 15991/AnrAuxiliaryTas: 9.2% user + 27% kernel
+                                                                                                        3% 2854/AccountManagerS: 3% user + 0% kernel
+                                                                                                        3% 2926/SyncManager: 0% user + 3% kernel
+                                                                                                        3% 2967/binder:1850_3: 0% user + 3% kernel
+                                                                                                        3% 3086/EthernetService: 0% user + 3% kernel
+                                                                                                        3% 4649/binder:1850_13: 3% user + 0% kernel
+                                                                                                        3% 15990/AnrConsumer: 0% user + 3% kernel
+                                                                                                      5.3% 58/rcuop/7: 0% user + 5.3% kernel
+                                                                                                      2.6% 143/system: 0% user + 2.6% kernel
+                                                                                                      2.8% 703/dhd_rpm_state_t: 0% user + 2.8% kernel
+                                                                                                      3.7% 8698/kworker/u16:5-memlat_wq: 0% user + 3.7% kernel
+                                                                                                      3.8% 10817/kworker/u16:2-memlat_wq: 0% user + 3.8% kernel
+                                                                                                      4% 14003/kworker/2:1-events: 0% user + 4% kernel
+                                                                                                    24% TOTAL: 11% user + 13% kernel + 0.3% irq
+2026-05-10 09:58:12.016  1850-2784  WindowManager           system_server                        E  win=Window{5f36b34 u0 org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:204 com.android.server.wm.ActivityClientController.activityStopped:95 android.app.IActivityClientController$Stub.onTransact:722 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1541 android.os.Binder.execTransact:1480 
+2026-05-10 09:58:12.847 15395-15395 ActivityThread          pid-15395                            E  Activity org.sdrpp.sdrpp.MainActivity has leaked IntentReceiver org.sdrpp.sdrpp.MainActivityKt$usbReceiver$1@dff76c5 that was originally registered here. Are you missing a call to unregisterReceiver()? (Ask Gemini)
+                                                                                                    android.app.IntentReceiverLeaked: Activity org.sdrpp.sdrpp.MainActivity has leaked IntentReceiver org.sdrpp.sdrpp.MainActivityKt$usbReceiver$1@dff76c5 that was originally registered here. Are you missing a call to unregisterReceiver()?
+                                                                                                    	at android.app.LoadedApk$ReceiverDispatcher.<init>(LoadedApk.java:1957)
+                                                                                                    	at android.app.LoadedApk.getReceiverDispatcher(LoadedApk.java:1667)
+                                                                                                    	at android.app.ContextImpl.registerReceiverInternal(ContextImpl.java:1934)
+                                                                                                    	at android.app.ContextImpl.registerReceiver(ContextImpl.java:1893)
+                                                                                                    	at android.app.ContextImpl.registerReceiver(ContextImpl.java:1880)
+                                                                                                    	at android.content.ContextWrapper.registerReceiver(ContextWrapper.java:780)
+                                                                                                    	at org.sdrpp.sdrpp.MainActivity.onCreate(MainActivity.kt:296)
+                                                                                                    	at android.app.Activity.performCreate(Activity.java:9363)
+                                                                                                    	at android.app.Activity.performCreate(Activity.java:9332)
+                                                                                                    	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1526)
+                                                                                                    	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4436)
+                                                                                                    	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4685)
+                                                                                                    	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:112)
+                                                                                                    	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:174)
+                                                                                                    	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:109)
+                                                                                                    	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:81)
+                                                                                                    	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2895)
+                                                                                                    	at android.os.Handler.dispatchMessage(Handler.java:107)
+                                                                                                    	at android.os.Looper.loopOnce(Looper.java:257)
+                                                                                                    	at android.os.Looper.loop(Looper.java:342)
+                                                                                                    	at android.app.ActivityThread.main(ActivityThread.java:9634)
+                                                                                                    	at java.lang.reflect.Method.invoke(Native Method)
+                                                                                                    	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:619)
+                                                                                                    	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:929)
+2026-05-10 09:58:57.373  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:24:40.402  1850-8684  WindowManager           system_server                        E  win=Window{dec01fd u0 org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:204 com.android.server.wm.ActivityClientController.activityStopped:95 android.app.IActivityClientController$Stub.onTransact:722 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1541 android.os.Binder.execTransact:1480 
+--------- beginning of crash
+2026-05-10 11:25:16.781 21198-4910  libc                    pid-21198                            A  Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 4910 (org.sdrpp.sdrpp), pid 21198 (org.sdrpp.sdrpp)
+2026-05-10 11:25:17.453  4947-4947  DEBUG                   pid-4947                             A  Cmdline: org.sdrpp.sdrpp
+2026-05-10 11:25:17.453  4947-4947  DEBUG                   pid-4947                             A  pid: 21198, tid: 4910, name: org.sdrpp.sdrpp  >>> org.sdrpp.sdrpp <<<
+2026-05-10 11:25:17.454  4947-4947  DEBUG                   pid-4947                             A        #02 pc 000000000041b908  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (ImGui_ImplOpenGL3_Init(char const*)+380) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:25:17.454  4947-4947  DEBUG                   pid-4947                             A        #03 pc 000000000048995c  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (backend::init(std::__ndk1::basic_string<char, std::__ndk1::char_traits<char>, std::__ndk1::allocator<char>>)+588) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:25:17.454  4947-4947  DEBUG                   pid-4947                             A        #04 pc 0000000000489624  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (backend::doPartialInit()+108) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:25:17.454  4947-4947  DEBUG                   pid-4947                             A        #05 pc 000000000048b890  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (android_main+88) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:25:17.454  4947-4947  DEBUG                   pid-4947                             A        #06 pc 000000000048df78  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:25:22.482  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:25:22.681  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:29:05.776  5087-5885  libc                    pid-5087                             A  Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 5885 (org.sdrpp.sdrpp), pid 5087 (org.sdrpp.sdrpp)
+2026-05-10 11:29:06.090  5906-5906  DEBUG                   pid-5906                             A  Cmdline: org.sdrpp.sdrpp
+2026-05-10 11:29:06.090  5906-5906  DEBUG                   pid-5906                             A  pid: 5087, tid: 5885, name: org.sdrpp.sdrpp  >>> org.sdrpp.sdrpp <<<
+2026-05-10 11:29:06.090  5906-5906  DEBUG                   pid-5906                             A        #02 pc 000000000041b908  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (ImGui_ImplOpenGL3_Init(char const*)+380) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:29:06.090  5906-5906  DEBUG                   pid-5906                             A        #03 pc 000000000048995c  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (backend::init(std::__ndk1::basic_string<char, std::__ndk1::char_traits<char>, std::__ndk1::allocator<char>>)+588) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:29:06.090  5906-5906  DEBUG                   pid-5906                             A        #04 pc 0000000000489624  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (backend::doPartialInit()+108) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:29:06.090  5906-5906  DEBUG                   pid-5906                             A        #05 pc 000000000048b890  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (android_main+88) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:29:06.090  5906-5906  DEBUG                   pid-5906                             A        #06 pc 000000000048df78  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+--------- beginning of main
+2026-05-10 11:29:07.190  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:29:07.280  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request FCD491A8(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:29:07.284  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request FCD491A8(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:29:07.336  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove FCD491A8 from org.sdrpp.sdrpp
+2026-05-10 11:29:07.341  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request FCD491A8(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:29:07.366  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove FCD491A8 from org.sdrpp.sdrpp
+2026-05-10 11:29:07.371  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request FCD491A8(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:29:07.400  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:29:07.630  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove FCD491A8 from org.sdrpp.sdrpp
+2026-05-10 11:29:07.632  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove FCD491A8 from org.sdrpp.sdrpp
+2026-05-10 11:29:07.710  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request FCD491A8(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:29:07.712  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request FCD491A8(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:32:18.006  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Paused by APP_OPS FCD491A8(Listener) gps interval=1000 from org.sdrpp.sdrpp (10356_FINE_fg_svc_false)
+2026-05-10 11:32:18.006  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Paused by APP_OPS FCD491A8(Listener) network interval=2000 from org.sdrpp.sdrpp (10356_FINE_fg_svc_false)
+2026-05-10 11:32:19.956  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove FCD491A8 from org.sdrpp.sdrpp
+2026-05-10 11:32:19.956  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove FCD491A8 from org.sdrpp.sdrpp
+2026-05-10 11:32:20.497  1850-6411  ActivityManager         system_server                        E  ANR in org.sdrpp.sdrpp (org.sdrpp.sdrpp/.MainActivity)
+                                                                                                    PID: 5960
+                                                                                                    Reason: Input dispatching timed out (3258cc org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity (server) is not responding. Waited 10000ms for MotionEvent).
+                                                                                                    Parent: org.sdrpp.sdrpp/.MainActivity
+                                                                                                    ErrorId: be3590ec-8e30-4d5b-8500-3fe83b2a77ef
+                                                                                                    Frozen: s[false] g[false]
+                                                                                                    Load: 7.21 / 6.71 / 6.32
+                                                                                                    ------ Current CPU Core Info ------
+                                                                                                    - offline : 
+                                                                                                    - online : 0-7
+                                                                                                    - AP Temp = 504
+                                                                                                                                 0           1           2           3           4           5           6           7
+                                                                                                    ------------------------------------------------------------------------------------------------------------------
+                                                                                                    scaling_cur_freq       1209600     1209600     1209600     1209600     1996800     1996800     1996800     1900800
+                                                                                                    scaling_governor     schedutil   schedutil   schedutil   schedutil   schedutil   schedutil   schedutil   schedutil
+                                                                                                    scaling_max_freq       1804800     1804800     1804800     1804800     1996800     1996800     1996800     1900800
+                                                                                                    ------------------------------------------------------------------------------------------------------------------
+                                                                                                    ----- Output from /proc/pressure/memory -----
+                                                                                                    some avg10=0.18 avg60=0.03 avg300=0.00 total=14567858
+                                                                                                    full avg10=0.00 avg60=0.00 avg300=0.00 total=6590440
+                                                                                                    ----- End output from /proc/pressure/memory -----
+                                                                                                    ----- Output from /proc/pressure/cpu -----
+                                                                                                    some avg10=3.15 avg60=3.96 avg300=5.26 total=967208640
+                                                                                                    ----- End output from /proc/pressure/cpu -----
+                                                                                                    ----- Output from /proc/pressure/io -----
+                                                                                                    some avg10=0.00 avg60=0.00 avg300=0.00 total=39243038
+                                                                                                    full avg10=0.00 avg60=0.00 avg300=0.00 total=15838281
+                                                                                                    ----- End output from /proc/pressure/io -----
+                                                                                                    
+                                                                                                    CPU usage from 7049ms to -1ms ago (2026-05-10 18:32:10.272 to 2026-05-10 18:32:17.321):
+                                                                                                      223% 5960/org.sdrpp.sdrpp: 217% user + 6% kernel / faults: 1587 minor 1 major
+                                                                                                      10% 1850/system_server: 5.2% user + 4.7% kernel / faults: 1398 minor 2 major
+                                                                                                      3.5% 16918/kworker/u16:0-devfreq_wq: 0% user + 3.5% kernel
+                                                                                                      3.1% 3938/kworker/u16:6-events_unbound: 0% user + 3.1% kernel
+                                                                                                      1.7% 1693/surfaceflinger: 1.2% user + 0.4% kernel / faults: 6 minor
+                                                                                                      1.7% 26604/kworker/u16:5-kgsl_devfreq_wq: 0% user + 1.7% kernel
+                                                                                                      1.4% 1463/android.hardware.audio.service: 0.5% user + 0.8% kernel
+                                                                                                      1.4% 1661/audioserver: 0.8% user + 0.5% kernel
+                                                                                                      1.1% 703/dhd_rpm_state_t: 0% user + 1.1% kernel
+                                                                                                      1.1% 800/android.system.suspend-service: 0% user + 1.1% kernel / faults: 42 minor 1 major
+                                                                                                    31% TOTAL: 28% user + 2.4% kernel + 0.5% irq + 0% softirq
+                                                                                                    CPU usage from 1809ms to 2292ms later (2026-05-10 18:32:19.130 to 2026-05-10 18:32:19.613):
+                                                                                                      108% 1850/system_server: 41% user + 66% kernel / faults: 2426 minor 8 major
+                                                                                                        52% 1860/Signal Catcher: 30% user + 22% kernel
+                                                                                                        41% 6412/AnrAuxiliaryTas: 5.5% user + 36% kernel
+                                                                                                        2.7% 2024/android.display: 2.7% user + 0% kernel
+                                                                                                        2.7% 2979/binder:1850_5: 2.7% user + 0% kernel
+                                                                                                        2.7% 4307/InteractionJank: 2.7% user + 0% kernel
+                                                                                                        2.7% 6411/AnrConsumer: 0% user + 2.7% kernel
+                                                                                                      117% 5960/org.sdrpp.sdrpp: 113% user + 3.5% kernel
+                                                                                                        99% 6342/Thread-40779: 99% user + 0% kernel
+                                                                                                        14% 6245/Thread-18003: 7.1% user + 7.1% kernel
+                                                                                                        3.5% 6123/Thread-7: 3.5% user + 0% kernel
+                                                                                                      35% 6061/com.google.android.providers.media.module: 21% user + 14% kernel / faults: 835 minor 40 major
+                                                                                                        35% 6070/Signal Catcher: 21% user + 14% kernel
+                                                                                                      11% 1693/surfaceflinger: 8.3% user + 2.7% kernel
+                                                                                                        5.5% 1693/surfaceflinger: 5.5% user + 0% kernel
+                                                                                                        2.7% 1739/RenderEngine: 2.7% user + 0% kernel
+                                                                                                      4.7% 423/crtc_commit:142: 0% user + 4.7% kernel
+                                                                                                      6.4% 3830/com.sec.android.app.launcher: 6.4% user + 0% kernel / faults: 17 minor
+                                                                                                        6.4% 6813/RenderThread: 6.4% user + 0% kernel
+                                                                                                        3.2% 3830/id.app.launcher: 3.2% user + 0% kernel
+                                                                                                        3.2% 30720/binder:3830_7: 0% user + 3.2% kernel
+                                                                                                      2% 11/rcu_preempt: 0% user + 2% kernel
+                                                                                                      2% 40/rcuop/4: 0% user + 2% kernel
+                                                                                                      2% 52/rcuop/6: 0% user + 2% kernel
+                                                                                                      2.1% 167/kzerod: 0% user + 2.1% kernel
+                                                                                                      2.3% 424/crtc_event:142: 0% user + 2.3% kernel
+2026-05-10 11:32:20.577  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 1.000 -> 0.000 - Surface(name=6a16535 Application Not Responding: org.sdrpp.sdrpp)/@0x6ce992a - animation-leash of window_animation#2212
+2026-05-10 11:32:20.577  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 0.000 -> 0.000 - Surface(name=6a16535 Application Not Responding: org.sdrpp.sdrpp)/@0x6ce992a - animation-leash of window_animation#2212
+2026-05-10 11:32:20.596  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 0.000 -> 0.223 - Surface(name=6a16535 Application Not Responding: org.sdrpp.sdrpp)/@0x6ce992a - animation-leash of window_animation#2212
+2026-05-10 11:32:27.169  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 0.070 -> 0.000 - Surface(name=6a16535 Application Not Responding: org.sdrpp.sdrpp)/@0x6ce992a - animation-leash of window_animation#2227
+2026-05-10 11:32:28.290  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:32:28.293  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:33:08.335  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request F7FC14B1(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:33:08.338  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request F7FC14B1(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:33:08.382  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove F7FC14B1 from org.sdrpp.sdrpp
+2026-05-10 11:33:08.388  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request F7FC14B1(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:33:08.406  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove F7FC14B1 from org.sdrpp.sdrpp
+2026-05-10 11:33:08.412  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request F7FC14B1(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:33:08.442  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove F7FC14B1 from org.sdrpp.sdrpp
+2026-05-10 11:33:08.442  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove F7FC14B1 from org.sdrpp.sdrpp
+2026-05-10 11:33:08.542  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request F7FC14B1(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:33:08.543  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request F7FC14B1(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:41.857  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove F7FC14B1 from org.sdrpp.sdrpp
+2026-05-10 11:50:41.877  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove F7FC14B1 from org.sdrpp.sdrpp
+2026-05-10 11:50:41.916  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request ABE1A3D6(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:41.918  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request ABE1A3D6(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:41.954  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove ABE1A3D6 from org.sdrpp.sdrpp
+2026-05-10 11:50:41.960  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request ABE1A3D6(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:42.005  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove ABE1A3D6 from org.sdrpp.sdrpp
+2026-05-10 11:50:42.010  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request ABE1A3D6(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:42.010  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove ABE1A3D6 from org.sdrpp.sdrpp
+2026-05-10 11:50:42.010  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove ABE1A3D6 from org.sdrpp.sdrpp
+2026-05-10 11:50:42.056  6939-9836  libc                    pid-6939                             A  Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 9836 (org.sdrpp.sdrpp), pid 6939 (org.sdrpp.sdrpp)
+2026-05-10 11:50:42.215  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 1.000 -> 0.000 - ActivityRecord{3ca2db5 u0 org.sdrpp.sdrpp/.MainActivity t1308}#2307
+2026-05-10 11:50:42.215  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 1.000 -> 0.000 - DimTransitionLayer for Surface(name=ActivityRecord{3ca2db5 u0 org.sdrpp.sdrpp/.MainActivity t1308})/@0x94328e0#2320
+2026-05-10 11:50:42.215  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 0.000 -> 1.000 - ActivityRecord{3ca2db5 u0 org.sdrpp.sdrpp/.MainActivity t1308}#2307
+2026-05-10 11:50:42.215  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 0.000 -> 0.000 - DimTransitionLayer for Surface(name=ActivityRecord{3ca2db5 u0 org.sdrpp.sdrpp/.MainActivity t1308})/@0x94328e0#2320
+2026-05-10 11:50:42.231  1693-1693  SurfaceFlinger          surfaceflinger                       E  alpha changed 0.000 -> 0.018 - DimTransitionLayer for Surface(name=ActivityRecord{3ca2db5 u0 org.sdrpp.sdrpp/.MainActivity t1308})/@0x94328e0#2320
+2026-05-10 11:50:42.236  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request ABE1A3D6(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:42.276  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request ABE1A3D6(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:42.333  9875-9875  DEBUG                   pid-9875                             A  Cmdline: org.sdrpp.sdrpp
+2026-05-10 11:50:42.333  9875-9875  DEBUG                   pid-9875                             A  pid: 6939, tid: 9836, name: org.sdrpp.sdrpp  >>> org.sdrpp.sdrpp <<<
+2026-05-10 11:50:42.333  9875-9875  DEBUG                   pid-9875                             A        #02 pc 000000000041b908  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (ImGui_ImplOpenGL3_Init(char const*)+380) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:50:42.333  9875-9875  DEBUG                   pid-9875                             A        #03 pc 000000000048995c  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (backend::init(std::__ndk1::basic_string<char, std::__ndk1::char_traits<char>, std::__ndk1::allocator<char>>)+588) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:50:42.333  9875-9875  DEBUG                   pid-9875                             A        #04 pc 0000000000489624  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (backend::doPartialInit()+108) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:50:42.333  9875-9875  DEBUG                   pid-9875                             A        #05 pc 000000000048b890  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (android_main+88) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:50:42.333  9875-9875  DEBUG                   pid-9875                             A        #06 pc 000000000048df78  /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!libsdrpp_core.so (offset 0x92e8000) (BuildId: e27779fe57af0f1b0ed6acf23cf99892ec5ac8a3)
+2026-05-10 11:50:42.442  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove ABE1A3D6 from org.sdrpp.sdrpp
+2026-05-10 11:50:42.456  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove ABE1A3D6 from org.sdrpp.sdrpp
+2026-05-10 11:50:43.459  9984-9984  org.sdrpp.sdrpp         org.sdrpp.sdrpp                      I  Late-enabling -Xcheck:jni
+2026-05-10 11:50:43.478  9984-9984  org.sdrpp.sdrpp         org.sdrpp.sdrpp                      I  Using CollectorTypeCC GC.
+2026-05-10 11:50:43.490  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+2026-05-10 11:50:43.493  9984-9984  ActivityThread          org.sdrpp.sdrpp                      D  setConscryptValidator
+2026-05-10 11:50:43.493  9984-9984  ActivityThread          org.sdrpp.sdrpp                      D  setConscryptValidator - put
+2026-05-10 11:50:43.557  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Configuring clns-7 for other apk /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk. target_sdk_version=33, uses_libraries=, library_path=/data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/lib/arm64:/data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/org.sdrpp.sdrpp
+2026-05-10 11:50:43.573  9984-9984  GraphicsEnvironment     org.sdrpp.sdrpp                      V  Currently set values for:
+2026-05-10 11:50:43.573  9984-9984  GraphicsEnvironment     org.sdrpp.sdrpp                      V    angle_gl_driver_selection_pkgs=[]
+2026-05-10 11:50:43.573  9984-9984  GraphicsEnvironment     org.sdrpp.sdrpp                      V    angle_gl_driver_selection_values=[]
+2026-05-10 11:50:43.573  9984-9984  GraphicsEnvironment     org.sdrpp.sdrpp                      V  Global.Settings values are invalid: number of packages: 0, number of values: 0
+2026-05-10 11:50:43.574  9984-9984  GraphicsEnvironment     org.sdrpp.sdrpp                      V  App is not on the allowlist for updatable production driver.
+2026-05-10 11:50:43.625  9984-9984  ActivityThread          org.sdrpp.sdrpp                      D  org.sdrpp.sdrpp will use render engine as VK
+2026-05-10 11:50:43.626  9984-9984  HWUI                    org.sdrpp.sdrpp                      D  HWUI - treat SMPTE_170M as sRGB
+2026-05-10 11:50:43.630  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:50:43.639  9984-10007 HWUI                    org.sdrpp.sdrpp                      D  CacheManager constructor. deviceInfo=(1080, 1920)
+2026-05-10 11:50:43.640  9984-10007 AdrenoGLES-0            org.sdrpp.sdrpp                      I  QUALCOMM build                   : 9ad1b67875, Ib48d2dada6
+                                                                                                    Build Date                       : 05/11/25
+                                                                                                    OpenGL ES Shader Compiler Version: EV031.35.01.12
+                                                                                                    Local Branch                     : 
+                                                                                                    Remote Branch                    : refs/tags/AU_LINUX_ANDROID_LA.UM.9.14.11.00.00.571.148
+                                                                                                    Remote Branch                    : NONE
+                                                                                                    Reconstruct Branch               : NOTHING
+2026-05-10 11:50:43.640  9984-10007 AdrenoGLES-0            org.sdrpp.sdrpp                      I  Build Config                     : S P 10.0.7 AArch64
+2026-05-10 11:50:43.642  9984-10007 AdrenoGLES-0            org.sdrpp.sdrpp                      I  Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+2026-05-10 11:50:43.646  9984-10007 AdrenoGLES-0            org.sdrpp.sdrpp                      I  PFP: 0x016dc094, ME: 0x00000000
+2026-05-10 11:50:43.649  9984-9984  DecorView               org.sdrpp.sdrpp                      I  setWindowBackground: isPopOver=false color=ff010102 d=android.graphics.drawable.StateListDrawable@89a290e
+2026-05-10 11:50:43.700  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Load /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!/lib/arm64-v8a/libsdrpp_core.so using class loader ns clns-7 (caller=<unknown>): ok
+2026-05-10 11:50:43.700  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  Creating: 0xb400007cae899990
+2026-05-10 11:50:43.700  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  Config: mcc=310 mnc=240 lang=en cnt=US orien=2 touch=3 dens=480 keys=1 nav=1 keysHid=3 navHid=0 sdk=35 size=2 long=2 modetype=1 modenight=2
+2026-05-10 11:50:43.701  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans'
+2026-05-10 11:50:43.702  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/australia.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/australia.json'
+2026-05-10 11:50:43.703  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/austria.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/austria.json'
+2026-05-10 11:50:43.703  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/belgium.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/belgium.json'
+2026-05-10 11:50:43.704  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/canada.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/canada.json'
+2026-05-10 11:50:43.704  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/china.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/china.json'
+2026-05-10 11:50:43.705  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/france.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/france.json'
+2026-05-10 11:50:43.705  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/general.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/general.json'
+2026-05-10 11:50:43.706  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/germany-mobile-lte-bands.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/germany-mobile-lte-bands.json'
+2026-05-10 11:50:43.706  9984-9984  CompatChangeReporter    org.sdrpp.sdrpp                      D  Compat change id reported: 210923482; UID 10356; state: ENABLED
+2026-05-10 11:50:43.707  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/germany-mobile-networks.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/germany-mobile-networks.json'
+2026-05-10 11:50:43.707  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/germany.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/germany.json'
+2026-05-10 11:50:43.708  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/italy.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/italy.json'
+2026-05-10 11:50:43.708  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/netherlands.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/netherlands.json'
+2026-05-10 11:50:43.709  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/qo-100.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/qo-100.json'
+2026-05-10 11:50:43.709  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/russia.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/russia.json'
+2026-05-10 11:50:43.710  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/slovakia.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/slovakia.json'
+2026-05-10 11:50:43.711  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/united-kingdom.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/united-kingdom.json'
+2026-05-10 11:50:43.711  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/bandplans/usa.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/bandplans/usa.json'
+2026-05-10 11:50:43.712  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps'
+2026-05-10 11:50:43.712  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/classic.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/classic.json'
+2026-05-10 11:50:43.712  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/classic_green.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/classic_green.json'
+2026-05-10 11:50:43.713  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/electric.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/electric.json'
+2026-05-10 11:50:43.713  9984-9984  InputMethodManager      org.sdrpp.sdrpp                      I  invalidateInput
+2026-05-10 11:50:43.713  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/gqrx.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/gqrx.json'
+2026-05-10 11:50:43.714  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/greyscale.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/greyscale.json'
+2026-05-10 11:50:43.714  9984-9984  InputMethodManager      org.sdrpp.sdrpp                      I  invalidateInput
+2026-05-10 11:50:43.714  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/inferno.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/inferno.json'
+2026-05-10 11:50:43.715  9984-9984  InputMethodManager      org.sdrpp.sdrpp                      I  invalidateInput
+2026-05-10 11:50:43.715  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/magma.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/magma.json'
+2026-05-10 11:50:43.715  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/plasma.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/plasma.json'
+2026-05-10 11:50:43.716  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/smoke.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/smoke.json'
+2026-05-10 11:50:43.716  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/temper_colors.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/temper_colors.json'
+2026-05-10 11:50:43.717  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/turbo.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/turbo.json'
+2026-05-10 11:50:43.717  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/viridis.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/viridis.json'
+2026-05-10 11:50:43.718  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/vivid.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/vivid.json'
+2026-05-10 11:50:43.718  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/colormaps/websdr.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/colormaps/websdr.json'
+2026-05-10 11:50:43.719  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/fonts' to '/data/user/0/org.sdrpp.sdrpp/files/res/fonts'
+2026-05-10 11:50:43.719  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/fonts/Roboto-Medium.ttf' to '/data/user/0/org.sdrpp.sdrpp/files/res/fonts/Roboto-Medium.ttf'
+2026-05-10 11:50:43.720  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request D0F5B567(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:43.722  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons'
+2026-05-10 11:50:43.723  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/center_tuning.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/center_tuning.png'
+2026-05-10 11:50:43.723  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request D0F5B567(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:43.723  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  Start: 0xb400007cae899990
+2026-05-10 11:50:43.724  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/menu.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/menu.png'
+2026-05-10 11:50:43.724  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/muted.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/muted.png'
+2026-05-10 11:50:43.725  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/normal_tuning.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/normal_tuning.png'
+2026-05-10 11:50:43.725  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/play.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/play.png'
+2026-05-10 11:50:43.725  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/sdrpp.ico' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/sdrpp.ico'
+2026-05-10 11:50:43.726  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/sdrpp.macos.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/sdrpp.macos.png'
+2026-05-10 11:50:43.728  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/sdrpp.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/sdrpp.png'
+2026-05-10 11:50:43.731  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/stop.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/stop.png'
+2026-05-10 11:50:43.731  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/icons/unmuted.png' to '/data/user/0/org.sdrpp.sdrpp/files/res/icons/unmuted.png'
+2026-05-10 11:50:43.732  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/maps' to '/data/user/0/org.sdrpp.sdrpp/files/res/maps'
+2026-05-10 11:50:43.732  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/maps/index.html' to '/data/user/0/org.sdrpp.sdrpp/files/res/maps/index.html'
+2026-05-10 11:50:43.734  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/themes' to '/data/user/0/org.sdrpp.sdrpp/files/res/themes'
+2026-05-10 11:50:43.734  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/themes/army green.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/themes/army green.json'
+2026-05-10 11:50:43.735  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/themes/dark.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/themes/dark.json'
+2026-05-10 11:50:43.735  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/themes/deep blue.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/themes/deep blue.json'
+2026-05-10 11:50:43.736  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/themes/grey.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/themes/grey.json'
+2026-05-10 11:50:43.736  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/themes/light.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/themes/light.json'
+2026-05-10 11:50:43.737  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  Extracting 'res/themes/sdr predator.json' to '/data/user/0/org.sdrpp.sdrpp/files/res/themes/sdr predator.json'
+2026-05-10 11:50:43.738  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:43.000] [[32mINFO[0m] Predator RF v1.1.0
+2026-05-10 11:50:43.739  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:43.000] [[32mINFO[0m] Loading config
+2026-05-10 11:50:43.741  9984-10014 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] ConfigManager locked, waiting...
+2026-05-10 11:50:43.741  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:43.000] [[32mINFO[0m] Unused key in config kujhadTlsCertPath, repairing
+2026-05-10 11:50:43.741  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:43.000] [[32mINFO[0m] Unused key in config kujhadTlsEnabled, repairing
+2026-05-10 11:50:43.741  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Backend init
+2026-05-10 11:50:43.741  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.772  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  activityState=10
+2026-05-10 11:50:43.772  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.776  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove D0F5B567 from org.sdrpp.sdrpp
+2026-05-10 11:50:43.777  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  Resume: 0xb400007cae899990
+2026-05-10 11:50:43.782  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request D0F5B567(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:43.802  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  activityState=11
+2026-05-10 11:50:43.802  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.804  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove D0F5B567 from org.sdrpp.sdrpp
+2026-05-10 11:50:43.806  9984-9984  ViewRootImpl            org.sdrpp.sdrpp                      I  dVRR is disabled
+2026-05-10 11:50:43.807  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  setRequestedVisibleTypes: visible=false, mask=statusBars navigationBars captionBar, host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.InsetsController.controlAnimationUnchecked:1498 android.view.InsetsController.applyAnimation:2228 android.view.InsetsController.applyAnimation:2159 android.view.InsetsController.hide:1452 android.view.InsetsController.hide:1368 android.view.ViewRootImpl.controlInsetsForCompatibility:3953 android.view.ViewRootImpl.setView:1955 android.view.WindowManagerGlobal.addView:578 android.view.WindowManagerImpl.addView:158 android.app.ActivityThread.handleResumeActivity:6060 
+2026-05-10 11:50:43.811  9984-9984  InputTransport          org.sdrpp.sdrpp                      D  Input channel constructed: '362b8f3', fd=130
+2026-05-10 11:50:43.811  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request D0F5B567(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:43.811  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  onStateChanged: host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.ViewRootImpl.setView:1999, state=InsetsState: {mDisplayFrame=Rect(0, 0 - 2400, 1080), mDisplayCutout=DisplayCutout{insets=Rect(80, 0 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 510 - 80, 570), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=1080 displayHeight=2400 physicalDisplayWidth=1080 physicalDisplayHeight=2400 density={3.0} cutoutSpec={M 0,0 H -10 V 26.66666666666667 H 10 V 0 H 0 Z @dp} rotation={1} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}} sideOverrides={}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=108, center=Point(108, 108)}, RoundedCorner{position=TopRight, radius=108, center=Point(2292, 108)}, RoundedCorner{position=BottomRight, radius=108, center=Point(2292, 972)}, RoundedCorner{position=BottomLeft, radius=108, center=Point(108, 972)}]}  mRoundedCornerFrame=Rect(0, 0 - 2400, 1080), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(2268, 0 - 2400, 72) rotation=1}, mDisplayShape=DisplayShape{ spec=-311912193 displayWidth=1080 displayHeight=2400 physicalPixelDisplaySizeRatio=1.0 rotation=1 offsetX=0 offsetY=0 scale=1.0}, mSources= { InsetsSource: {b9aa0001 mType=navigationBars mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0004 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {b9aa0005 mType=mandatorySystemGestures mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0006 mType=tappableElement mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0024 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {7 mType=displayCutout mFrame=[0,0][80,1080] mVisible=true mFlags= mSideHint=LEFT mBoundingRects=null}, InsetsSource: {2a410000 mType=statusBars mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410005 mType=mandatorySystemGestures mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410006 mType=tappableElement mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null} }
+2026-05-10 11:50:43.812  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  synced displayState. AttachInfo displayState=2
+2026-05-10 11:50:43.812  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  InputQueueCreated: 0xb400007cae899990 -- 0xb400007cde8b5480
+2026-05-10 11:50:43.832  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  APP_CMD_INPUT_CHANGED
+2026-05-10 11:50:43.832  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  Attaching input queue to looper
+2026-05-10 11:50:43.832  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.832  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  setView = com.android.internal.policy.DecorView@b60ddf2 IsHRR=false TM=true
+2026-05-10 11:50:43.832  9984-9984  IDS_TAG                 org.sdrpp.sdrpp                      I  Starting IDS observe window
+2026-05-10 11:50:43.833  9984-9984  IDS_TAG                 org.sdrpp.sdrpp                      I  Getting Shared Preference for android.app.Application@b86706a uid = 10356
+2026-05-10 11:50:43.835  9984-9984  IDS_TAG                 org.sdrpp.sdrpp                      I  App android.app.Application@b86706a has not finished training
+2026-05-10 11:50:43.838  1850-2223  NotificationService     system_server                        E  Suppressing notification from package org.sdrpp.sdrpp by user request.
+2026-05-10 11:50:43.860  9984-9984  PredatorBackend         org.sdrpp.sdrpp                      I  Bridged C++ → backend env: COT_ENABLED=false host=(unset/default) port=(unset/default)
+2026-05-10 11:50:43.862  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.864  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Load /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!/lib/arm64-v8a/libcrypto_chaquopy.so using class loader ns clns-7 (caller=/data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk): ok
+2026-05-10 11:50:43.865  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Load /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!/lib/arm64-v8a/libssl_chaquopy.so using class loader ns clns-7 (caller=/data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk): ok
+2026-05-10 11:50:43.865  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Load /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!/lib/arm64-v8a/libsqlite3_chaquopy.so using class loader ns clns-7 (caller=/data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk): ok
+2026-05-10 11:50:43.866  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Load /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!/lib/arm64-v8a/libpython3.10.so using class loader ns clns-7 (caller=/data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk): ok
+2026-05-10 11:50:43.867  9984-9984  nativeloader            org.sdrpp.sdrpp                      D  Load /data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk!/lib/arm64-v8a/libchaquopy_java.so using class loader ns clns-7 (caller=/data/app/~~rV82Z5VfDUFCswHmbKU_nQ==/org.sdrpp.sdrpp-IJn2fZqM7C1KhaE3bDaXiA==/base.apk): ok
+2026-05-10 11:50:43.892  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.923  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.953  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:43.969  9984-9991  org.sdrpp.sdrpp         org.sdrpp.sdrpp                      I  Compiler allocated 4198KB to compile void android.widget.TextView.<init>(android.content.Context, android.util.AttributeSet, int, int)
+2026-05-10 11:50:43.983  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:43.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:44.013  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:44.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:44.044  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:44.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:44.074  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:44.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:44.077  9984-9984  asset                   org.sdrpp.sdrpp                      W  seek out of range: want -20, end=22
+2026-05-10 11:50:44.095  9984-10021 PredatorBackend         org.sdrpp.sdrpp                      I  Starting Python backend at /data/user/0/org.sdrpp.sdrpp/files
+2026-05-10 11:50:44.096  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove D0F5B567 from org.sdrpp.sdrpp
+2026-05-10 11:50:44.096  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  Pause: 0xb400007cae899990
+2026-05-10 11:50:44.096  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location remove D0F5B567 from org.sdrpp.sdrpp
+2026-05-10 11:50:44.104  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  activityState=13
+2026-05-10 11:50:44.104  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:44.000] [[33mWARN[0m] Waiting on the shitty window thing
+2026-05-10 11:50:44.109  9984-9984  IDS_TAG                 org.sdrpp.sdrpp                      I  Closing IDS observe window
+2026-05-10 11:50:44.109  9984-9984  IDS_TAG                 org.sdrpp.sdrpp                      I  Getting Shared Preference for android.app.Application@b86706a uid = 10356
+2026-05-10 11:50:44.109  9984-9984  IDS_TAG                 org.sdrpp.sdrpp                      I  IDS count updated to 5 for android.app.Application@b86706a
+2026-05-10 11:50:44.127  9984-9984  org.sdrpp.sdrpp         org.sdrpp.sdrpp                      E  Unable to open libpenguin.so: dlopen failed: library "libpenguin.so" not found.
+2026-05-10 11:50:44.127  9984-9984  BufferQueueProducer     org.sdrpp.sdrpp                      I  [](id:270000000000,api:0,p:0,c:9984) setDequeueTimeout:2077252342
+2026-05-10 11:50:44.128  9984-9984  BLASTBufferQueue_Java   org.sdrpp.sdrpp                      I  new BLASTBufferQueue, mName= VRI[MainActivity]@e79aca7 mNativeObject= 0xb400007bfe8c61b0 sc.mNativeObject= 0xb400007ade898790 caller= android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:3397 android.view.ViewRootImpl.relayoutWindow:11361 android.view.ViewRootImpl.performTraversals:4544 android.view.ViewRootImpl.doTraversal:3708 android.view.ViewRootImpl$TraversalRunnable.run:12542 android.view.Choreographer$CallbackRecord.run:1751 android.view.Choreographer$CallbackRecord.run:1760 android.view.Choreographer.doCallbacks:1216 android.view.Choreographer.doFrame:1142 android.view.Choreographer$FrameDisplayEventReceiver.run:1707 
+2026-05-10 11:50:44.128  9984-9984  BLASTBufferQueue_Java   org.sdrpp.sdrpp                      I  update, w= 2400 h= 1080 mName = VRI[MainActivity]@e79aca7 mNativeObject= 0xb400007bfe8c61b0 sc.mNativeObject= 0xb400007ade898790 format= 4 caller= android.graphics.BLASTBufferQueue.<init>:88 android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:3397 android.view.ViewRootImpl.relayoutWindow:11361 android.view.ViewRootImpl.performTraversals:4544 android.view.ViewRootImpl.doTraversal:3708 android.view.ViewRootImpl$TraversalRunnable.run:12542 
+2026-05-10 11:50:44.129  9984-9984  libc                    org.sdrpp.sdrpp                      W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
+2026-05-10 11:50:44.129  9984-9984  libc                    org.sdrpp.sdrpp                      W  Access denied finding property "vendor.gpp.create_frc_extension"
+2026-05-10 11:50:44.129  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  Relayout returned: old=(0,0,2400,1080) new=(0,0,2400,1080) relayoutAsync=false req=(2400,1080)0 dur=12 res=0x3 s={true 0xb400007c0e8bcf80} ch=true seqId=0
+2026-05-10 11:50:44.130  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  performConfigurationChange setNightDimText nightDimLevel=0
+2026-05-10 11:50:44.130  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewRootImpl >> surfaceCreated
+2026-05-10 11:50:44.130  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  NativeWindowCreated: 0xb400007cae899990 -- 0xb400007c0e8bcf90
+2026-05-10 11:50:44.134  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  APP_CMD_INIT_WINDOW
+2026-05-10 11:50:44.135  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:44.000] [[33mWARN[0m] APP_CMD_INIT_WINDOW
+2026-05-10 11:50:44.135  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewRootImpl >> surfaceChanged W=2400, H=1080)
+2026-05-10 11:50:44.135  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  NativeWindowResized: 0xb400007cae899990 -- 0xb400007c0e8bcf90
+2026-05-10 11:50:44.138  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      D  applyTransactionOnDraw applyImmediately
+2026-05-10 11:50:44.138  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  ContentRectChanged: l=80,t=0,r=2256,b=1080
+2026-05-10 11:50:44.138  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      D  reportNextDraw android.view.ViewRootImpl.performTraversals:5193 android.view.ViewRootImpl.doTraversal:3708 android.view.ViewRootImpl$TraversalRunnable.run:12542 android.view.Choreographer$CallbackRecord.run:1751 android.view.Choreographer$CallbackRecord.run:1760 
+2026-05-10 11:50:44.139  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      D  applyTransactionOnDraw applyImmediately
+2026-05-10 11:50:44.139  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      D  Setup new sync=wmsSync-VRI[MainActivity]@e79aca7#0
+2026-05-10 11:50:44.139  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  Creating new active sync group VRI[MainActivity]@e79aca7#1
+2026-05-10 11:50:44.140  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  NativeWindowRedrawNeeded: 0xb400007cae899990 -- 0xb400007c0e8bcf90
+2026-05-10 11:50:44.140  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      D  reportDrawFinished seqId=0
+2026-05-10 11:50:44.141  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  onDisplayChanged oldDisplayState=2 newDisplayState=2
+2026-05-10 11:50:44.142  9984-9984  Predator RF             org.sdrpp.sdrpp                      I  NativeContentView located: NativeContentView size=2176x1080 focusable=false focusableInTouchMode=false
+2026-05-10 11:50:44.143  9984-9984  Predator RF             org.sdrpp.sdrpp                      I  imeCaptureView installed: requestFocus=true isAttached=true hasWindowFocus=false
+2026-05-10 11:50:44.188  9984-10010 BLASTBufferQueue        org.sdrpp.sdrpp                      I  [VRI[MainActivity]@e79aca7#0](f:0,a:0,s:0) onFrameAvailable the first frame is available
+2026-05-10 11:50:44.188  9984-10010 SurfaceComposerClient   org.sdrpp.sdrpp                      I  apply transaction with the first frame. layerId: 2354, bufferData(ID: 42880953483264, frameNumber: 1)
+2026-05-10 11:50:44.188  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading icons
+2026-05-10 11:50:44.219  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request D0F5B567(Listener) gps interval=1000ms (min=1000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:44.222  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  Resume: 0xb400007cae899990
+2026-05-10 11:50:44.222  4058-4125  RequestManager_FLP      com.sec.location.nsflp2              E  [LocationManager] Location request D0F5B567(Listener) network interval=2000ms (min=2000ms) from org.sdrpp.sdrpp (10356_FINE_fg_true_foreground)
+2026-05-10 11:50:44.276  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading band plans
+2026-05-10 11:50:44.319  9984-9991  org.sdrpp.sdrpp         org.sdrpp.sdrpp                      I  Compiler allocated 7408KB to compile void android.view.ViewRootImpl.performTraversals()
+2026-05-10 11:50:44.337  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading band plans color table
+2026-05-10 11:50:44.344  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading modules
+2026-05-10 11:50:44.405  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Airspy Source (airspy_source)
+2026-05-10 11:50:44.406  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing AirspyHF+ Source (airspyhf_source)
+2026-05-10 11:50:44.407  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Audio Sink (audio_sink)
+2026-05-10 11:50:44.407  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing File Source (file_source)
+2026-05-10 11:50:44.428  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Frequency Manager (frequency_manager)
+2026-05-10 11:50:44.444  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing HackRF Source (hackrf_source)
+2026-05-10 11:50:44.461  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Hermes Source (hermes_source)
+2026-05-10 11:50:44.473  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Network Sink (network_sink)
+2026-05-10 11:50:44.488  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing PlutoSDR Source (plutosdr_source)
+2026-05-10 11:50:44.505  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Predator RF Server Source (sdrpp_server_source)
+2026-05-10 11:50:44.523  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing RFspace Source (rfspace_source)
+2026-05-10 11:50:44.539  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing RTL-SDR Source (rtl_sdr_source)
+2026-05-10 11:50:44.556  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing RTL-TCP Source (rtl_tcp_source)
+2026-05-10 11:50:44.573  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Radio (radio)
+2026-05-10 11:50:44.654  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:44.000] [[33mWARN[0m] Demod switch took 55198 us
+2026-05-10 11:50:44.654  9984-10010 AAudio                  org.sdrpp.sdrpp                      I  AAudioStreamBuilder_openStream() called ----------------------------------------
+2026-05-10 11:50:44.654  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  rate   =  48000, channels  = 2, channelMask = 0x80000003, format   = 5, sharing = SH, dir = OUTPUT
+2026-05-10 11:50:44.654  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  device =      0, sessionId = -1, perfMode = 10, callback: OFF with frames = 0
+2026-05-10 11:50:44.654  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  usage  =      0, contentType = 0, inputPreset = 0, allowedCapturePolicy = 0
+2026-05-10 11:50:44.654  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  privacy sensitive = false, opPackageName = (null), attributionTag = (null)
+2026-05-10 11:50:44.655  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      D  build() MMAP not used because AAUDIO_PERFORMANCE_MODE_LOW_LATENCY not requested.
+2026-05-10 11:50:44.655  9984-10010 org.sdrpp.sdrpp         org.sdrpp.sdrpp                      D  PlayerBase::PlayerBase()
+2026-05-10 11:50:44.655  9984-10010 AudioStreamTrack        org.sdrpp.sdrpp                      D  open(), request notificationFrames = 0, frameCount = 800
+2026-05-10 11:50:44.661  9984-10010 AudioTrack              org.sdrpp.sdrpp                      D  setVolume(1.000000, 1.000000) pid : 9984
+2026-05-10 11:50:44.661  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  setState(s#1) from 0 to 2
+2026-05-10 11:50:44.662  9984-10010 AAudio                  org.sdrpp.sdrpp                      I  AAudioStreamBuilder_openStream() returns 0 = AAUDIO_OK for s#1 ----------------
+2026-05-10 11:50:44.662  9984-10010 AAudio                  org.sdrpp.sdrpp                      D  AAudioStream_requestStart(s#1) called --------------
+2026-05-10 11:50:44.662  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  setState(s#1) from 2 to 3
+2026-05-10 11:50:44.670  9984-9997  AudioStreamLegacy       org.sdrpp.sdrpp                      D  onAudioDeviceUpdate(deviceId = 3)
+2026-05-10 11:50:44.670  9984-10010 AAudio                  org.sdrpp.sdrpp                      D  AAudioStream_requestStart(s#1) returned 0 ---------
+2026-05-10 11:50:44.670  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Recorder (recorder)
+2026-05-10 11:50:44.671  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Rigctl Server (rigctl_server)
+2026-05-10 11:50:44.672  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing Scanner (scanner)
+2026-05-10 11:50:44.673  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Initializing SpyServer Source (spyserver_source)
+2026-05-10 11:50:44.707  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading color maps
+2026-05-10 11:50:44.722  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/classic.json
+2026-05-10 11:50:44.740  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/classic_green.json
+2026-05-10 11:50:44.756  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/electric.json
+2026-05-10 11:50:44.774  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/gqrx.json
+2026-05-10 11:50:44.789  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/greyscale.json
+2026-05-10 11:50:44.807  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/inferno.json
+2026-05-10 11:50:44.822  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/magma.json
+2026-05-10 11:50:44.828  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,827 [INFO] backend.output.cot_emitter: CoTEmitter disabled (cot_enabled=false)
+2026-05-10 11:50:44.829  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,829 [INFO] predator.backend: MissionStore opened at /data/user/0/org.sdrpp.sdrpp/files/predator_data/mission.db (events=0, tracks=0, assessments=0)
+2026-05-10 11:50:44.829  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,829 [INFO] backend.operator.overrides: Loaded overrides: 0 friendly, 0 blacklist, 0 manual locations
+2026-05-10 11:50:44.830  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,829 [INFO] predator.backend: Predator-SDR Backend starting...
+2026-05-10 11:50:44.830  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,830 [INFO] predator.backend: GATES — persistence=on tdoa=on cot=off auto_tasker=off coc=off
+2026-05-10 11:50:44.830  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,830 [WARNING] predator.backend: No fleet nodes configured AND CoC mode is off. Set FLEET_NODES env var or register via API, or enable COC_MODE_ENABLED + COC_UPSTREAM_URLS.
+2026-05-10 11:50:44.839  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/plasma.json
+2026-05-10 11:50:44.856  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/smoke.json
+2026-05-10 11:50:44.873  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,872 [INFO] predator.backend: RNS daemon started: id=30294c359139ccc1
+2026-05-10 11:50:44.873  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/temper_colors.json
+2026-05-10 11:50:44.873  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,873 [INFO] predator.backend: RNS control socket: /data/user/0/org.sdrpp.sdrpp/files/.local/state/predator-rns/control.sock
+2026-05-10 11:50:44.873  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,873 [INFO] predator.backend: Backend started. 0 node(s) in fleet.
+2026-05-10 11:50:44.889  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/turbo.json
+2026-05-10 11:50:44.901  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  2026-05-10 18:50:44,901 [WARNING] backend.api.server: API auth: DISABLED (API_BEARER_TOKEN unset). Do NOT expose this backend beyond a trusted LAN.
+2026-05-10 11:50:44.905  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/viridis.json
+2026-05-10 11:50:44.923  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/vivid.json
+2026-05-10 11:50:44.940  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] Loading /data/user/0/org.sdrpp.sdrpp/files/res/colormaps/websdr.json
+2026-05-10 11:50:44.948  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  INFO:     Started server process [9984]
+2026-05-10 11:50:44.948  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  INFO:     Waiting for application startup.
+2026-05-10 11:50:44.949  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  INFO:     Application startup complete.
+2026-05-10 11:50:44.949  9984-10021 python.stderr           org.sdrpp.sdrpp                      W  INFO:     Uvicorn running on http://127.0.0.1:5259 (Press CTRL+C to quit)
+2026-05-10 11:50:44.972  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] New DSP samplerate: 20000000.000000 (source samplerate is 20000000.000000)
+2026-05-10 11:50:44.972  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Menu Select!
+2026-05-10 11:50:44.974  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:44.000] [[32mINFO[0m] New DSP samplerate: 20000000.000000 (source samplerate is 20000000.000000)
+2026-05-10 11:50:44.974  9984-10010 AAudio                  org.sdrpp.sdrpp                      D  AAudioStream_requestStop(s#1) called
+2026-05-10 11:50:44.974  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  setState(s#1) from 3 to 9
+2026-05-10 11:50:44.974  9984-10010 AudioTrack              org.sdrpp.sdrpp                      D  stop(57): called with 0 frames delivered
+2026-05-10 11:50:44.975  9984-10010 AAudio                  org.sdrpp.sdrpp                      D  AAudioStream_close(s#1) called ---------------
+2026-05-10 11:50:44.975  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  setState(s#1) from 9 to 11
+2026-05-10 11:50:44.975  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  setState(s#1) from 11 to 12
+2026-05-10 11:50:44.975  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  ~AudioStream(s#1) mPlayerBase strongCount = 2
+2026-05-10 11:50:44.975  9984-10010 AAudio                  org.sdrpp.sdrpp                      D  AAudioStream_close(s#1) returned 0 ---------
+2026-05-10 11:50:44.976  9984-10010 AAudio                  org.sdrpp.sdrpp                      I  AAudioStreamBuilder_openStream() called ----------------------------------------
+2026-05-10 11:50:44.976  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  rate   =  48000, channels  = 2, channelMask = 0x80000003, format   = 5, sharing = SH, dir = OUTPUT
+2026-05-10 11:50:44.976  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  device =      0, sessionId = -1, perfMode = 10, callback: OFF with frames = 0
+2026-05-10 11:50:44.976  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  usage  =      0, contentType = 0, inputPreset = 0, allowedCapturePolicy = 0
+2026-05-10 11:50:44.976  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      I  privacy sensitive = false, opPackageName = (null), attributionTag = (null)
+2026-05-10 11:50:44.976  9984-10010 AudioStreamBuilder      org.sdrpp.sdrpp                      D  build() MMAP not used because AAUDIO_PERFORMANCE_MODE_LOW_LATENCY not requested.
+2026-05-10 11:50:44.977  9984-10010 org.sdrpp.sdrpp         org.sdrpp.sdrpp                      D  PlayerBase::PlayerBase()
+2026-05-10 11:50:44.977  9984-10010 AudioStreamTrack        org.sdrpp.sdrpp                      D  open(), request notificationFrames = 0, frameCount = 800
+2026-05-10 11:50:44.981  9984-10010 AudioTrack              org.sdrpp.sdrpp                      D  setVolume(1.000000, 1.000000) pid : 9984
+2026-05-10 11:50:44.981  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  setState(s#2) from 0 to 2
+2026-05-10 11:50:44.981  9984-10010 AAudio                  org.sdrpp.sdrpp                      I  AAudioStreamBuilder_openStream() returns 0 = AAUDIO_OK for s#2 ----------------
+2026-05-10 11:50:44.981  9984-10010 AAudio                  org.sdrpp.sdrpp                      D  AAudioStream_requestStart(s#2) called --------------
+2026-05-10 11:50:44.981  9984-10010 AAudioStream            org.sdrpp.sdrpp                      D  setState(s#2) from 2 to 3
+2026-05-10 11:50:44.985  9984-10010 AAudio                  org.sdrpp.sdrpp                      D  AAudioStream_requestStart(s#2) returned 0 ---------
+2026-05-10 11:50:44.998  9984-9997  AudioStreamLegacy       org.sdrpp.sdrpp                      D  onAudioDeviceUpdate(deviceId = 3)
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 866060402.684563!
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Airspy Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for AirspyHF+ Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Audio Sink
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for File Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Frequency Manager
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for HackRF Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Hermes Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Network Sink
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for PlutoSDR Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Predator RF Server Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for RFspace Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for RTL-SDR Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for RTL-TCP Source
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Radio
+2026-05-10 11:50:45.009  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Recorder
+2026-05-10 11:50:45.010  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Rigctl Server
+2026-05-10 11:50:45.010  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for Scanner
+2026-05-10 11:50:45.010  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Running post-init for SpyServer Source
+2026-05-10 11:50:45.010  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:50:45.000] [[32mINFO[0m] Ready.
+2026-05-10 11:50:45.010  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  activityState=11
+2026-05-10 11:50:45.011  9984-9984  InsetsController        org.sdrpp.sdrpp                      D  applyAnimation, skip insets animation, because hint of source is not equal to hint of control, source=InsetsSource: {b9aa0001 mType=navigationBars mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, control=InsetsSourceControl: {b9aa0001 mType=navigationBars initiallyVisible mSurfacePosition=Point(0, 2256) mInsetsHint=Insets{left=0, top=0, right=0, bottom=144}}
+2026-05-10 11:50:45.012  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  controlAnimationUncheckedInner: Added types=statusBars navigationBars, animType=1, host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.InsetsController.controlAnimationUnchecked:1502 android.view.InsetsController.applyAnimation:2228 android.view.InsetsController.applyAnimation:2159 
+2026-05-10 11:50:45.012  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  onStateChanged: host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.ViewRootImpl.handleResized:2789, state=InsetsState: {mDisplayFrame=Rect(0, 0 - 2400, 1080), mDisplayCutout=DisplayCutout{insets=Rect(80, 0 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 510 - 80, 570), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=1080 displayHeight=2400 physicalDisplayWidth=1080 physicalDisplayHeight=2400 density={3.0} cutoutSpec={M 0,0 H -10 V 26.66666666666667 H 10 V 0 H 0 Z @dp} rotation={1} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}} sideOverrides={}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=108, center=Point(108, 108)}, RoundedCorner{position=TopRight, radius=108, center=Point(2292, 108)}, RoundedCorner{position=BottomRight, radius=108, center=Point(2292, 972)}, RoundedCorner{position=BottomLeft, radius=108, center=Point(108, 972)}]}  mRoundedCornerFrame=Rect(0, 0 - 2400, 1080), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(2268, 0 - 2400, 72) rotation=1}, mDisplayShape=DisplayShape{ spec=-311912193 displayWidth=1080 displayHeight=2400 physicalPixelDisplaySizeRatio=1.0 rotation=1 offsetX=0 offsetY=0 scale=1.0}, mSources= { InsetsSource: {b9aa0001 mType=navigationBars mFrame=[2256,0][2400,1080] mVisible=false mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0004 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {b9aa0005 mType=mandatorySystemGestures mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0006 mType=tappableElement mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0024 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {7 mType=displayCutout mFrame=[0,0][80,1080] mVisible=true mFlags= mSideHint=LEFT mBoundingRects=null}, InsetsSource: {2a410000 mType=statusBars mFrame=[0,0][2400,72] mVisible=false mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410005 mType=mandatorySystemGestures mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410006 mType=tappableElement mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null} }
+2026-05-10 11:50:45.012  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  handleResized, frames=ClientWindowFrames{frame=[0,0][2400,1080] display=[0,0][2400,1080] parentFrame=[0,0][0,0]} displayId=0 dragResizing=false compatScale=1.0 frameChanged=false attachedFrameChanged=false configChanged=false displayChanged=false compatScaleChanged=false dragResizingChanged=false
+2026-05-10 11:50:45.014  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  onDisplayChanged oldDisplayState=2 newDisplayState=2
+2026-05-10 11:50:45.020  9984-9984  BLASTBufferQueue_Java   org.sdrpp.sdrpp                      I  update, w= 2400 h= 1080 mName = VRI[MainActivity]@e79aca7 mNativeObject= 0xb400007bfe8c61b0 sc.mNativeObject= 0xb400007ade8953d0 format= 4 caller= android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:3386 android.view.ViewRootImpl.relayoutWindow:11361 android.view.ViewRootImpl.performTraversals:4544 android.view.ViewRootImpl.doTraversal:3708 android.view.ViewRootImpl$TraversalRunnable.run:12542 android.view.Choreographer$CallbackRecord.run:1751 
+2026-05-10 11:50:45.020  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  Relayout returned: old=(0,0,2400,1080) new=(0,0,2400,1080) relayoutAsync=false req=(2400,1080)0 dur=2 res=0x0 s={true 0xb400007c0e8bcf80} ch=false seqId=0
+2026-05-10 11:50:45.020  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewRootImpl >> surfaceChanged W=2400, H=1080)
+2026-05-10 11:50:45.020  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  NativeWindowResized: 0xb400007cae899990 -- 0xb400007c0e8bcf90
+2026-05-10 11:50:45.021  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  ContentRectChanged: l=80,t=0,r=2400,b=1080
+2026-05-10 11:50:45.021  9984-9984  threaded_app            org.sdrpp.sdrpp                      V  WindowFocusChanged: 0xb400007cae899990 -- 1
+2026-05-10 11:50:45.022  9984-9984  InputMethodManagerUtils org.sdrpp.sdrpp                      D  startInputInner - Id : 0
+2026-05-10 11:50:45.022  9984-9984  InputMethodManager      org.sdrpp.sdrpp                      I  startInputInner - IInputMethodManagerGlobalInvoker.startInputOrWindowGainedFocus
+2026-05-10 11:50:45.022  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  cancelAnimation: types=statusBars navigationBars, animType=1, host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.InsetsController.notifyFinished:1890 android.view.InsetsAnimationThreadControlRunner$1.lambda$notifyFinished$0:87 android.view.InsetsAnimationThreadControlRunner$1.$r8$lambda$cDFF0h4Ncq-8EXdGszv69jrUu7c:0 
+2026-05-10 11:50:45.024  9984-10010 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:50:45.000] [[33mWARN[0m] APP_CMD_GAINED_FOCUS
+2026-05-10 11:50:45.034  9984-10001 InputTransport          org.sdrpp.sdrpp                      D  Input channel constructed: 'ClientS', fd=164
+2026-05-10 11:50:45.046  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  onStateChanged: host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.ViewRootImpl.handleInsetsControlChanged:2888, state=InsetsState: {mDisplayFrame=Rect(0, 0 - 2400, 1080), mDisplayCutout=DisplayCutout{insets=Rect(80, 0 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 510 - 80, 570), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=1080 displayHeight=2400 physicalDisplayWidth=1080 physicalDisplayHeight=2400 density={3.0} cutoutSpec={M 0,0 H -10 V 26.66666666666667 H 10 V 0 H 0 Z @dp} rotation={1} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}} sideOverrides={}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=108, center=Point(108, 108)}, RoundedCorner{position=TopRight, radius=108, center=Point(2292, 108)}, RoundedCorner{position=BottomRight, radius=108, center=Point(2292, 972)}, RoundedCorner{position=BottomLeft, radius=108, center=Point(108, 972)}]}  mRoundedCornerFrame=Rect(0, 0 - 2400, 1080), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(2268, 0 - 2400, 72) rotation=1}, mDisplayShape=DisplayShape{ spec=-311912193 displayWidth=1080 displayHeight=2400 physicalPixelDisplaySizeRatio=1.0 rotation=1 offsetX=0 offsetY=0 scale=1.0}, mSources= { InsetsSource: {b9aa0001 mType=navigationBars mFrame=[2256,0][2400,1080] mVisible=false mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0004 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {b9aa0005 mType=mandatorySystemGestures mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0006 mType=tappableElement mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0024 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {3 mType=ime mFrame=[0,0][0,0] mVisible=false mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {7 mType=displayCutout mFrame=[0,0][80,1080] mVisible=true mFlags= mSideHint=LEFT mBoundingRects=null}, InsetsSource: {2a410000 mType=statusBars mFrame=[0,0][2400,72] mVisible=false mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410005 mType=mandatorySystemGestures mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410006 mType=tappableElement mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null} }
+2026-05-10 11:50:45.047  9984-9984  InsetsSourceConsumer    org.sdrpp.sdrpp                      I  applyRequestedVisibilityToControl: visible=false, type=ime, host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity
+2026-05-10 11:50:50.980  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:50.980  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:50:50.997  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:51.014  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:51.031  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:51.047  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:51.063  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:51.080  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:51.081  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:50:51.081  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:03.371  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  handleResized, frames=ClientWindowFrames{frame=[0,0][2400,1080] display=[0,0][2400,1080] parentFrame=[0,0][0,0]} displayId=0 dragResizing=false compatScale=1.0 frameChanged=false attachedFrameChanged=false configChanged=false displayChanged=false compatScaleChanged=false dragResizingChanged=false
+2026-05-10 11:51:07.350  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  onStateChanged: host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.ViewRootImpl.handleInsetsControlChanged:2888, state=InsetsState: {mDisplayFrame=Rect(0, 0 - 2400, 1080), mDisplayCutout=DisplayCutout{insets=Rect(80, 0 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 510 - 80, 570), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=1080 displayHeight=2400 physicalDisplayWidth=1080 physicalDisplayHeight=2400 density={3.0} cutoutSpec={M 0,0 H -10 V 26.66666666666667 H 10 V 0 H 0 Z @dp} rotation={1} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}} sideOverrides={}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=108, center=Point(108, 108)}, RoundedCorner{position=TopRight, radius=108, center=Point(2292, 108)}, RoundedCorner{position=BottomRight, radius=108, center=Point(2292, 972)}, RoundedCorner{position=BottomLeft, radius=108, center=Point(108, 972)}]}  mRoundedCornerFrame=Rect(0, 0 - 2400, 1080), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(2268, 0 - 2400, 72) rotation=1}, mDisplayShape=DisplayShape{ spec=-311912193 displayWidth=1080 displayHeight=2400 physicalPixelDisplaySizeRatio=1.0 rotation=1 offsetX=0 offsetY=0 scale=1.0}, mSources= { InsetsSource: {b9aa0001 mType=navigationBars mFrame=[2256,0][2400,1080] mVisible=false mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0004 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {b9aa0005 mType=mandatorySystemGestures mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0006 mType=tappableElement mFrame=[2256,0][2400,1080] mVisible=true mFlags= mSideHint=RIGHT mBoundingRects=null}, InsetsSource: {b9aa0024 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {3 mType=ime mFrame=[0,0][0,0] mVisible=false mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {7 mType=displayCutout mFrame=[0,0][80,1080] mVisible=true mFlags= mSideHint=LEFT mBoundingRects=null}, InsetsSource: {2a410000 mType=statusBars mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410005 mType=mandatorySystemGestures mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {2a410006 mType=tappableElement mFrame=[0,0][2400,72] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null} }
+2026-05-10 11:51:07.351  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  controlAnimationUncheckedInner: Added types=statusBars, animType=1, host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.InsetsController.controlAnimationUnchecked:1502 android.view.InsetsController.applyAnimation:2228 android.view.InsetsController.applyAnimation:2159 
+2026-05-10 11:51:07.353  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  handleResized, frames=ClientWindowFrames{frame=[0,0][2400,1080] display=[0,0][2400,1080] parentFrame=[0,0][0,0]} displayId=0 dragResizing=false compatScale=1.0 frameChanged=false attachedFrameChanged=false configChanged=false displayChanged=false compatScaleChanged=false dragResizingChanged=false
+2026-05-10 11:51:07.356  9984-10150 InteractionJankMonitor  org.sdrpp.sdrpp                      W  Initializing without READ_DEVICE_CONFIG permission. enabled=false, interval=1, missedFrameThreshold=3, frameTimeThreshold=64, package=org.sdrpp.sdrpp
+2026-05-10 11:51:07.714  9984-9984  InsetsController        org.sdrpp.sdrpp                      I  cancelAnimation: types=statusBars, animType=1, host=org.sdrpp.sdrpp/org.sdrpp.sdrpp.MainActivity, from=android.view.InsetsController.notifyFinished:1890 android.view.InsetsAnimationThreadControlRunner$1.lambda$notifyFinished$0:87 android.view.InsetsAnimationThreadControlRunner$1.$r8$lambda$cDFF0h4Ncq-8EXdGszv69jrUu7c:0 
+2026-05-10 11:51:23.754  9984-10014 Predator RF             org.sdrpp.sdrpp                      W  [0m[10/05/2026 18:51:23.000] [[33mWARN[0m] ConfigManager locked, waiting...
+2026-05-10 11:51:29.392  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:29.392  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:29.409  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:29.426  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:29.443  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:29.459  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:29.459  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:29.476  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:29.477  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:30.859  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:30.860  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:30.894  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:30.911  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:30.945  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:30.961  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:30.978  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:30.995  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.011  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.028  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.045  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.061  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.078  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.095  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.112  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.145  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.161  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.178  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.195  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.212  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.245  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.262  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.296  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.311  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.362  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.395  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.462  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.496  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.528  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.545  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.579  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.612  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.628  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.662  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.679  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.695  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.713  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.729  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.747  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.762  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.781  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.796  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.812  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.829  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.846  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.879  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.929  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.963  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:31.980  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.012  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.029  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.046  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.063  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.079  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.112  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.129  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.146  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.180  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.229  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.263  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.296  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.313  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.346  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.363  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.398  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.430  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.447  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.480  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.530  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.581  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.613  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.680  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.733  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.782  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.813  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.864  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.914  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.947  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.964  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.981  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:32.997  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.014  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.049  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.064  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.082  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.097  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.115  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.131  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.164  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.181  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.197  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.231  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.248  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.282  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.298  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.331  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.364  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.381  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.414  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.464  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.531  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.614  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:33.766  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:34.349  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:34.366  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:34.366  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:34.366  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:35.318  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:35.318  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:35.350  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:35.350  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:35.350  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:35.351  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:36.702  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.703  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:36.718  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.735  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.750  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.768  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.801  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.852  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.869  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.902  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.935  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:36.968  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.018  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.053  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.069  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.085  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.102  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.120  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.136  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.152  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.169  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.185  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.202  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.219  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.253  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.269  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.286  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.301  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.319  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.352  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.386  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.420  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.553  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.603  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.703  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.820  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.886  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.903  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.919  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.936  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.952  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.970  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:37.986  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.004  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.038  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.054  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.087  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.120  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.137  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.170  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.204  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.222  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.237  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.270  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.303  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.320  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.353  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.370  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.405  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.423  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.437  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.471  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.504  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.520  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.554  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.605  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.637  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.704  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.771  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.854  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:38.988  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:39.171  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:39.355  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:39.438  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:39.438  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:39.439  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:40.522  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:40.522  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:40.573  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:40.590  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:40.590  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:40.590  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:41.808  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:41.809  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:41.841  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:41.858  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:41.874  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:41.908  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:41.925  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:41.957  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.058  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.209  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.241  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.275  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.292  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.308  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.342  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.358  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.375  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.392  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.408  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.425  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.442  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.458  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.475  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.491  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.508  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.527  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.542  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.576  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.609  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.642  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.659  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.676  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.692  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.709  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.742  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.759  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.776  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.826  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.843  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.860  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.892  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:42.959  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.026  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.160  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.193  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.210  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.243  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.260  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.293  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.309  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.326  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.344  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.378  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.410  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.443  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.493  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.544  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.593  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.694  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.777  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.826  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.844  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.861  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.861  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.861  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:43.862  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:44.577  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:44.577  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:44.611  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:44.628  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:44.628  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:44.628  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:45.714  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.715  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:45.729  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.745  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.762  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.780  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.797  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.814  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.830  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.847  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.863  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.880  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.896  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.913  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.946  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.963  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.981  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:45.997  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.014  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.030  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.048  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.063  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.080  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.146  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.196  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.230  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.280  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.296  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.366  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.380  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.414  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.430  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.447  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.464  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.481  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.497  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.514  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.531  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.548  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.565  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.581  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.598  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.614  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.631  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.648  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.664  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.681  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.697  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.714  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.732  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.748  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.764  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.781  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.798  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.831  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.848  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.864  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.881  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.915  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.932  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.947  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:46.982  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.048  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.098  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.132  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.181  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.215  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.281  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.315  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:47.315  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:48.449  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:48.450  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:48.466  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:48.482  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:48.500  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:48.515  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:48.533  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:48.533  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:48.533  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:49.150  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.150  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:49.217  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.234  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.267  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.284  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.317  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.351  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.400  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.434  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.501  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.551  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.569  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.601  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.618  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.651  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.667  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.701  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.735  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.768  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.818  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.852  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.868  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.918  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:49.968  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.086  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.252  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.302  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.319  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.335  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.352  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.369  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.387  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.402  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.419  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.436  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.452  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.470  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.485  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.502  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.519  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.535  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.552  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.552  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.552  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.553  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:50.803  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.803  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:50.819  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.836  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.852  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.870  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.886  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.886  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:50.886  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:51.753  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.754  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:51.769  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.786  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.804  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.820  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.836  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.854  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.854  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 865277404.921700!
+2026-05-10 11:51:51.871  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.871  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864986577.181208!
+2026-05-10 11:51:51.887  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.888  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864572706.935122!
+2026-05-10 11:51:51.904  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.905  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864002237.136465!
+2026-05-10 11:51:51.921  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.922  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863510067.114093!
+2026-05-10 11:51:51.938  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.938  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863140939.597315!
+2026-05-10 11:51:51.954  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.955  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862838926.174496!
+2026-05-10 11:51:51.971  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.971  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862671140.939597!
+2026-05-10 11:51:51.988  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:51.988  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:51.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862570469.798657!
+2026-05-10 11:51:52.005  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.005  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862514541.387024!
+2026-05-10 11:51:52.021  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.021  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862492170.022371!
+2026-05-10 11:51:52.038  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.039  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862514541.387024!
+2026-05-10 11:51:52.054  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.054  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862604026.845637!
+2026-05-10 11:51:52.071  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.072  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862760626.398210!
+2026-05-10 11:51:52.088  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.088  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 862894854.586129!
+2026-05-10 11:51:52.105  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.105  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863040268.456375!
+2026-05-10 11:51:52.122  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.122  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863163310.961968!
+2026-05-10 11:51:52.138  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.138  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863275167.785234!
+2026-05-10 11:51:52.155  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.156  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863398210.290827!
+2026-05-10 11:51:52.171  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.172  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863543624.161073!
+2026-05-10 11:51:52.188  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.188  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863722595.078299!
+2026-05-10 11:51:52.204  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.205  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 863912751.677852!
+2026-05-10 11:51:52.221  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.222  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864046979.865771!
+2026-05-10 11:51:52.238  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.238  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864147651.006711!
+2026-05-10 11:51:52.255  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.256  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864203579.418344!
+2026-05-10 11:51:52.271  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.272  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864225950.782997!
+2026-05-10 11:51:52.288  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.288  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.289  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864237136.465324!
+2026-05-10 11:51:52.289  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:52.605  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.605  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:52.621  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.655  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.655  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.655  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:52.656  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1
+2026-05-10 11:51:52.658  9984-10010 Predator RF             org.sdrpp.sdrpp                      E  [0m[10/05/2026 18:51:52.000] [[31mERROR[0m] Could not open HackRF fake_serial: HackRF not found
+2026-05-10 11:51:52.658  9984-10010 Predator RF             org.sdrpp.sdrpp                      I  [0m[10/05/2026 18:51:52.000] [[32mINFO[0m] HackRFSourceModule 'HackRF Source': Tune: 864237136.465324!
+2026-05-10 11:51:53.356  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:53.356  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 0
+2026-05-10 11:51:53.372  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:53.389  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:53.406  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:53.422  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:53.422  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:53.422  9984-10010 threaded_app            org.sdrpp.sdrpp                      V  New input event: type=2
+2026-05-10 11:51:53.423  9984-9984  VRI[MainAc...y]@e79aca7 org.sdrpp.sdrpp                      I  ViewPostIme pointer 1

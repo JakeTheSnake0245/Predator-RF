@@ -81,6 +81,11 @@ namespace backend {
         return ImGui_ImplAndroid_HandleInputEvent(inputEvent);
     }
 
+    // Tracks the ANativeWindow currently held by aquireWindow() so the
+    // warm-restart teardown in init() can release it without using the
+    // (already-swapped) backend::app->window pointer.
+    static ANativeWindow* _acquiredWindow = nullptr;
+
     int aquireWindow() {
         while (!app->window) {
             flog::warn("Waiting on the shitty window thing"); std::this_thread::sleep_for(std::chrono::milliseconds(30));
@@ -98,11 +103,43 @@ namespace backend {
             }
         }
         ANativeWindow_acquire(app->window);
+        _acquiredWindow = app->window;
         return 0;
     }
 
     int init(std::string resDir) {
         flog::warn("Backend init");
+
+        // Defensive teardown of any leftover ImGui + EGL state from a prior
+        // init() call. Required for the warm-restart path where android_main
+        // is invoked a second time without APP_CMD_TERM_WINDOW having fired
+        // backend::end() first (e.g. activity destroyed + recreated while the
+        // process stays alive). Without this, ImGui::CreateContext() runs on
+        // top of a stale context and ImGui_ImplOpenGL3_Init() SIGABRTs against
+        // a destroyed GL loader. We release the previously-acquired
+        // ANativeWindow via the tracked _acquiredWindow handle (NOT
+        // backend::app->window, which has already been swapped to the new
+        // window by android_main — releasing that would corrupt the new
+        // window's refcount). Matching every acquire with a release is
+        // required so the system can destroy stale windows. We keep
+        // _EglDisplay alive — eglInitialize is idempotent and tearing down
+        // the display tends to break the IME subsystem on Samsung OneUI.
+        if (ImGui::GetCurrentContext() != nullptr) {
+            ImGui_ImplOpenGL3_Shutdown();
+            ImGui_ImplAndroid_Shutdown();
+            ImGui::DestroyContext();
+        }
+        if (_EglDisplay != EGL_NO_DISPLAY) {
+            eglMakeCurrent(_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+            if (_EglContext != EGL_NO_CONTEXT) { eglDestroyContext(_EglDisplay, _EglContext); }
+            if (_EglSurface != EGL_NO_SURFACE) { eglDestroySurface(_EglDisplay, _EglSurface); }
+            _EglContext = EGL_NO_CONTEXT;
+            _EglSurface = EGL_NO_SURFACE;
+        }
+        if (_acquiredWindow != nullptr) {
+            ANativeWindow_release(_acquiredWindow);
+            _acquiredWindow = nullptr;
+        }
 
         // Get window
         aquireWindow();
@@ -478,6 +515,9 @@ namespace backend {
         _EglSurface = EGL_NO_SURFACE;
 
         if (app->window) { ANativeWindow_release(app->window); }
+        // Mirror the release in our tracking pointer so the next init()
+        // does not double-release the same handle.
+        _acquiredWindow = nullptr;
 
         return 0;
     }
