@@ -15,6 +15,7 @@
 #include <gui/style.h>
 #include <gui/menus/theme.h>
 #include <filesystem>
+#include <chrono>
 
 // Credit to the ImGui android OpenGL3 example for a lot of this code!
 
@@ -319,41 +320,92 @@ namespace backend {
                 // space, and (because our positionRnsModal clamps to
                 // display − ime) shrinks every popup that opens next.
                 //
-                // Falling edge is DEBOUNCED: a tap on an InputText inside
-                // a modal can briefly drop io.WantTextInput for one or
-                // two frames when the IME rises and the popup re-anchors
-                // (BeginChild shrinks, the active InputText is briefly
-                // clipped, ImGui's active-id machinery skips a beat).
-                // Without the debounce, that transient drop fires
-                // HideSoftKeyboardInput before the IME has even finished
-                // sliding up — the operator sees the keyboard appear and
-                // immediately auto-close, and can't enter any text. We
-                // require N consecutive frames of !WantTextInput before
-                // hiding. Rising edge stays instant so the IME pops up
-                // the moment the operator taps a field.
+                // Falling edge is DEBOUNCED for two compounding reasons:
                 //
-                // 6 frames ≈ 100ms at 60fps — long enough to ride
-                // through any single-frame blip during popup re-layout
-                // but still snappy enough that closing a modal hides the
-                // IME without the operator noticing the delay.
-                static bool WantTextInputLast = false;
-                static int  WantTextFalseStreak = 0;
-                const  int  kHideDebounceFrames = 6;
+                //   (a) When the IME rises, Android resizes the GL
+                //       surface (ContentRectChanged b=486 etc), which
+                //       shrinks ImGui's DisplaySize, which shrinks the
+                //       popup, which shrinks the BeginChild, which can
+                //       briefly clip the still-active InputText. ImGui's
+                //       active-id machinery responds by dropping
+                //       WantTextInput for a handful of frames until the
+                //       layout settles.
+                //
+                //   (b) The IME slide-up animation itself stalls the GL
+                //       thread (surface re-creation, multiple insets
+                //       callbacks). Frame-count based debouncing fails
+                //       here because 6 frames at the stuttery 20-30fps
+                //       during the animation can be 200-300ms — shorter
+                //       than the rise + settle window. The debounce
+                //       expires, HideSoftKeyboardInput fires (confirmed
+                //       in adb logcat as "ImeTracker: onRequestHide at
+                //       ORIGIN_CLIENT" ~240ms after our show), the IME
+                //       slides back down, and the operator can't type.
+                //
+                // Defence is two-layered:
+                //
+                //   1. TIME-BASED debounce (700ms wall clock, not
+                //      frame count). Survives any GL stutter during IME
+                //      animation. Closing a modal still feels snappy
+                //      because 700ms is below human perception of
+                //      "lingering" UI.
+                //
+                //   2. IME-RISING SUPPRESSION. If the IME inset just
+                //      grew (imeBot transitioned from 0 → >0 in the
+                //      last 1200ms), ANY WantTextInput=false is treated
+                //      as a layout-shrink artifact and ignored. We only
+                //      hide once the IME has been stably visible long
+                //      enough that a drop must reflect real intent.
+                //
+                // Rising edge stays instant — the moment the operator
+                // taps a field, the IME pops up.
+                static bool   WantTextInputLast    = false;
+                static double WantTextFalseSinceMs = 0.0;
+                static int    ImeBotLast           = 0;
+                static double ImeRoseAtMs          = -1e9;
+                const double  kHideDebounceMs      = 700.0;
+                const double  kImeRiseSuppressMs   = 1200.0;
+
+                auto nowMs = []() {
+                    return std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now()
+                            .time_since_epoch()).count();
+                };
+                double tNow = nowMs();
+                int imeBotNow = getImeBottomInset();
+                if (imeBotNow > 0 && ImeBotLast == 0) {
+                    // 0 → positive transition: IME just started rising
+                    // (or finished rising — either way, this is the
+                    // suppression-window trigger).
+                    ImeRoseAtMs = tNow;
+                }
+                ImeBotLast = imeBotNow;
+
                 if (io.WantTextInput) {
-                    WantTextFalseStreak = 0;
+                    WantTextFalseSinceMs = 0.0;
                     if (!WantTextInputLast) {
                         ShowSoftKeyboardInput();
                     }
                 } else {
                     if (WantTextInputLast) {
                         // First frame of !WantTextInput — start the
-                        // streak counter but don't hide yet.
-                        WantTextFalseStreak = 1;
-                    } else if (WantTextFalseStreak > 0) {
-                        WantTextFalseStreak++;
-                        if (WantTextFalseStreak >= kHideDebounceFrames) {
+                        // wall-clock timer but don't hide yet.
+                        WantTextFalseSinceMs = tNow;
+                    } else if (WantTextFalseSinceMs > 0.0) {
+                        bool imeRecentlyRose =
+                            (tNow - ImeRoseAtMs) < kImeRiseSuppressMs;
+                        bool debounceExpired =
+                            (tNow - WantTextFalseSinceMs) >= kHideDebounceMs;
+                        if (debounceExpired && !imeRecentlyRose) {
                             HideSoftKeyboardInput();
-                            WantTextFalseStreak = 0;
+                            WantTextFalseSinceMs = 0.0;
+                        }
+                        // If the IME was recently rising, restart the
+                        // debounce timer — we want a full 700ms of
+                        // "stable IME up + WantText false" before
+                        // we accept this as a real dismiss.
+                        if (imeRecentlyRose && debounceExpired) {
+                            WantTextFalseSinceMs = tNow;
                         }
                     }
                 }
