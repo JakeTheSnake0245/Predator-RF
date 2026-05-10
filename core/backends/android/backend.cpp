@@ -31,6 +31,7 @@ namespace backend {
 
     // Forward declaration
     int ShowSoftKeyboardInput();
+    int HideSoftKeyboardInput();
     int PollUnicodeChars();
 
     void doPartialInit() {
@@ -311,10 +312,18 @@ namespace backend {
                 // FIXME: do not call this every frame because of JNI overhead
                 PollUnicodeChars();
 
-                // Open on-screen (soft) input if requested by Dear ImGui
+                // Drive the on-screen (soft) keyboard from Dear ImGui's
+                // WantTextInput state. We track BOTH edges so the IME is
+                // hidden as soon as no field is active — otherwise the
+                // keyboard stays up after closing a modal, eats screen
+                // space, and (because our positionRnsModal clamps to
+                // display − ime) shrinks every popup that opens next.
                 static bool WantTextInputLast = false;
-                if (io.WantTextInput && !WantTextInputLast)
-                ShowSoftKeyboardInput();
+                if (io.WantTextInput && !WantTextInputLast) {
+                    ShowSoftKeyboardInput();
+                } else if (!io.WantTextInput && WantTextInputLast) {
+                    HideSoftKeyboardInput();
+                }
                 WantTextInputLast = io.WantTextInput;
 
                 // Render
@@ -390,6 +399,35 @@ namespace backend {
             return -3;
 
         jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "showSoftInput", "()V");
+        if (method_id == NULL)
+            return -4;
+
+        java_env->CallVoidMethod(app->activity->clazz, method_id);
+
+        jni_return = java_vm->DetachCurrentThread();
+        if (jni_return != JNI_OK)
+            return -5;
+
+        return 0;
+    }
+
+    int HideSoftKeyboardInput() {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR)
+            return -1;
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK)
+            return -2;
+
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz == NULL)
+            return -3;
+
+        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "hideSoftInput", "()V");
         if (method_id == NULL)
             return -4;
 

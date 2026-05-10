@@ -107,6 +107,11 @@ class MainActivity : NativeActivity() {
     // TextWatcher pushes characters into the same unicodeCharacterQueue
     // that pollUnicodeChar() drains for ImGui.
     private var imeCaptureView: EditText? = null;
+    // True between showSoftInput() and hideSoftInput(). The capture view's
+    // OnFocusChangeListener uses this to decide whether to re-fight when
+    // NativeContentView reclaims focus mid-edit. Without it we'd thrash
+    // focus back to the EditText even when no field is active.
+    @Volatile private var imeKeepFocus: Boolean = false
 
     // ── Thermal status (Android Q+) ─────────────────────────────────────
     // 0 = NONE, 1 = LIGHT, 2 = MODERATE, 3 = SEVERE, 4 = CRITICAL,
@@ -370,6 +375,7 @@ class MainActivity : NativeActivity() {
     //      with HIDE_IMPLICIT_ONLY on hide so the IME stays up even if
     //      another non-focusable view briefly gets focus.
     fun showSoftInput() {
+        imeKeepFocus = true
         runOnUiThread {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             val capture = imeCaptureView
@@ -405,7 +411,12 @@ class MainActivity : NativeActivity() {
                 // and drop every keystroke. Re-check on the EditText's own
                 // handler one frame later and re-fight if needed.
                 capture.post {
-                    if (!capture.hasFocus()) {
+                    // Re-check imeKeepFocus: a fast show→hide transition
+                    // (open modal then immediately close) can flip the
+                    // flag false between scheduling and running this
+                    // runnable. Without the gate we'd re-force the IME
+                    // back open after the operator dismissed it.
+                    if (imeKeepFocus && !capture.hasFocus()) {
                         Log.w(TAG, "imeCapture lost focus on next frame — " +
                                    "reasserting")
                         capture.bringToFront()
@@ -421,6 +432,7 @@ class MainActivity : NativeActivity() {
     }
 
     fun hideSoftInput() {
+        imeKeepFocus = false
         runOnUiThread {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             val capture = imeCaptureView
@@ -475,8 +487,28 @@ class MainActivity : NativeActivity() {
             // letter — annoying for hostnames / hex IFAC keys. Disable.
             privateImeOptions = "nm"
         }
+        // Captured in beforeTextChanged so we can convert UTF-16 unit
+        // deletions back into the correct number of CODE POINT backspaces.
+        // Without this, deleting a single emoji (surrogate pair, before=2)
+        // would emit 2× 0x08 and over-delete in ImGui.
+        var pendingDeleteCodepoints = 0
         edit.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                // Only the leading prefix [start, start+after) is kept
+                // unchanged; bytes [start+after, start+count) are removed
+                // (and may then be replaced — pure deletion is after<count
+                // with the new region empty). Count code points in the
+                // removed range.
+                pendingDeleteCodepoints = 0
+                if (s == null || after >= count) return
+                val delStart = start + after
+                val delEnd = (start + count).coerceAtMost(s.length)
+                var i = delStart
+                while (i < delEnd) {
+                    pendingDeleteCodepoints++
+                    i += Character.charCount(Character.codePointAt(s, i))
+                }
+            }
             override fun afterTextChanged(s: Editable?) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 if (s == null) return
@@ -484,10 +516,13 @@ class MainActivity : NativeActivity() {
                 // do NOT fire KEYCODE_DEL — they call deleteSurroundingText
                 // on the InputConnection, which arrives here as
                 // (before > 0, count == 0). Bridge to ASCII Backspace once
-                // per deleted UTF-16 unit so ImGui's InputText shrinks by
-                // the same amount the user expected.
+                // per deleted CODE POINT (computed in beforeTextChanged)
+                // so ImGui's InputText shrinks by the same number of
+                // logical characters the user expected — emoji included.
                 if (count == 0 && before > 0) {
-                    repeat(before) { unicodeCharacterQueue.offer(0x08) }
+                    val n = if (pendingDeleteCodepoints > 0) pendingDeleteCodepoints else 1
+                    repeat(n) { unicodeCharacterQueue.offer(0x08) }
+                    pendingDeleteCodepoints = 0
                     return
                 }
                 if (count <= 0) return
@@ -515,11 +550,42 @@ class MainActivity : NativeActivity() {
             }
         })
         edit.setOnKeyListener { _, keyCode, event ->
+            // Hardware DEL on a NON-empty EditText also fires onTextChanged
+            // with (before>0, count==0) — letting both fire would double
+            // every backspace. Only synthesize 0x08 here when the buffer
+            // is empty (no TextWatcher delete branch will follow), so the
+            // user can still backspace ImGui's content after we've reset
+            // the capture buffer.
             if (event.action == KeyEvent.ACTION_DOWN &&
-                keyCode == KeyEvent.KEYCODE_DEL) {
+                keyCode == KeyEvent.KEYCODE_DEL &&
+                edit.text.isNullOrEmpty()) {
                 unicodeCharacterQueue.offer(0x08)  // ASCII Backspace
             }
             false
+        }
+        // Sustained focus enforcement: NativeContentView can reclaim focus
+        // at any later point (window state changes, popup mutations,
+        // surface invalidation). One-shot show + post-frame reassert in
+        // showSoftInput() doesn't catch losses that happen seconds later.
+        // While the IME is supposed to be up (imeKeepFocus), every focus
+        // loss re-fights for it. Listener fires on the UI thread.
+        edit.onFocusChangeListener = android.view.View.OnFocusChangeListener { v, hasFocus ->
+            if (!hasFocus && imeKeepFocus) {
+                Log.w(TAG, "imeCapture lost focus while IME wanted — re-fighting")
+                v.post {
+                    // Re-check imeKeepFocus inside the runnable too: a
+                    // hide() may have arrived between schedule and run.
+                    // Without this gate we'd reopen the IME the operator
+                    // just dismissed.
+                    if (!imeKeepFocus) return@post
+                    v.bringToFront()
+                    v.requestFocus()
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE)
+                            as InputMethodManager
+                    imm.restartInput(v)
+                    imm.showSoftInput(v, InputMethodManager.SHOW_FORCED)
+                }
+            }
         }
         // 4×4 px (not 1×1) — some keyboards' visibility heuristics treat
         // 1×1 views as invisible and refuse to bind. Still imperceptible
