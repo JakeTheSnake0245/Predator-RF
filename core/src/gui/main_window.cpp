@@ -6643,27 +6643,41 @@ void MainWindow::draw() {
                 // panel, producing a tiny modal stuck in a corner.
                 //
                 // Position uses the screen size minus the device safe area
-                // (notch / status bar / nav bar) and the soft keyboard
-                // height. We FORCE position+size with ImGuiCond_Always so
-                // ImGui doesn't fall back to its tiny default window size
-                // (which is what happens with SetNextWindowSizeConstraints
-                // alone when AlwaysAutoResize is off).
+                // (notch / status bar / nav bar). We FORCE position+size
+                // with ImGuiCond_Always so ImGui doesn't fall back to its
+                // tiny default window size.
+                //
+                // CRITICAL: we DO NOT shrink the popup based on
+                // `imeBottomInset`. Doing so used to seem helpful (keep
+                // popup visible above the IME), but every IME slide-up
+                // animation re-anchored the popup smaller, which shrank
+                // the BeginChild inside, which clipped the active
+                // InputText below the visible region — and ImGui then
+                // permanently cleared its active id. The operator saw
+                // the keyboard pop up and stay up for ~1.5s, then close,
+                // because the InputText they tapped was deactivated by
+                // the layout shrink and `io.WantTextInput` had gone
+                // false. Logcat: `ImeTracker: onRequestHide at
+                // ORIGIN_CLIENT reason HIDE_SOFT_INPUT` ~1.5s after our
+                // show. The popup now stays full safe-area height; the
+                // body's BeginChild + iv() scrolls the active field
+                // above the IME line, and action buttons are placed at
+                // the TOP of the modal (header bar) so they remain
+                // tappable while the IME covers the bottom of the popup.
                 auto positionRnsModal = [&](float widthFrac,
                                             float heightCapFrac) {
                     ImVec2 disp = ImGui::GetIO().DisplaySize;
                     auto   sa   = backend::getSafeAreaInsets();
-                    float  imeBot = (float)backend::getImeBottomInset();
 
                     float left  = (float)sa.left;
                     float right = (float)sa.right;
                     float top   = (float)sa.top;
-                    float bot   = (float)((sa.bottom > (int)imeBot)
-                                           ? sa.bottom : (int)imeBot);
+                    float bot   = (float)sa.bottom;
 
-                    // True visible rectangle. Never forced larger than what
-                    // is actually free of system bars / notch / keyboard —
-                    // forcing a minimum here would push the popup back
-                    // under the IME on small screens / large IME insets.
+                    // True visible rectangle minus device safe area only.
+                    // IME inset deliberately NOT subtracted here — see
+                    // block comment above for the active-id deactivation
+                    // failure mode that caused.
                     float visibleW = std::max(disp.x - left - right, 1.0f);
                     float visibleH = std::max(disp.y - top  - bot,   1.0f);
 
@@ -6705,14 +6719,28 @@ void MainWindow::draw() {
                                      : T("Edit RNS interface"),
                         nullptr,
                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
-                    // Scrollable body so the long per-type form is fully
-                    // reachable on small screens; reserve space at the
-                    // bottom for the action button row. Use an explicit
-                    // positive height (instead of a negative reserve) so
-                    // the scrollable region is correct on the first frame.
-                    float btnAreaH = ImGui::GetFrameHeightWithSpacing()
-                                   + ImGui::GetStyle().ItemSpacing.y;
-                    float childH   = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    // ── HEADER BAR (action buttons at TOP) ──────────
+                    // Buttons live ABOVE the scrollable body so they
+                    // remain tappable while the IME covers the bottom
+                    // half of the popup. With the previous bottom-row
+                    // layout the operator could type but couldn't reach
+                    // Save/Cancel without first dismissing the IME.
+                    // Save action runs at end of block (needs final
+                    // field values) — we only set a flag here.
+                    bool doValidate = false, doSave = false, doCancel = false;
+                    if (ImGui::Button(T("Validate##rns_e"))) doValidate = true;
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Save##rns_e")))     doSave     = true;
+                    ImGui::SameLine();
+                    if (ImGui::Button(T("Cancel##rns_e")))   doCancel   = true;
+                    ImGui::Separator();
+
+                    // Scrollable body fills the rest of the popup. Since
+                    // positionRnsModal no longer shrinks the popup based
+                    // on imeBot, this height is constant across frames
+                    // — preventing the BeginChild-shrink that used to
+                    // deactivate the focused InputText.
+                    float childH = ImGui::GetContentRegionAvail().y;
                     if (childH < 60.0f * style::uiScale)
                         childH = 60.0f * style::uiScale;
                     ImGui::BeginChild("##rns_e_body",
@@ -6724,32 +6752,26 @@ void MainWindow::draw() {
                     // focused InputText hidden under the soft keyboard:
                     //   (1) the user just tapped a field (IsItemActivated)
                     //   (2) the IME inset just grew (keyboard appeared
-                    //       after the tap), so the BeginChild shrank and
-                    //       the still-active field fell out of the visible
-                    //       region between this frame and the previous
-                    //       one.
-                    // We capture both edges once per modal frame, then
-                    // call iv() after every InputText/InputInt that the
-                    // operator can tap.
+                    //       after the tap)
+                    // When the IME is up, we bias the scroll so the
+                    // active field lands in the upper portion of the
+                    // BeginChild — i.e. above the IME line — instead
+                    // of dead-centre (which would put it under the IME
+                    // since the popup is now full safe-area height).
                     static int s_prevImeBot = 0;
                     int s_curImeBot = backend::getImeBottomInset();
                     bool imeJustRose = (s_curImeBot > s_prevImeBot);
                     s_prevImeBot = s_curImeBot;
                     auto iv = [&]() {
-                        // IsItemActivated(): the user JUST tapped this
-                        // field — center it before the keyboard arrives.
-                        // IsItemActive() + imeJustRose: this field is
-                        // already focused and the keyboard has now
-                        // appeared, so the popup just shrunk and the
-                        // field would otherwise fall off-screen — pull
-                        // it back into view. Both checks rely on iv()
-                        // being called IMMEDIATELY after the matching
-                        // ImGui::Input* call, so "this item" refers to
-                        // the input we just submitted.
+                        // Compute scroll fraction. With IME up, place the
+                        // active field at ~25% from top of BeginChild
+                        // (above the IME line on most devices). With IME
+                        // down, centre it normally.
+                        float frac = (s_curImeBot > 0) ? 0.25f : 0.5f;
                         if (ImGui::IsItemActivated()) {
-                            ImGui::SetScrollHereY(0.5f);
+                            ImGui::SetScrollHereY(frac);
                         } else if (imeJustRose && ImGui::IsItemActive()) {
-                            ImGui::SetScrollHereY(0.5f);
+                            ImGui::SetScrollHereY(frac);
                         }
                     };
                     ImGui::InputText(T("Name##rns_e"), rnsEditName,
@@ -6924,8 +6946,11 @@ void MainWindow::draw() {
                         iv();
                     }
                     ImGui::EndChild();  // ##rns_e_body
-                    ImGui::Separator();
-                    if (ImGui::Button(T("Validate##rns_e"))) {
+
+                    // Execute deferred header-bar button actions.
+                    // Deferred so the form fields above are read at
+                    // their FINAL values for this frame.
+                    if (doValidate) {
                         json cfg = buildCfgJson();
                         std::string err;
                         auto resp = predator::kujhadRnsValidate(cfg.dump(), err);
@@ -6933,8 +6958,7 @@ void MainWindow::draw() {
                             ? (std::string(T("Validate OK: ")) + resp)
                             : err;
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button(T("Save##rns_e"))) {
+                    if (doSave) {
                         json cfg = buildCfgJson();
                         std::string err;
                         std::string resp = rnsEditIsNew
@@ -6950,8 +6974,7 @@ void MainWindow::draw() {
                             ImGui::CloseCurrentPopup();
                         }
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button(T("Cancel##rns_e"))) {
+                    if (doCancel) {
                         rnsEditOpen = false;
                         ImGui::CloseCurrentPopup();
                     }
