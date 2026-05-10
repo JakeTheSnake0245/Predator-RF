@@ -6515,87 +6515,126 @@ void MainWindow::draw() {
                     ImGui::TextWrapped("%s", rnsBanner.c_str());
                 }
 
-                // Per-interface live table.
-                // inner_width ensures horizontal scroll kicks in on narrow
-                // phone screens rather than squashing 9 columns into the
-                // available width (which makes the Actions column illegible).
-                const float rnsTableMinW = 580.0f * style::uiScale;
-                if (ImGui::BeginTable("rns_iface_table", 9,
-                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                        ImGuiTableFlags_SizingFixedFit |
-                        ImGuiTableFlags_ScrollX,
-                        ImVec2(0, 0), rnsTableMinW)) {
-                    ImGui::TableSetupScrollFreeze(0, 1);
-                    ImGui::TableSetupColumn(T("Name"),      ImGuiTableColumnFlags_WidthFixed, 90.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("Type"),      ImGuiTableColumnFlags_WidthFixed, 80.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("Up"),        ImGuiTableColumnFlags_WidthFixed, 36.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("Peers"),     ImGuiTableColumnFlags_WidthFixed, 44.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("In/Out"),    ImGuiTableColumnFlags_WidthFixed, 80.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("Last error"),ImGuiTableColumnFlags_WidthFixed, 90.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("IFAC"),      ImGuiTableColumnFlags_WidthFixed, 46.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("On"),        ImGuiTableColumnFlags_WidthFixed, 30.0f * style::uiScale);
-                    ImGui::TableSetupColumn(T("Actions"),   ImGuiTableColumnFlags_WidthFixed, 130.0f * style::uiScale);
-                    ImGui::TableHeadersRow();
+                // Per-interface card list.
+                //
+                // Phone-friendly layout: each interface is a self-contained
+                // bordered card with the action buttons (Edit / Restart /
+                // Delete) directly under the row, all reachable WITHOUT
+                // horizontal scrolling.  The previous 9-column ScrollX table
+                // hid the Actions column off-screen on narrow phone widths,
+                // so operators reported "I can't see or delete my
+                // interfaces" — the data was there, just unreachable behind
+                // a horizontal scroll they had no reason to discover.
+                //
+                // Layout per card:
+                //   line 1  — Name (bold) · type · UP/DOWN · IFAC badge
+                //   line 2  — peers · bytes in/out · enabled toggle
+                //   line 3  — last_error (wrapped, only if non-empty)
+                //   line 4  — [Edit] [Restart] [Delete] full-width row
+                //
+                // Confirmation: Delete uses a two-tap confirm (the button
+                // re-labels to "Tap again to confirm" for ~3 s) so a stray
+                // tap on a phone doesn't permanently drop a configured
+                // interface — there is no undo on the daemon side.
+                static std::string rnsDelArmedId;
+                static double      rnsDelArmedAt = 0.0;
+                const  double      rnsDelWindow  = 3.0;  // seconds
+
+                if (rnsList.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("%s", T(
+                        "No interfaces configured yet. Click '+ Add "
+                        "interface' to create one (TCP, UDP, AutoInterface, "
+                        "RNode/LoRa, KISS TNC, AX.25, I2P, or Pipe)."));
+                } else {
+                    int cardIdx = 0;
                     for (auto& row : rnsList) {
-                        ImGui::TableNextRow();
                         std::string id = row.value("id", "");
                         std::string nm = row.value("name", "");
                         std::string tp = row.value("type", "");
                         bool en = row.value("enabled", true);
                         bool up = row.value("up", false);
-                        ImGui::TableSetColumnIndex(0); ImGui::Text("%s", nm.c_str());
-                        ImGui::TableSetColumnIndex(1); ImGui::Text("%s", tp.c_str());
-                        ImGui::TableSetColumnIndex(2);
+                        bool ifacOn = row.value("ifac_active", false);
+                        std::string lastErr = row.value("last_error",
+                                                         std::string(""));
+
+                        std::string cardId = "##rns_card_" + id +
+                                              "_" + std::to_string(cardIdx++);
+                        ImGui::PushID(cardId.c_str());
+
+                        // ImGui 1.87 has no ImGuiChildFlags_AutoResizeY /
+                        // _Border. Use a BeginGroup that auto-sizes to its
+                        // contents and draw the rectangle ourselves at
+                        // EndGroup time, below.
+                        ImGui::BeginGroup();
+
+                        // ── line 1: name · type · UP/DOWN · IFAC ──
+                        ImGui::Text("%s", nm.empty() ? "(unnamed)"
+                                                     : nm.c_str());
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("[%s]", tp.c_str());
+                        ImGui::SameLine();
                         ImGui::TextColored(up ? ImVec4(0.4f,1,0.4f,1)
                                               : ImVec4(1,0.4f,0.4f,1),
-                                            "%s", up ? "UP" : "DOWN");
-                        ImGui::TableSetColumnIndex(3);
-                        ImGui::Text("%d", row.value("peers", 0));
-                        ImGui::TableSetColumnIndex(4);
-                        ImGui::Text("%lld/%lld",
-                                    (long long)row.value("bytes_in", 0),
-                                    (long long)row.value("bytes_out", 0));
-                        ImGui::TableSetColumnIndex(5);
-                        ImGui::TextWrapped("%s",
-                            row.value("last_error", "").c_str());
-                        // IFAC badge — shows "[IFAC]" in green when the
-                        // daemon reports ifac_active=true for this iface
-                        // (both netname and netkey set on the saved
-                        // config). Netkey value itself is never sent
-                        // back in status, so nothing sensitive is
-                        // displayed. Hover shows the netname so an
-                        // operator can confirm which IFAC zone an iface
-                        // belongs to without exposing the secret.
-                        ImGui::TableSetColumnIndex(6);
-                        bool ifacOn = row.value("ifac_active", false);
+                                            "  %s", up ? "UP" : "DOWN");
                         if (ifacOn) {
-                            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1),
-                                               "[IFAC]");
+                            ImGui::SameLine();
+                            ImGui::TextColored(
+                                ImVec4(0.55f, 0.85f, 0.55f, 1), "  [IFAC]");
                             if (ImGui::IsItemHovered()) {
                                 std::string nn = row.value("ifac_netname",
                                                             std::string(""));
-                                ImGui::SetTooltip("%s %s", T("IFAC netname:"),
-                                                  nn.c_str());
+                                ImGui::SetTooltip("%s %s",
+                                    T("IFAC netname:"), nn.c_str());
                             }
-                        } else {
-                            ImGui::TextDisabled("—");
                         }
-                        ImGui::TableSetColumnIndex(7);
-                        std::string toggleId = "##en_" + id;
+
+                        // ── line 2: counters + enabled toggle ──
+                        ImGui::Text("%s %d   %s %lld/%lld",
+                                    T("peers:"), row.value("peers", 0),
+                                    T("bytes in/out:"),
+                                    (long long)row.value("bytes_in", 0),
+                                    (long long)row.value("bytes_out", 0));
+                        ImGui::SameLine();
                         bool newEn = en;
+                        std::string toggleId = T("Enabled") +
+                                                std::string("##en_") + id;
                         if (ImGui::Checkbox(toggleId.c_str(), &newEn)) {
                             std::string err;
                             predator::kujhadRnsSetEnabled(id, newEn, err);
                             if (!err.empty()) rnsBanner = err;
                             pollDaemon();
                         }
-                        ImGui::TableSetColumnIndex(8);
-                        std::string editId = T("Edit") + std::string("##e_") + id;
-                        std::string restId = T("Restart") + std::string("##r_") + id;
-                        std::string delId  = T("Delete") + std::string("##d_") + id;
-                        if (ImGui::SmallButton(editId.c_str())) {
+
+                        // ── line 3: last error (only when present) ──
+                        if (!lastErr.empty()) {
+                            ImGui::TextColored(
+                                ImVec4(0.95f, 0.6f, 0.6f, 1.0f),
+                                "%s", T("Last error:"));
+                            ImGui::SameLine();
+                            ImGui::TextWrapped("%s", lastErr.c_str());
+                        }
+
+                        // ── line 4: action buttons, full-width row ──
+                        // Three equal-width buttons so all three are
+                        // touch-targets even on narrow screens.
+                        float availW = ImGui::GetContentRegionAvail().x;
+                        float gap = ImGui::GetStyle().ItemSpacing.x;
+                        float btnW = (availW - 2.0f * gap) / 3.0f;
+                        if (btnW < 60.0f * style::uiScale) {
+                            btnW = 60.0f * style::uiScale;
+                        }
+
+                        std::string editId = T("Edit") +
+                                              std::string("##e_") + id;
+                        std::string restId = T("Restart") +
+                                              std::string("##r_") + id;
+
+                        if (ImGui::Button(editId.c_str(),
+                                          ImVec2(btnW, 0))) {
                             std::string err;
-                            auto raw = predator::kujhadRnsGetInterface(id, err);
+                            auto raw = predator::kujhadRnsGetInterface(id,
+                                                                       err);
                             try {
                                 auto resp = json::parse(raw);
                                 json entry = resp.contains("result")
@@ -6611,27 +6650,68 @@ void MainWindow::draw() {
                             }
                         }
                         ImGui::SameLine();
-                        if (ImGui::SmallButton(restId.c_str())) {
+                        if (ImGui::Button(restId.c_str(),
+                                          ImVec2(btnW, 0))) {
                             std::string err;
                             predator::kujhadRnsRestartInterface(id, err);
                             if (!err.empty()) rnsBanner = err;
                             pollDaemon();
                         }
                         ImGui::SameLine();
-                        if (ImGui::SmallButton(delId.c_str())) {
-                            std::string err;
-                            predator::kujhadRnsRemoveInterface(id, err);
-                            if (!err.empty()) rnsBanner = err;
-                            pollDaemon();
+
+                        // Two-tap delete confirmation.
+                        double nowD = ImGui::GetTime();
+                        bool armed = (rnsDelArmedId == id) &&
+                                     (nowD - rnsDelArmedAt < rnsDelWindow);
+                        if (armed) {
+                            ImGui::PushStyleColor(ImGuiCol_Button,
+                                ImVec4(0.75f, 0.20f, 0.20f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                                ImVec4(0.95f, 0.40f, 0.40f, 1.0f));
+                            std::string confirmId =
+                                T("Tap again to confirm") +
+                                std::string("##d_") + id;
+                            if (ImGui::Button(confirmId.c_str(),
+                                              ImVec2(btnW, 0))) {
+                                std::string err;
+                                predator::kujhadRnsRemoveInterface(id, err);
+                                if (!err.empty()) rnsBanner = err;
+                                rnsDelArmedId.clear();
+                                pollDaemon();
+                            }
+                            ImGui::PopStyleColor(3);
+                        } else {
+                            std::string delId = T("Delete") +
+                                                 std::string("##d_") + id;
+                            if (ImGui::Button(delId.c_str(),
+                                              ImVec2(btnW, 0))) {
+                                rnsDelArmedId = id;
+                                rnsDelArmedAt = nowD;
+                            }
                         }
+
+                        ImGui::EndGroup();
+
+                        // Draw a subtle border around the just-finished
+                        // group so each card reads as a self-contained
+                        // unit on a phone screen.
+                        ImVec2 mn = ImGui::GetItemRectMin();
+                        ImVec2 mx = ImGui::GetItemRectMax();
+                        float pad = 4.0f * style::uiScale;
+                        mn.x -= pad; mn.y -= pad;
+                        mx.x  = ImGui::GetWindowPos().x +
+                                ImGui::GetWindowContentRegionMax().x;
+                        mx.y += pad;
+                        ImGui::GetWindowDrawList()->AddRect(mn, mx,
+                            ImGui::GetColorU32(ImGuiCol_Border),
+                            4.0f * style::uiScale);
+
+                        ImGui::PopID();
+                        ImGui::Spacing();
+                        ImGui::Spacing();
                     }
-                    ImGui::EndTable();
-                }
-                if (rnsList.empty()) {
-                    ImGui::TextDisabled("%s", T(
-                        "No interfaces configured yet. Click '+ Add "
-                        "interface' to create one (TCP, UDP, AutoInterface, "
-                        "RNode/LoRa, KISS TNC, AX.25, I2P, or Pipe)."));
                 }
 
                 // Keyboard-safe modal sizing helper.
