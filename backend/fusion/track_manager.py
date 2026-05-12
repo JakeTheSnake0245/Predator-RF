@@ -25,7 +25,8 @@ class TrackManager:
     """
 
     def __init__(self,
-                 proximity_estimator: Optional[ProximityEstimator] = None):
+                 proximity_estimator: Optional[ProximityEstimator] = None,
+                 custody_elector=None):
         self.tracks: Dict[str, EmitterTrack] = {}
         self.sensor_nodes: Dict[str, SensorNodeTrust] = {}
         self._associator = HardwareAwareAssociator()
@@ -35,6 +36,13 @@ class TrackManager:
         # already have a TDOA fix gets a coarse proximity estimate so
         # the map shows *something* instead of a missing dot.
         self._proximity = proximity_estimator
+        # Optional CustodyElector — when provided, _age_tracks() calls
+        # `forget(track_id)` at archive time so the elector's per-track
+        # decision cache can't grow without bound across long missions.
+        # Typed loosely (no import) to avoid pulling
+        # backend.coordination into the fusion-layer imports — the
+        # elector is duck-typed via its `forget` method.
+        self._custody_elector = custody_elector
         self._on_new_track: Optional[Callable[[EmitterTrack], None]] = None
         self._on_update: Optional[Callable[[EmitterTrack], None]] = None
         self._archived: Dict[str, EmitterTrack] = {}
@@ -151,6 +159,16 @@ class TrackManager:
             track = self.tracks.pop(tid)
             self._associator.remove_track(track)
             self._archived[tid] = track
+            # Drop the CustodyElector's cached decision for this track
+            # so the per-track cache doesn't grow with archived ids.
+            # `forget` is idempotent — safe to call even if the elector
+            # never elected for this track.
+            if self._custody_elector is not None:
+                try:
+                    self._custody_elector.forget(tid)
+                except Exception:
+                    logger.exception(
+                        "custody_elector.forget(%s) raised — ignored", tid)
             logger.debug("Track ARCHIVED: %s", tid)
 
     # ── Merge duplicate tracks ────────────────────────────────────────────────
