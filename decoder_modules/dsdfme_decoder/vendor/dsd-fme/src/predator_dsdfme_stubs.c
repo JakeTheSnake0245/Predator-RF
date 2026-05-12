@@ -28,6 +28,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <time.h>
 
 /* Vendored DSD-FME defines exitflag in dsd_main.c. We compile our own copy
  * here because dsd_main.c is excluded from the Predator build. */
@@ -137,10 +138,25 @@ void predator_dsd_push_input_samples(const int16_t *samples, size_t count) {
 
 int predator_dsd_pull_input_sample(int16_t *out_sample) {
     ensure_init();
+    if (!out_sample) {
+        /* Defensive: vendored getSymbol() always passes a stack pointer,
+         * but a null check costs nothing and makes the contract explicit. */
+        return -1;
+    }
     if (!g_running) return -1;
     int16_t s;
     if (ring_pull(&g_input, &s, 1) == 0) {
-        /* No data — return 0 silence rather than blocking the symbol loop. */
+        /* Ring empty. Sleep ~500us before returning silence, otherwise
+         * the symbol loop busy-spins at 100% on this core — under Android
+         * thermal throttle that starves the SDR DSP graph (no new samples
+         * arrive to refill the ring) and the audio sink chain
+         * (rawVoice_.swap() blocks waiting for the sink to drain), and
+         * the operator sees the entire app freeze. The sleep is short
+         * enough that real signal latency is unaffected (one symbol at
+         * 48 kHz is ~21 us; we yield for ~24 symbol-times in the silence
+         * case only). */
+        struct timespec ts = { 0, 500L * 1000L };  /* 500 us */
+        nanosleep(&ts, NULL);
         *out_sample = 0;
         return 0;
     }

@@ -59,6 +59,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <vector>
 
 #include "../../../core/src/predator/decoder_ingest.h"
 #include "../../../core/src/predator/native_decoder_registry.h"
@@ -90,6 +91,16 @@ public:
         vfo_ = sigpath::vfoManager.createVFO(name_, ImGui::WaterfallVFO::REF_CENTER,
                                               0, VFO_BANDWIDTH, VFO_SAMPLE_RATE,
                                               VFO_BANDWIDTH, VFO_BANDWIDTH, true);
+        if (!vfo_) {
+            // VFO creation can fail if no source is selected or we hit the
+            // sink-manager's per-instance cap. Fail loud so the operator sees
+            // the cause rather than a silent dead module.
+            flog::error("[DSDFME] FATAL: vfoManager.createVFO('{}') returned null. "
+                        "No source selected, or VFO slot exhausted. "
+                        "Pick a source on the SDR++ source dropdown and reload "
+                        "this module from SYS > Modules.", name_);
+            return;
+        }
         fmDemod_.init(vfo_->output, FM_DEVIATION, VFO_SAMPLE_RATE);
         // Handler<T>::init(stream<T>*, void(*)(T*,int,void*), void*) — 3 args.
         floatToShort_.init(&fmDemod_.out, sampleHandler, this);
@@ -116,9 +127,20 @@ public:
             });
         predator_dsd_set_event_cb(&DsdFmeDecoderModule::onDsdEvent, this);
 
-        // Pre-build the decoder state once at construct time so the first
-        // enable() doesn't pay the ~6 MB initState() malloc latency.
-        predator_dsd_init_decoder();
+        // ----- Pre-allocate scratch buffer for sampleHandler -----
+        // sampleHandler is called per RF DSP frame at 48 kHz; without a
+        // pre-allocated scratch we'd malloc/free a std::vector<int16_t>
+        // every frame and contend with the SDR++ DSP graph allocator.
+        // 4096 covers any plausible per-frame batch size; sampleHandler
+        // grows it on the rare overshoot and never shrinks it.
+        sampleScratch_.reserve(4096);
+
+        // NOTE: predator_dsd_init_decoder() is intentionally NOT called here.
+        // It allocates ~6 MB and previously stuttered the GUI thread at
+        // module load. predator_dsd_run_decoder_loop() calls it itself on
+        // the worker thread the first time enable() runs, paying the cost
+        // off the GUI thread. The init function is mutex-guarded and
+        // idempotent so multiple call sites are safe.
 
         gui::menu.registerEntry(name_, menuHandler, this, this);
         flog::info("[DSDFME] module instance '{}' constructed", name_);
@@ -126,45 +148,96 @@ public:
 
     ~DsdFmeDecoderModule() {
         gui::menu.removeEntry(name_);
-        if (enabled_) disable();
+        if (enabled_.load()) disable();
+        // Wait for any in-flight async cleanup spawned by disable() before
+        // tearing down member state — the cleanup thread reads members.
+        // Module destruction happens at app shutdown, NOT during the GUI
+        // render frame, so blocking here is safe. We take the lifecycle
+        // mutex briefly only to fence against a concurrent enable/disable;
+        // the join itself happens outside the lock so a long-running
+        // cleanup doesn't deadlock against itself.
+        {
+            std::lock_guard<std::mutex> lk(lifecycleMtx_);
+            // Inside the lock we just snapshot the joinable state; the
+            // join below runs after the lock is released.
+        }
+        if (cleanupThread_.joinable()) cleanupThread_.join();
         predator_dsd_set_event_cb(nullptr, nullptr);
         predator::unregisterNativeDecoder(this);
         sigpath::sinkManager.unregisterStream(name_);
-        sigpath::vfoManager.deleteVFO(vfo_);
+        if (vfo_) sigpath::vfoManager.deleteVFO(vfo_);
         flog::info("[DSDFME] module instance '{}' destructed", name_);
     }
 
     void postInit() override {}
 
     void enable() override {
-        if (enabled_) return;
-        enabled_ = true;
+        // lifecycleMtx_ serializes enable/disable/destructor against each
+        // other so cleanupThread_ access is formally race-safe even if a
+        // future caller invokes us from outside the GUI thread.
+        std::lock_guard<std::mutex> lk(lifecycleMtx_);
+        if (enabled_.load()) return;
+        if (!vfo_) {
+            flog::error("[DSDFME] enable() refused: VFO never constructed. "
+                        "Reload this module after selecting a source.");
+            return;
+        }
+        // If a previous disable() spawned an async cleanup, drain it before
+        // we touch the same DSP/thread state. Joining is bounded — by the
+        // time the user presses Start again, cleanup is almost always done.
+        if (cleanupThread_.joinable()) cleanupThread_.join();
+        enabled_.store(true);
         startPipeline();
     }
 
     void disable() override {
-        if (!enabled_) return;
-        stopPipeline();
-        enabled_ = false;
+        std::lock_guard<std::mutex> lk(lifecycleMtx_);
+        if (!enabled_.load()) return;
+        enabled_.store(false);
+        // CRITICAL: do not join worker threads on the GUI thread. Even with
+        // the input-pull backoff fix, liveScanner can take a few hundred ms
+        // to unwind through frame-sync state. >5 s on the GUI thread =
+        // Android ANR + app kill. Move the entire stopPipeline + join into
+        // a detached cleanup thread; subsequent enable()/destructor wait on
+        // the std::thread handle instead.
+        // Fence any prior cleanup first so we never run two concurrently.
+        if (cleanupThread_.joinable()) cleanupThread_.join();
+        cleanupThread_ = std::thread([this]() {
+            try {
+                stopPipeline();
+            } catch (const std::exception& e) {
+                flog::error("[DSDFME] cleanup thread caught exception: {}", e.what());
+            } catch (...) {
+                flog::error("[DSDFME] cleanup thread caught unknown exception");
+            }
+        });
     }
 
-    bool isEnabled() override { return enabled_; }
+    bool isEnabled() override { return enabled_.load(); }
 
 private:
     // ===== RF input handler: float -> int16 -> input ring =====
 
     static void sampleHandler(float* data, int count, void* ctx) {
         auto* self = static_cast<DsdFmeDecoderModule*>(ctx);
+        if (!self || !data || count <= 0) return;
         if (!self->running_.load(std::memory_order_acquire)) return;
 
-        std::vector<int16_t> pcm(count);
+        // Reuse the pre-allocated scratch buffer (constructor reserves 4096).
+        // Grow on the rare overshoot, never shrink. sampleHandler is the
+        // only writer to sampleScratch_, called from the SDR DSP thread
+        // serialized by SDR++; no lock needed.
+        if (self->sampleScratch_.size() < static_cast<size_t>(count)) {
+            self->sampleScratch_.resize(static_cast<size_t>(count));
+        }
+        int16_t* pcm = self->sampleScratch_.data();
         for (int i = 0; i < count; i++) {
             float s = data[i] * 32767.0f;
             if      (s >  32767.0f) s =  32767.0f;
             else if (s < -32768.0f) s = -32768.0f;
             pcm[i] = static_cast<int16_t>(s);
         }
-        predator_dsd_push_input_samples(pcm.data(), pcm.size());
+        predator_dsd_push_input_samples(pcm, static_cast<size_t>(count));
     }
 
     // ===== Voice pump: voice ring (8 kHz int16) -> rawVoice_ stream (float) =====
@@ -226,15 +299,28 @@ private:
         bool was_running = running_.exchange(false);
         if (!was_running) return;
 
-        // Signal both worker threads to wind down.
+        // Signal both worker threads to wind down BEFORE unblocking
+        // rawVoice_. predator_dsd_set_running(0) sets g_running=0 and
+        // exitflag=1, which the input-pull backoff observes within ~500us
+        // (next nanosleep return), so liveScanner unwinds promptly.
         predator_dsd_set_running(0);
 
-        // Stop the pumped stream first; this makes rawVoice_.swap() return false
-        // so the voice pump thread breaks out of its loop instead of blocking.
+        // Stop the pumped stream so rawVoice_.swap() returns false and the
+        // voice pump thread breaks out of its loop instead of blocking.
         rawVoice_.stopWriter();
 
+        // Bounded join with telemetry: warn if either worker takes longer
+        // than 1 s to exit. With the fixes above we measure ~50-200 ms on
+        // a Galaxy S22; >1 s indicates a regression we want to catch.
+        const auto t0 = std::chrono::steady_clock::now();
         if (voicePump_.joinable())     voicePump_.join();
         if (decoderWorker_.joinable()) decoderWorker_.join();
+        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        if (elapsed_ms > 1000) {
+            flog::warn("[DSDFME] worker join took {} ms (expected <500 ms). "
+                       "Investigate liveScanner exit latency.", elapsed_ms);
+        }
 
         // Re-arm the stream for the next start cycle.
         rawVoice_.clearWriteStop();
@@ -246,7 +332,7 @@ private:
         floatToShort_.stop();
         fmDemod_.stop();
 
-        flog::info("[DSDFME] pipeline stopped");
+        flog::info("[DSDFME] pipeline stopped (join took {} ms)", elapsed_ms);
     }
 
     // ===== Sample-rate change (audio device switched) =====
@@ -349,6 +435,17 @@ private:
     // Worker threads
     std::thread                                       decoderWorker_;
     std::thread                                       voicePump_;
+    // Async cleanup thread: disable() spawns this so the GUI thread never
+    // blocks on liveScanner exit. enable() and the destructor join it
+    // before touching pipeline state. lifecycleMtx_ serializes the three
+    // entry points (enable/disable/destructor) so cleanupThread_ handle
+    // access is race-safe even from non-GUI callers.
+    std::thread                                       cleanupThread_;
+    std::mutex                                        lifecycleMtx_;
+
+    // Pre-allocated scratch buffer for sampleHandler (avoids per-frame
+    // heap traffic at 48 kHz). Only written from the SDR DSP thread.
+    std::vector<int16_t>                              sampleScratch_;
 
     // Lifecycle / metadata
     std::atomic<bool>                                 enabled_   { false };
