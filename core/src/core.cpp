@@ -260,6 +260,7 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["predatorExtendDwellOnStrongHit"] = true;
     defConfig["predatorStrongHitSnrDb"] = 18.0f;
     defConfig["predatorClassifyAutoMarker"] = true;
+    defConfig["predatorHeldFrequencies"] = json::array();
     defConfig["predatorDsdFmeEnabled"] = false;
     defConfig["predatorDsdFmeHost"] = "127.0.0.1";
     defConfig["predatorDsdFmePort"] = 7355;

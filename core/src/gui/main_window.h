@@ -4,6 +4,7 @@
 #include <dsp/types.h>
 #include <dsp/stream.h>
 #include <signal_path/vfo_manager.h>
+#include <predator/hold_manager.h>
 #include <string>
 #include <utils/event.h>
 #include <mutex>
@@ -105,6 +106,11 @@ private:
     double predatorLastAutoEventFrequency = 0.0;
     double predatorSelectedHitFrequency = 0.0;
     bool predatorHoldOnNewHit = true;
+    // Multi-VFO Hold (roadmap #4). Lifecycle, persistence, JSON serde
+    // and unit-tested logic live in core/src/predator/hold_manager.h;
+    // wire-up below in main_window.cpp injects sigpath::vfoManager
+    // lambdas and ticks once per frame after the marker re-anchor loop.
+    predator::hold::HoldManager predatorHoldManager;
     bool predatorSuppressDuplicateHits = true;
     bool predatorExtendDwellOnStrongHit = true;
     bool predatorClassifyAutoMarker = true;

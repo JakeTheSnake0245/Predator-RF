@@ -250,6 +250,13 @@ void MainWindow::init() {
     predatorExtendDwellOnStrongHit = core::configManager.conf["predatorExtendDwellOnStrongHit"];
     predatorStrongHitSnrDb = core::configManager.conf["predatorStrongHitSnrDb"];
     predatorClassifyAutoMarker = core::configManager.conf["predatorClassifyAutoMarker"];
+    // Multi-VFO Hold: load persisted entries (runtime starts inactive;
+    // the per-frame tick after the marker re-anchor loop will (re)create
+    // VFOs for any entries currently in-band).
+    if (core::configManager.conf.contains("predatorHeldFrequencies")) {
+        try { predatorHoldManager.fromJson(core::configManager.conf["predatorHeldFrequencies"]); }
+        catch (...) { /* malformed config row — ignore, defaults survive */ }
+    }
 
     // Kujhad fleet console state. Defaults are populated by core::init() so
     // these reads are always present.
@@ -796,6 +803,12 @@ void MainWindow::draw() {
                 cb((int)next);
             }
         });
+    };
+
+    auto savePredatorHeldFrequencies = [&]() {
+        core::configManager.acquire();
+        core::configManager.conf["predatorHeldFrequencies"] = predatorHoldManager.toJson();
+        core::configManager.release(true);
     };
 
     auto savePredatorState = [&]() {
@@ -2985,6 +2998,52 @@ void MainWindow::draw() {
         }
     }
 
+    // Multi-VFO Hold (roadmap #4): drive lifecycle of all held entries.
+    // Mirrors the marker re-anchor pattern above, but adds graceful
+    // teardown when the source retunes a held entry out of bandwidth.
+    // The HoldManager is sigpath/ImGui-free — we inject the VFO ops as
+    // lambdas so the same logic is unit-testable from g++ on Replit
+    // (see tests/hold_manager_test.cpp). Anchor wraps `setBandwidth`
+    // too because some held entries (e.g. ADS-B at 2.5 MHz) want a
+    // wider passband than the default radio decoder would set.
+    {
+        double srForHold = std::max<double>(gui::waterfall.getBandwidth(), 1.0);
+        double cfForHold = gui::waterfall.getCenterFrequency();
+        int64_t nowNs = (int64_t)(ImGui::GetTime() * 1e9);
+        auto createCb = [&](const predator::hold::HoldEntry& e,
+                            const std::string& vfoName,
+                            double initialOffset) -> bool {
+            if (sigpath::vfoManager.vfoExists(vfoName)) return true;
+            double maxBw = std::max<double>(srForHold, e.bandwidth_hz);
+            auto* v = sigpath::vfoManager.createVFO(
+                vfoName, ImGui::WaterfallVFO::REF_CENTER,
+                initialOffset, e.bandwidth_hz, maxBw, 200.0, maxBw, false);
+            if (!v) return false;
+            sigpath::vfoManager.setColor(vfoName, IM_COL32(95, 180, 220, 255));
+            return true;
+        };
+        auto destroyCb = [&](const std::string& vfoName) {
+            if (sigpath::vfoManager.vfoExists(vfoName)) {
+                sigpath::vfoManager.deleteVFO(vfoName);
+            }
+        };
+        auto anchorCb = [&](const std::string& vfoName, double offset, double bw) {
+            if (!sigpath::vfoManager.vfoExists(vfoName)) return;
+            sigpath::vfoManager.setReference(vfoName, ImGui::WaterfallVFO::REF_CENTER);
+            sigpath::vfoManager.setCenterOffset(vfoName, offset);
+            sigpath::vfoManager.setBandwidth(vfoName, bw);
+        };
+        // existsCb lets the manager rebuild VFOs that were destroyed
+        // out from under it (decoder module reload, manual operator
+        // teardown, etc.). Without this the runtime would stay stuck
+        // at vfo_active=true forever and never recreate.
+        auto existsCb = [&](const std::string& vfoName) {
+            return sigpath::vfoManager.vfoExists(vfoName);
+        };
+        predatorHoldManager.tick(cfForHold, srForHold, nowNs,
+                                 createCb, destroyCb, anchorCb, existsCb);
+    }
+
     if (!predatorScanRunning && predatorMissionMode == PREDATOR_MODE_CLASSIFY && predatorClassifyAutoMarker && playing) {
         double now = ImGui::GetTime();
         double classifySweepSeconds = (double)std::max<int>(250, dwellMs) / 1000.0;
@@ -3706,6 +3765,50 @@ void MainWindow::draw() {
                 }
             }
 
+            if (ImGui::CollapsingHeader(T("Held Frequencies"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Text("Held: %d / %d", (int)predatorHoldManager.size(), (int)predatorHoldManager.maxEntries());
+                ImGui::TextDisabled("%s", T("Persistent multi-VFO hold list (decoded only when in-band)."));
+                if (predatorHoldManager.size() == 0) {
+                    ImGui::TextDisabled("%s", T("No entries. Use \"+ Hold\" on a hit row."));
+                }
+                else {
+                    auto entriesSnap = predatorHoldManager.entries();  // copy for safe iteration
+                    std::string toRemove;
+                    bool toggleId = false; std::string toggleTarget; bool toggleNew = false;
+                    for (const auto& e : entriesSnap) {
+                        auto rt = predatorHoldManager.runtimeFor(e.id);
+                        const char* statusLabel =
+                            !e.enabled       ? "paused"
+                            : rt.vfo_active  ? "active"
+                            : rt.in_band     ? "starting"
+                                             : "out-of-band";
+                        ImGui::PushID(e.id.c_str());
+                        ImGui::TextWrapped("H%s  %s  %s  [%s]",
+                            e.id.c_str(),
+                            formatFrequency(e.frequency_hz).c_str(),
+                            predator::hold::decoderKindToString(e.decoder),
+                            statusLabel);
+                        if (!e.label.empty()) {
+                            ImGui::TextDisabled("  %s", e.label.c_str());
+                        }
+                        float bw = (ImGui::GetContentRegionAvail().x - 4.0f * style::uiScale) * 0.5f;
+                        if (ImGui::Button(e.enabled ? T("Pause") : T("Resume"), ImVec2(bw, 0))) {
+                            toggleId = true; toggleTarget = e.id; toggleNew = !e.enabled;
+                        }
+                        ImGui::SameLine(0, 4.0f * style::uiScale);
+                        if (ImGui::Button(T("Remove"), ImVec2(bw, 0))) {
+                            toRemove = e.id;
+                        }
+                        ImGui::PopID();
+                        ImGui::Separator();
+                    }
+                    bool changed = false;
+                    if (toggleId) { predatorHoldManager.setEnabled(toggleTarget, toggleNew); changed = true; }
+                    if (!toRemove.empty()) { predatorHoldManager.remove(toRemove); changed = true; }
+                    if (changed) savePredatorHeldFrequencies();
+                }
+            }
+
             if (ImGui::CollapsingHeader(T("Marker Pool"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 int assigned = assignedMarkerCount();
                 ImGui::Text("Assigned: %d / %d", assigned, predatorMarkerSlots);
@@ -4028,6 +4131,28 @@ void MainWindow::draw() {
                             hits[i]["state"] = "exclude";
                             missionRowsChanged = true;
                             detectedHitsChanged = true;
+                        }
+                        // Multi-VFO Hold: pin this hit's frequency into the
+                        // persistent hold list. Decoder kind is mapped from
+                        // the hit's existing decoder choice; falls back to
+                        // NBFM when the hit has no decoder set.
+                        if (ImGui::Button(T("+ Hold"), ImVec2(halfWidth, 0))) {
+                            std::string decLabel = readJsonString(hits[i], "decoder", "None");
+                            predator::hold::DecoderKind dk = predator::hold::DecoderKind::Radio_NBFM;
+                            if      (decLabel == "RTL433")       dk = predator::hold::DecoderKind::Native_RTL433;
+                            else if (decLabel == "DSD-FME")      dk = predator::hold::DecoderKind::Native_DSDFME_P25;
+                            else if (decLabel == "Analog Voice") dk = predator::hold::DecoderKind::Radio_NBFM;
+                            else if (decLabel == "Raw IQ/Data")  dk = predator::hold::DecoderKind::Radio_RAW;
+                            double bwHz = std::max<double>(readJsonDouble(hits[i], "bandwidth", 12500.0), 200.0);
+                            std::string id = predatorHoldManager.add(
+                                hitFrequency, bwHz, dk, name,
+                                (int64_t)(ImGui::GetTime() * 1e9));
+                            if (!id.empty()) {
+                                savePredatorHeldFrequencies();
+                            }
+                            // Silent rejection on dup/cap is acceptable —
+                            // the operator sees the Held panel count not
+                            // change and can inspect from the Hits tab.
                         }
                         ImGui::Separator();
                         ImGui::PopID();
