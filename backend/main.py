@@ -17,6 +17,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from typing import Optional
 
 # Ensure project root is on sys.path so 'backend.*' imports resolve regardless
@@ -36,6 +37,8 @@ from backend.intelligence.rf_baseline import RFBaseline
 from backend.api.routes.events import push_event
 from backend.persistence import MissionStore
 from backend.fusion.tdoa_coordinator import TDOACoordinator
+from backend.fusion.stationarity_gate import (
+    FixCandidate, HistoryPoint, StationarityGate)
 from backend.output import CoTEmitter
 from backend.rns.bridge import RNSCotBridge
 from backend.rns.daemon import RNSDaemon
@@ -86,6 +89,22 @@ class PredatorBackend:
             proximity_estimator=_proximity,
             custody_elector=self.custody_elector)
         self.fleet_manager = KujhadFleetManager()
+
+        # StationarityGate — sanity-check incoming TDOA fixes against
+        # the track's recent location history and classify motion. The
+        # gate is stateless w.r.t. tracks (each call takes the per-
+        # track history list inline), so we keep one shared instance
+        # for the whole backend; per-track state lives on EmitterTrack.
+        # Configurable via STATIONARITY_* env vars; sane defaults
+        # cover urban + general-aviation scenarios.
+        # Direct field access (not getattr) so a future config typo
+        # fails at startup rather than silently using the gate's
+        # module-level defaults.
+        self.stationarity_gate = StationarityGate(
+            v_max_mps=config.stationarity_v_max_mps,
+            dt_floor_s=config.stationarity_dt_floor_s,
+            history_max=config.stationarity_history_max,
+        )
 
         # TDOA geolocation — needs ≥2 GPS-synced nodes hearing the same
         # emitter inside a 5s window. Was previously instantiated nowhere;
@@ -375,6 +394,42 @@ class PredatorBackend:
         track = self.track_manager.tracks.get(emitter_id)
         if track is None:
             return
+
+        # StationarityGate: reject TDOA fixes that imply impossible
+        # motion (solver glitches, transient node clock skew). The
+        # gate is bypassed for NEW tracks (no history to compare
+        # against) and for sub-floor dt (sub-2s repeats where a small
+        # error spike alone would imply hundreds of m/s). On accept,
+        # we both apply the new lat/lon AND append to the track's
+        # bounded location_history; on reject we log and bail without
+        # corrupting the track's known position. The classifier's
+        # output drives `track.motion_state`, which feeds STABLE
+        # promotion in EmitterTrack._advance_state.
+        candidate = FixCandidate(
+            lat=result.estimated_lat,
+            lon=result.estimated_lon,
+            ellipse_a_m=result.ellipse_a_m,
+            timestamp_ns=time.time_ns())
+        history = [HistoryPoint(*entry) for entry in track.location_history]
+        verdict = self.stationarity_gate.evaluate(
+            candidate, history, prior_motion_state=track.motion_state)
+        if not verdict.accepted:
+            logger.info(
+                "Track %s TDOA fix REJECTED by stationarity gate: %s",
+                emitter_id[:8], verdict.reason)
+            return
+
+        # Append to bounded history. Stored as a tuple so to_dict()
+        # serialises naturally without needing HistoryPoint to be
+        # JSON-aware.
+        track.location_history.append((
+            candidate.lat, candidate.lon,
+            candidate.timestamp_ns, candidate.ellipse_a_m))
+        if len(track.location_history) > self.stationarity_gate.history_max:
+            track.location_history = track.location_history[
+                -self.stationarity_gate.history_max:]
+        track.motion_state = verdict.motion_state
+
         track.estimated_lat = result.estimated_lat
         track.estimated_lon = result.estimated_lon
         track.location_confidence = result.location_confidence

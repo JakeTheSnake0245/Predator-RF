@@ -1,0 +1,165 @@
+{
+  "_comment": "Shared scenario fixture for the C++/Python parity test (scripts/test_custody_parity.py). Each step is one elect() call against the shared elector instance — state carries across steps so handover scenarios can be expressed naturally. node_id 'OFFLINE' is just a name; remove a node from a step to simulate it going offline. Do NOT add Python- or C++-only fields to the schema — the parity harness asserts byte-identical decisions modulo formatting.",
+  "k_total": 3,
+  "handover_overlap_s": 15.0,
+  "stale_gps_after_s": 300.0,
+  "steps": [
+    {
+      "_name": "single low-threat track, two equal nodes — alpha tiebreak",
+      "now_ns": 2000000000000000000,
+      "track": {
+        "track_id": "trk-1",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.7},
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.7}
+      ]
+    },
+    {
+      "_name": "high-threat track — rejects unsynced node",
+      "now_ns": 2000001000000000000,
+      "track": {
+        "track_id": "trk-2",
+        "threat_level": "high",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": false, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.9},
+        {"node_id": "B", "gps_synchronized": true,  "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.7}
+      ]
+    },
+    {
+      "_name": "trk-1 handover — B overtakes A",
+      "now_ns": 2000002000000000000,
+      "track": {
+        "track_id": "trk-1",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.4},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.95}
+      ]
+    },
+    {
+      "_name": "trk-1 mid-overlap — handover_from must persist",
+      "now_ns": 2000007000000000000,
+      "track": {
+        "track_id": "trk-1",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.4},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.95}
+      ]
+    },
+    {
+      "_name": "trk-1 past deadline — A drops to stand_down",
+      "now_ns": 2000022000000000000,
+      "track": {
+        "track_id": "trk-1",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.4},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.95}
+      ]
+    },
+    {
+      "_name": "decoder gate — wanted protocol missing on A",
+      "now_ns": 2000023000000000000,
+      "track": {
+        "track_id": "trk-3",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321,
+        "protocol": "p25"
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.95, "available_decoders": ["rtl433"]},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.7,  "available_decoders": ["p25", "rtl433"]}
+      ]
+    },
+    {
+      "_name": "load score spreads custody — A loaded, B idle",
+      "now_ns": 2000024000000000000,
+      "track": {
+        "track_id": "trk-4",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.7},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 1999990000000000000, "sensitivity_trust": 0.8, "trust_score": 0.7}
+      ],
+      "node_loads": {"A": 3, "B": 0}
+    },
+    {
+      "_name": "stale-GPS hard gate (without unsync confound) — high-threat track, both GPS-synced but A's fix is 600s old",
+      "now_ns": 2000025000000000000,
+      "track": {
+        "track_id": "trk-5",
+        "threat_level": "high",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000024400000000000, "sensitivity_trust": 0.8, "trust_score": 0.95},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000024990000000000, "sensitivity_trust": 0.8, "trust_score": 0.6}
+      ]
+    },
+    {
+      "_name": "thermal-penalty winner inversion — hot node has higher trust but cool node should still win after the 0.5x penalty",
+      "now_ns": 2000026000000000000,
+      "track": {
+        "track_id": "trk-6",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000025990000000000, "sensitivity_trust": 0.8, "trust_score": 0.7, "thermal_throttling_active": false},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000025990000000000, "sensitivity_trust": 0.8, "trust_score": 0.95, "thermal_throttling_active": true}
+      ]
+    },
+    {
+      "_name": "all-gated — every node fails the high-threat GPS-sync gate, primary must be null and reason must surface the rejection",
+      "now_ns": 2000027000000000000,
+      "track": {
+        "track_id": "trk-7",
+        "threat_level": "critical",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": false, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000026990000000000, "sensitivity_trust": 0.8, "trust_score": 0.9},
+        {"node_id": "B", "gps_synchronized": false, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000026990000000000, "sensitivity_trust": 0.8, "trust_score": 0.7}
+      ]
+    },
+    {
+      "_name": "empty-decoder-capability neutrality — protocol known but node has not reported decoders, must NOT hard-gate (caps probe hasn't run)",
+      "now_ns": 2000028000000000000,
+      "track": {
+        "track_id": "trk-8",
+        "threat_level": "low",
+        "estimated_lat": 47.6062,
+        "estimated_lon": -122.3321,
+        "protocol": "p25"
+      },
+      "nodes": [
+        {"node_id": "A", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000027990000000000, "sensitivity_trust": 0.8, "trust_score": 0.8},
+        {"node_id": "B", "gps_synchronized": true, "gps_lat": 47.6, "gps_lon": -122.3, "gps_updated_ns": 2000027990000000000, "sensitivity_trust": 0.8, "trust_score": 0.6, "available_decoders": ["p25"]}
+      ]
+    }
+  ]
+}
