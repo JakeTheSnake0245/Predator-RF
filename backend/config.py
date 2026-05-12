@@ -61,6 +61,19 @@ class BackendConfig:
     tdoa_enabled: bool = field(
         default_factory=lambda: _env_bool("TDOA_ENABLED", True))
 
+    # ── Stationarity gate ─────────────────────────────────────────────────
+    # Sanity-check incoming TDOA fixes and classify emitter motion.
+    # v_max_mps ≈ 360 km/h covers cars/boats/general aviation; bump
+    # via env when chasing a faster target (jet, supersonic). dt_floor
+    # gates out velocity-check noise on rapid back-to-back fixes.
+    # history_max bounds per-track memory growth.
+    stationarity_v_max_mps: float = field(
+        default_factory=lambda: _env_float("STATIONARITY_V_MAX_MPS", 100.0))
+    stationarity_dt_floor_s: float = field(
+        default_factory=lambda: _env_float("STATIONARITY_DT_FLOOR_S", 2.0))
+    stationarity_history_max: int = field(
+        default_factory=lambda: _env_int("STATIONARITY_HISTORY_MAX", 20))
+
     # ── Persistence ───────────────────────────────────────────────────────
     # SQLite-backed mission log (events / tracks / assessments). On crash
     # or restart, active tracks are rehydrated from this DB so an operator

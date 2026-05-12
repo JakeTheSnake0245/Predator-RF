@@ -78,6 +78,18 @@ class EmitterTrack:
     # same physical emitter heard by both local + peer clusters.
     upstream_source: Optional[str] = None
 
+    # Stationarity gate state. `location_history` is a bounded list of
+    # accepted TDOA fixes (each entry is a 4-tuple
+    # `(lat, lon, timestamp_ns, ellipse_a_m_or_None)`) that the
+    # `StationarityGate` reads to compute `motion_state`. The list is
+    # capped by `StationarityGate.history_max` (default 20). We store
+    # tuples rather than HistoryPoint dataclasses so the field
+    # serialises naturally via `to_dict()` without extra plumbing.
+    # `motion_state ∈ {"unknown", "stationary", "mobile"}`. UNKNOWN
+    # until the gate has seen >=2 fixes.
+    location_history: List[tuple] = field(default_factory=list)
+    motion_state: str = "unknown"
+
     def update(self, frequency: float, power_dbfs: float,
                node_id: str, trust_score: float, timestamp_ns: int):
         self.primary_frequency = frequency
@@ -105,8 +117,22 @@ class EmitterTrack:
     def _advance_state(self):
         if self.state == TrackState.NEW and self.observation_count >= 3:
             self.state = TrackState.TRACKING
-        elif self.state == TrackState.TRACKING and self.observation_count >= 10:
-            self.state = TrackState.STABLE
+        elif self.state == TrackState.TRACKING:
+            # STABLE promotion now factors in motion_state. Stationary
+            # tracks promote at the original threshold (10 obs);
+            # mobile tracks need more observations because their
+            # position is by definition not converging, so the
+            # "stable" label there means "we've been confidently
+            # tracking the moving emitter for long enough" rather
+            # than "the emitter has stopped moving". Unknown motion
+            # state (no TDOA history yet) keeps the legacy threshold
+            # so non-TDOA tracks aren't blocked from promotion.
+            if self.motion_state == "mobile":
+                threshold = 25
+            else:
+                threshold = 10
+            if self.observation_count >= threshold:
+                self.state = TrackState.STABLE
 
     def age_seconds(self) -> float:
         return (time.time_ns() - self.last_seen_ns) / 1e9
@@ -135,4 +161,10 @@ class EmitterTrack:
             "tdoa_ellipse_b_m": self.tdoa_ellipse_b_m,
             "tdoa_ellipse_theta_deg": self.tdoa_ellipse_theta_deg,
             "upstream_source": self.upstream_source,
+            "motion_state": self.motion_state,
+            # Don't ship the full history dict in the wire payload —
+            # operators see motion_state, the history is for the
+            # gate's internal use. If a future UI wants to render
+            # the trail we can add a `location_history` key here
+            # (gated by an opt-in config) at that time.
         }
