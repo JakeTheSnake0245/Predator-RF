@@ -423,6 +423,38 @@ int main() {
     test_clear_and_tick_destroys_all();
     test_existscb_recovers_from_external_teardown();
     test_null_callbacks_are_safe();
+    // ----- Architect-flagged: bandwidth override is applied per-frame
+    // by anchorCb and inBand, not just at create time.
+    {
+        using namespace predator::hold;
+        HoldManager hm;
+        std::string id = hm.add(433.92e6, 12500.0, DecoderKind::Native_RTL433,
+                                "ovr", 1);
+        CHECK(!id.empty());
+        std::string lastVfo;
+        double      lastBw = -1.0;
+        auto createCb = [&](const HoldEntry&, const std::string& v, double) {
+            lastVfo = v; return true;
+        };
+        auto destroyCb = [&](const std::string&) {};
+        auto anchorCb  = [&](const std::string&, double, double bw) { lastBw = bw; };
+        auto bwOver    = [](const HoldEntry& he) -> double {
+            return (he.decoder == DecoderKind::Native_RTL433) ? 250000.0 : 0.0;
+        };
+        // Tick 1: create + anchor.  Anchor must see effective bw 250k.
+        hm.tick(433.92e6, 2.4e6, 1, createCb, destroyCb, anchorCb,
+                HoldManager::ExistsFn{}, bwOver);
+        CHECK(lastBw == 250000.0);
+        // Tick 2: anchor again. Must STILL be 250k (drift check).
+        lastBw = -1.0;
+        hm.tick(433.92e6, 2.4e6, 2, createCb, destroyCb, anchorCb,
+                HoldManager::ExistsFn{}, bwOver);
+        CHECK(lastBw == 250000.0);
+        // Without the override, anchor would see 12500.
+        lastBw = -1.0;
+        hm.tick(433.92e6, 2.4e6, 3, createCb, destroyCb, anchorCb);
+        CHECK(lastBw == 12500.0);
+    }
     std::printf("hold_manager_test: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

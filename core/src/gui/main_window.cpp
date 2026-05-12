@@ -3010,14 +3010,47 @@ void MainWindow::draw() {
         double srForHold = std::max<double>(gui::waterfall.getBandwidth(), 1.0);
         double cfForHold = gui::waterfall.getCenterFrequency();
         int64_t nowNs = (int64_t)(ImGui::GetTime() * 1e9);
+
+        // Roadmap #5: HoldDecoderBinder must tear down decoder instances
+        // BEFORE HoldManager destroys the VFOs they're bound to (the
+        // bound dsp::sink::Handler would otherwise read from a freed
+        // stream).  preTick uses the same in-band math HoldManager.tick
+        // is about to apply so its predictions match.
+        auto destroyInstCb = [&](const std::string& instanceName) {
+            // Order matters: deleteInstance triggers the module dtor
+            // which calls handler_.stop() — that detach must happen
+            // BEFORE clearBoundVfoFor, so a future re-spawn under the
+            // same name doesn't accidentally inherit a stale binding
+            // mid-teardown.  In bound mode the module dtor never deletes
+            // the bound VFO (HoldManager still owns it).
+            core::moduleManager.deleteInstance(instanceName);
+            predator::hold::clearBoundVfoFor(instanceName);
+        };
+        // instanceExistsCb closes a recovery gap: if the operator (or a
+        // module reload) deletes our hold-bound RTL433 instance via the
+        // source-side menu, active_ would otherwise stay stuck forever.
+        auto instanceExistsCb = [&](const std::string& instanceName) {
+            return core::moduleManager.instances.find(instanceName)
+                   != core::moduleManager.instances.end();
+        };
+        predatorHoldDecoderBinder.preTick(predatorHoldManager.entries(),
+                                          cfForHold, srForHold,
+                                          destroyInstCb, instanceExistsCb);
+
+        // VFO bandwidth override: when an entry's decoder requires a
+        // specific input rate (e.g. RTL433 → 250 kHz), force the VFO
+        // bandwidth to that — the operator-displayed bandwidth on the
+        // HoldEntry is purely a hint for non-decoder-bound entries.
         auto createCb = [&](const predator::hold::HoldEntry& e,
                             const std::string& vfoName,
                             double initialOffset) -> bool {
             if (sigpath::vfoManager.vfoExists(vfoName)) return true;
-            double maxBw = std::max<double>(srForHold, e.bandwidth_hz);
+            double reqBw = predator::hold::requiredVfoBandwidth(e.decoder);
+            double bw    = (reqBw > 0.0) ? reqBw : e.bandwidth_hz;
+            double maxBw = std::max<double>(srForHold, bw);
             auto* v = sigpath::vfoManager.createVFO(
                 vfoName, ImGui::WaterfallVFO::REF_CENTER,
-                initialOffset, e.bandwidth_hz, maxBw, 200.0, maxBw, false);
+                initialOffset, bw, maxBw, 200.0, maxBw, false);
             if (!v) return false;
             sigpath::vfoManager.setColor(vfoName, IM_COL32(95, 180, 220, 255));
             return true;
@@ -3040,8 +3073,44 @@ void MainWindow::draw() {
         auto existsCb = [&](const std::string& vfoName) {
             return sigpath::vfoManager.vfoExists(vfoName);
         };
+        // Decoder-aware effective bandwidth: anchorCb uses this every
+        // frame so it doesn't reset a bound RTL433 VFO back to the
+        // operator's UI bandwidth.  inBand inside tick() also uses it
+        // so a narrow UI bw doesn't falsely tip a 250 kHz RTL433 VFO
+        // out-of-band at the spectrum edge.
+        auto bwOverrideFn = [](const predator::hold::HoldEntry& e) -> double {
+            return predator::hold::requiredVfoBandwidth(e.decoder);  // 0 → fall back
+        };
         predatorHoldManager.tick(cfForHold, srForHold, nowNs,
-                                 createCb, destroyCb, anchorCb, existsCb);
+                                 createCb, destroyCb, anchorCb,
+                                 existsCb, bwOverrideFn);
+
+        // Spawn decoder instances for entries whose VFOs now exist.
+        auto vfoExistsForBinder = [&](const std::string& vfoName) {
+            return sigpath::vfoManager.vfoExists(vfoName);
+        };
+        auto createInstCb = [&](const std::string& instanceName,
+                                const std::string& moduleName,
+                                const std::string& vfoName) -> bool {
+            // Pre-register the binding BEFORE createInstance so the
+            // decoder module's ctor sees it on construction (see
+            // hold_binding_registry.h contract).
+            predator::hold::setBoundVfoFor(instanceName, vfoName);
+            int rc = core::moduleManager.createInstance(instanceName, moduleName);
+            if (rc < 0) {
+                predator::hold::clearBoundVfoFor(instanceName);
+                return false;
+            }
+            return true;
+        };
+        // Pass instanceExistsCb to postTick too so that a one-frame
+        // false-negative in preTick (which would erase active_ but the
+        // module instance actually still lives) self-heals via the
+        // adoption path: createInstance fails with "already exists" →
+        // binder re-tracks the live instance instead of looping forever.
+        predatorHoldDecoderBinder.postTick(predatorHoldManager.entries(),
+                                           vfoExistsForBinder, createInstCb,
+                                           instanceExistsCb);
     }
 
     if (!predatorScanRunning && predatorMissionMode == PREDATOR_MODE_CLASSIFY && predatorClassifyAutoMarker && playing) {

@@ -52,6 +52,7 @@
 
 #include "../../../core/src/predator/decoder_ingest.h"
 #include "../../../core/src/predator/native_decoder_registry.h"
+#include "../../../core/src/predator/hold_binding_registry.h"
 
 extern "C" {
     #include "rtl_433.h"
@@ -94,6 +95,15 @@ struct PredatorDataOutput {
 class Rtl433DecoderModule : public ModuleManager::Instance {
 public:
     explicit Rtl433DecoderModule(std::string name) : name_(std::move(name)) {
+        // Hold-bound mode: HoldDecoderBinder pre-registers a target VFO
+        // name for instances it spawns (predator::hold::setBoundVfoFor)
+        // BEFORE calling moduleManager.createInstance.  When the binding
+        // is present we skip our own createVFO and instead bind the DSP
+        // handler to the existing held VFO.  See
+        // core/src/predator/hold_binding_registry.h for the contract.
+        boundVfoName_ = predator::hold::getBoundVfoFor(name_);
+        boundMode_    = !boundVfoName_.empty();
+
         // Persist + load module config.
         config.acquire();
         if (!config.conf.contains(name_)) {
@@ -104,6 +114,11 @@ public:
         enabled_ = config.conf[name_]["enabled"];
         amScale_ = config.conf[name_]["amScale"];
         config.release(true);
+
+        // Bound instances are spawned solely to decode their bound VFO,
+        // so default enabled=true regardless of persisted state — the
+        // operator paused/disabled state lives on the HoldEntry itself.
+        if (boundMode_) enabled_ = true;
 
         // Working buffers + pulse_data scratch.
         amBuf_.resize(RTL433_BLOCK_HINT);
@@ -172,30 +187,50 @@ private:
 
         pulseDetect_ = pulse_detect_create();
 
-        // Hook the SDRPP signal path. VFO sample rate == bandwidth ==
-        // RTL433_INPUT_RATE so we don't need a resampler in front.
-        vfo_ = sigpath::vfoManager.createVFO(
-            name_,
-            ImGui::WaterfallVFO::REF_CENTER,
-            0.0,                                  // offset (centered on tuned freq)
-            (double)RTL433_INPUT_RATE,            // bandwidth
-            (double)RTL433_INPUT_RATE,            // output sample rate
-            (double)RTL433_INPUT_RATE,            // ref bandwidth
-            (double)RTL433_INPUT_RATE,            // min bandwidth
-            true                                  // bandwidth locked
-        );
-        if (!vfo_) {
-            flog::error("[rtl433_decoder] failed to create VFO");
-            cleanupCfg();
-            return;
+        // Hook the SDRPP signal path.
+        VFOManager::VFO* targetVfo = nullptr;
+        if (boundMode_) {
+            // Bound mode: HoldManager owns the VFO; we just hook the
+            // sample stream.  We do NOT delete this VFO on stop — see
+            // stopPipeline() below.
+            targetVfo = sigpath::vfoManager.findVFO(boundVfoName_);
+            if (!targetVfo) {
+                flog::error("[rtl433_decoder] bound VFO '{}' not found",
+                            boundVfoName_);
+                cleanupCfg();
+                return;
+            }
+            vfo_ = nullptr;  // caller owns it
+        } else {
+            // Legacy mode: own a VFO named after our instance.  Sample
+            // rate == bandwidth == RTL433_INPUT_RATE so we don't need a
+            // resampler in front.
+            vfo_ = sigpath::vfoManager.createVFO(
+                name_,
+                ImGui::WaterfallVFO::REF_CENTER,
+                0.0,                                  // offset (centered on tuned freq)
+                (double)RTL433_INPUT_RATE,            // bandwidth
+                (double)RTL433_INPUT_RATE,            // output sample rate
+                (double)RTL433_INPUT_RATE,            // ref bandwidth
+                (double)RTL433_INPUT_RATE,            // min bandwidth
+                true                                  // bandwidth locked
+            );
+            if (!vfo_) {
+                flog::error("[rtl433_decoder] failed to create VFO");
+                cleanupCfg();
+                return;
+            }
+            targetVfo = vfo_;
         }
 
-        handler_.init(vfo_->output, &Rtl433DecoderModule::sampleHandler, this);
+        handler_.init(targetVfo->output, &Rtl433DecoderModule::sampleHandler, this);
         handler_.start();
 
         running_ = true;
-        flog::info("[rtl433_decoder] pipeline started ({} protocols registered)",
-                   (int)cfg_->demod->r_devs.len);
+        flog::info("[rtl433_decoder] pipeline started ({} protocols, mode={}, vfo={})",
+                   (int)cfg_->demod->r_devs.len,
+                   boundMode_ ? "bound" : "legacy",
+                   boundMode_ ? boundVfoName_.c_str() : name_.c_str());
     }
 
     void stopPipeline() {
@@ -203,6 +238,10 @@ private:
         if (!running_) return;
 
         handler_.stop();
+        // Bound mode: HoldManager owns the VFO — we never created it
+        // and we must NOT delete it (would leak the held entry's runtime
+        // state and confuse the next preTick() reconciliation).  vfo_ is
+        // always nullptr in bound mode.
         if (vfo_) {
             sigpath::vfoManager.deleteVFO(vfo_);
             vfo_ = nullptr;
@@ -393,8 +432,10 @@ private:
 
     // ----------------------------------------------------------------- state
     std::string name_;
-    bool        enabled_  = false;
-    double      amScale_  = 24000.0;
+    bool        enabled_     = false;
+    bool        boundMode_   = false;
+    std::string boundVfoName_;
+    double      amScale_     = 24000.0;
 
     std::mutex                                pipeMtx_;
     std::atomic<bool>                         running_{false};

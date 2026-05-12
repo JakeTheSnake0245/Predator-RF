@@ -57,6 +57,14 @@ public:
     int getReference(std::string name);
     bool vfoExists(std::string name);
 
+    // Returns the live VFO* for a given name, or nullptr if absent.
+    // Added for Predator-RF hold-bound decoder modules (rtl433_decoder
+    // bound mode) that need the underlying sample stream of a VFO they
+    // do NOT own.  The pointer is owned by VFOManager — callers MUST
+    // NOT delete it; subscribe to onVfoDelete to detach cleanly before
+    // the VFO is destroyed.
+    VFO* findVFO(const std::string& name);
+
     void updateFromWaterfall(ImGui::WaterFall* wtf);
 
     Event<VFOManager::VFO*> onVfoCreated;
