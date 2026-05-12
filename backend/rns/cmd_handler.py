@@ -98,40 +98,24 @@ class RNSCmdBridge:
     def publish(self, cmd: Dict[str, Any], uid: str,
                 peer_h16: Optional[str] = None,
                 reliable: Optional[bool] = None) -> bool:
-        """Wrap and unicast one command to a specific peer.
+        """Wrap and strict-unicast one command to `peer_h16`.
 
-        `peer_h16` is REQUIRED for production wire-up — commands fan
-        out to "everyone" would let a misaddressed `tune` run on
-        peers that weren't supposed to retune. The Controller MUST
-        name a single target peer; the daemon's `send_to_peer_cmd`
-        looks the peer up by Identity hash and fails closed if
-        unknown. Tests that don't care about routing may pass
-        `peer_h16=None` and rely on the test publish_fn to short-
-        circuit; the production publish_fn (`_publish_envelope_cmd`)
-        rejects None to make broadcast accidents impossible.
-
-        Returns True when the publish_fn accepted the envelope. False
-        on wrap-time validation errors (`tx.*`, schema), no publish_fn
-        bound, or publish_fn rejection.
+        Returns True when the publish_fn accepted the envelope; False
+        on tx.*/schema rejection at wrap, no publish_fn bound, or
+        publish_fn rejection (e.g. unknown peer).
         """
         if self._publish_fn is None:
             return False
         try:
             env = wrap_cmd(cmd, src_hash16=self.own_hash16, uid=uid)
         except CmdEnvelopeError as exc:
-            # tx.* attempts and similar caller errors. Loud log: this
-            # indicates a programming bug on the Controller side, not a
-            # network condition.
             logger.error("RNSCmdBridge.publish refused %r: %s", cmd, exc)
             self.envelope_errors += 1
             return False
         rel = self.reliable_default if reliable is None else bool(reliable)
         try:
-            # Try the new (env, reliable, peer_h16) signature first.
-            # Fall back to (env, reliable) and (env,) for legacy /
-            # test publish_fns that don't care about per-peer
-            # addressing. Production daemon supplies the new
-            # signature and fails closed on `peer_h16=None`.
+            # Try (env, rel, peer) signature first; fall back for legacy
+            # / test publish_fns. Production daemon uses the new shape.
             try:
                 ok = self._publish_fn(env, rel, peer_h16)
             except TypeError:
@@ -143,10 +127,6 @@ class RNSCmdBridge:
             logger.warning("RNSCmdBridge.publish failed for uid=%s: %s",
                            uid, exc)
             return False
-        # publish_fn may return None (legacy) or bool (new).
-        # Treat None as success (legacy callers signalled errors
-        # by raising); treat False as caller-rejected (e.g. unknown
-        # peer in the production unicast path).
         if ok is False:
             return False
         self.published += 1
@@ -190,16 +170,9 @@ class RNSCmdBridge:
             logger.debug("RNSCmdBridge: drop bad envelope: %s", exc)
             self.envelope_errors += 1
             return False
-        # Source authority: the packet-derived `src_hash16` (computed
-        # by the daemon from `RNS.Packet.source_hash`, i.e. the
-        # transport-authenticated Identity) is ALWAYS authoritative.
-        # The envelope's self-declared `src` is informational only and
-        # MUST agree with the packet source — otherwise we have either
-        # a routing bug or an active spoofing attempt; either way the
-        # safe action is to drop. Falling back to envelope `src` only
-        # when the daemon couldn't extract a packet source (e.g. unit
-        # tests that feed bytes directly) is acceptable because that
-        # path doesn't cross an untrusted boundary.
+        # Packet src (transport-authenticated Identity) is authoritative;
+        # envelope src is informational and must agree or the envelope
+        # is dropped. Envelope-only fallback is unit-test path.
         env_src = (env.get("src") or "").lower()
         pkt_src = (src_hash16 or "").lower()
         if pkt_src:
