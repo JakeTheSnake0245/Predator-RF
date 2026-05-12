@@ -40,6 +40,7 @@ from .token import (
     mint_replication_token,
 )
 from .bridge import RNSCotBridge
+from .cmd_handler import RNSCmdBridge
 
 try:  # The daemon must run even when rns isn't installed (CI / tests).
     import RNS  # type: ignore
@@ -87,18 +88,23 @@ class RNSDaemon:
     """In-process RNS stack manager + control API."""
 
     def __init__(self, state_dir: Optional[str] = None,
-                 cot_bridge: Optional[RNSCotBridge] = None) -> None:
+                 cot_bridge: Optional[RNSCotBridge] = None,
+                 cmd_bridge: Optional[RNSCmdBridge] = None) -> None:
         self.state_dir = state_dir or _default_state_dir()
         os.makedirs(self.state_dir, exist_ok=True)
         self.config_path = os.path.join(self.state_dir, "config.json")
         self.identity_path = os.path.join(self.state_dir, "identity.prv")
         self.cot_bridge = cot_bridge
+        self.cmd_bridge = cmd_bridge
         self._lock = threading.RLock()
         self._iface_runtime: Dict[str, Dict[str, Any]] = {}
         self._log = _LogTail()
         self._reticulum: Any = None
         self._identity: Any = None
         self._destination: Any = None
+        # Optional second IN destination on the predatorrf/cmd.v1 aspect.
+        # Only created when config["cmd_v1_enabled"] is True at start().
+        self._cmd_destination: Any = None
         # Known remote peers keyed by 16-hex identity prefix. Each value
         # is {"identity": RNS.Identity, "destination": OUT-Destination,
         #  "iface_id": str | None, "first_seen": float}. Populated by
@@ -217,13 +223,43 @@ class RNSDaemon:
                     except Exception as exc:
                         self._log.write(
                             "WARN", f"announce handler registration failed: {exc}")
+                # Roadmap #6: optional cmd.v1 IN Destination. Opt-in
+                # via config["cmd_v1_enabled"] (default False — gated
+                # until RX-side is field-tested). When the flag is
+                # off, only cot.v1 above is registered, so a
+                # non-upgraded peer that announces cmd.v1 is silently
+                # ignored (announce handler is cot.v1-only).
+                if (self._reticulum is not None
+                        and bool(self.config.get("cmd_v1_enabled", False))):
+                    try:
+                        self._cmd_destination = RNS.Destination(
+                            self._identity, RNS.Destination.IN,
+                            RNS.Destination.SINGLE,
+                            "predatorrf", "cmd.v1")
+                        self._cmd_destination.set_packet_callback(
+                            self._on_cmd_packet)
+                        self._cmd_destination.announce()
+                        self._log.write(
+                            "INFO", "cmd.v1 destination registered")
+                    except Exception as exc:
+                        self._log.write(
+                            "ERROR",
+                            f"cmd.v1 destination create failed: {exc}")
             for entry in self.config.get("interfaces", []):
                 if entry.get("enabled", True):
                     self._spawn_interface(entry)
             if self.cot_bridge is not None:
                 self.cot_bridge.set_publish_fn(self._publish_envelope)
+            if (self.cmd_bridge is not None
+                    and bool(self.config.get("cmd_v1_enabled", False))):
+                # Bind the Controller-side publish path to a cmd-aware
+                # sender so KujhadRNSClient can ship envelopes out the
+                # same per-peer fan-out used by cot.v1.
+                self.cmd_bridge.set_publish_fn(self._publish_envelope_cmd)
             self._running = True
-            self._log.write("INFO", f"daemon started (rns={_HAVE_RNS})")
+            self._log.write("INFO",
+                f"daemon started (rns={_HAVE_RNS}, "
+                f"cmd_v1={bool(self.config.get('cmd_v1_enabled', False))})")
         return self.status()
 
     def stop(self) -> None:
@@ -234,6 +270,8 @@ class RNSDaemon:
                 self._teardown_interface(iid, drain_s=2.0)
             if self.cot_bridge is not None:
                 self.cot_bridge.set_publish_fn(None)
+            if self.cmd_bridge is not None:
+                self.cmd_bridge.set_publish_fn(None)
             self._running = False
             self._log.write("INFO", "daemon stopped")
 
@@ -294,9 +332,29 @@ class RNSDaemon:
                                 break
                 except Exception:
                     pass
+                # Build a cmd.v1 OUT destination too. RNS Destinations
+                # are aspect-tagged (the destination hash includes the
+                # aspect path), so cot.v1 and cmd.v1 are distinct
+                # delivery targets even when they share an Identity.
+                # Reusing the cot OUT dest for cmd publish would land
+                # the envelope on the peer's cot.v1 packet callback,
+                # which silently drops anything that isn't a CoT
+                # envelope. Built unconditionally — even when our own
+                # cmd.v1 IN dest is disabled, peers may still want to
+                # task us via a future enable; the OUT dest is cheap.
+                cmd_out = None
+                try:
+                    cmd_out = RNS.Destination(
+                        announced_identity, RNS.Destination.OUT,
+                        RNS.Destination.SINGLE, "predatorrf", "cmd.v1")
+                except Exception as exc:
+                    daemon._log.write(
+                        "WARN",
+                        f"could not build cmd.v1 OUT dest for {h16}: {exc}")
                 daemon._peers[h16] = {
                     "identity": announced_identity,
                     "destination": out,
+                    "cmd_destination": cmd_out,
                     "iface_id": iface_id,
                     "first_seen": time.time(),
                 }
@@ -381,6 +439,23 @@ class RNSDaemon:
         except Exception as exc:
             self._log.write("WARN", f"inbound packet drop: {exc}")
 
+    def _on_cmd_packet(self, data: bytes, packet: Any) -> None:
+        """Inbound handler for the cmd.v1 IN Destination. Mirrors
+        `_on_packet` but routes into the cmd bridge. The cmd bridge
+        applies the same allowlist + dedupe gates as cot.v1 before
+        invoking the Device-side dispatcher."""
+        if self.cmd_bridge is None:
+            return
+        try:
+            src = ""
+            try:
+                src = RNS.hexrep(packet.source_hash, delimit=False)[:16]
+            except Exception:
+                pass
+            self.cmd_bridge.handle_inbound(bytes(data), src)
+        except Exception as exc:
+            self._log.write("WARN", f"inbound cmd drop: {exc}")
+
     # Conservative MTU. RNS Packet payload is bounded by MDU (~ 460B
     # in current upstream); above that we open a short-lived Link and
     # stream the envelope as a Resource. Operators can also force Link
@@ -412,6 +487,53 @@ class RNSDaemon:
                             bool(reliable)))
         for h16, dest, rel in targets:
             self._send_one(env_bytes, dest, rel, h16)
+
+    def _publish_envelope_cmd(self, env_bytes: bytes,
+                              reliable: bool = True,
+                              peer_h16: Optional[str] = None) -> bool:
+        """Strict-unicast outbound publish for cmd.v1 envelopes.
+
+        UNLIKE `_publish_envelope` (which broadcasts CoT to every
+        learned peer), commands MUST be addressed to a single peer.
+        Broadcast tasking is unsafe — a `tune 433.92 MHz` intended for
+        peer A would also retune peer B, breaking ongoing decodes on
+        unintended sensors. Fail closed: if `peer_h16` is None or the
+        peer is unknown / has no cmd OUT destination, the publish is
+        refused and the caller (`RNSCmdBridge.publish`) returns False.
+        """
+        if not _HAVE_RNS:
+            return False
+        if not peer_h16:
+            self._log.write(
+                "ERROR",
+                "cmd publish refused: peer_h16 is required (no broadcast)")
+            return False
+        peer_h16 = peer_h16.lower()
+        meta = self._peers.get(peer_h16)
+        if meta is None:
+            self._log.write(
+                "WARN",
+                f"cmd publish refused: peer {peer_h16} unknown "
+                "(not yet learned via announce)")
+            return False
+        cmd_dest = meta.get("cmd_destination")
+        if cmd_dest is None:
+            self._log.write(
+                "WARN",
+                f"cmd publish refused: peer {peer_h16} has no cmd.v1 "
+                "OUT destination")
+            return False
+        rel = self._peer_reliable(meta, reliable)
+        self._send_one(env_bytes, cmd_dest, rel, peer_h16)
+        return True
+
+    def send_to_peer_cmd(self, peer_h16: str, env_bytes: bytes,
+                         reliable: bool = True) -> bool:
+        """Public helper for code paths that have an envelope and a
+        target peer but don't go through the bridge (e.g. retransmit
+        on Link failure). Same fail-closed semantics as
+        `_publish_envelope_cmd`."""
+        return self._publish_envelope_cmd(env_bytes, reliable, peer_h16)
 
     def _send_one(self, env_bytes: bytes, dest: Any, reliable: bool,
                   peer_tag: str) -> None:
