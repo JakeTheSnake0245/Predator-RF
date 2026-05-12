@@ -315,8 +315,15 @@ private:
         const auto t0 = std::chrono::steady_clock::now();
         if (voicePump_.joinable())     voicePump_.join();
         if (decoderWorker_.joinable()) decoderWorker_.join();
-        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
+        // chrono::milliseconds::count() returns `long long` on the
+        // Android NDK (r23). flog's __toString__ template specialises
+        // for int64_t (which is `long` on aarch64 NDK), NOT long long,
+        // and falls back to `(std::string)value` which doesn't compile.
+        // Explicit cast to int64_t selects the existing overload.
+        // Same fix applied at the line ~335 call site below.
+        const int64_t elapsed_ms = (int64_t)std::chrono::duration_cast<
+            std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count();
         if (elapsed_ms > 1000) {
             flog::warn("[DSDFME] worker join took {} ms (expected <500 ms). "
                        "Investigate liveScanner exit latency.", elapsed_ms);
