@@ -223,12 +223,8 @@ class RNSDaemon:
                     except Exception as exc:
                         self._log.write(
                             "WARN", f"announce handler registration failed: {exc}")
-                # Roadmap #6: optional cmd.v1 IN Destination. Opt-in
-                # via config["cmd_v1_enabled"] (default False — gated
-                # until RX-side is field-tested). When the flag is
-                # off, only cot.v1 above is registered, so a
-                # non-upgraded peer that announces cmd.v1 is silently
-                # ignored (announce handler is cot.v1-only).
+                # Roadmap #6: optional cmd.v1 IN destination — opt-in
+                # via config["cmd_v1_enabled"] (default False).
                 if (self._reticulum is not None
                         and bool(self.config.get("cmd_v1_enabled", False))):
                     try:
@@ -252,9 +248,6 @@ class RNSDaemon:
                 self.cot_bridge.set_publish_fn(self._publish_envelope)
             if (self.cmd_bridge is not None
                     and bool(self.config.get("cmd_v1_enabled", False))):
-                # Bind the Controller-side publish path to a cmd-aware
-                # sender so KujhadRNSClient can ship envelopes out the
-                # same per-peer fan-out used by cot.v1.
                 self.cmd_bridge.set_publish_fn(self._publish_envelope_cmd)
             self._running = True
             self._log.write("INFO",
@@ -332,16 +325,9 @@ class RNSDaemon:
                                 break
                 except Exception:
                     pass
-                # Build a cmd.v1 OUT destination too. RNS Destinations
-                # are aspect-tagged (the destination hash includes the
-                # aspect path), so cot.v1 and cmd.v1 are distinct
-                # delivery targets even when they share an Identity.
-                # Reusing the cot OUT dest for cmd publish would land
-                # the envelope on the peer's cot.v1 packet callback,
-                # which silently drops anything that isn't a CoT
-                # envelope. Built unconditionally — even when our own
-                # cmd.v1 IN dest is disabled, peers may still want to
-                # task us via a future enable; the OUT dest is cheap.
+                # cmd.v1 OUT dest per peer. RNS routes by aspect, not
+                # just Identity, so cot.v1 and cmd.v1 are distinct
+                # destinations and must be built separately.
                 cmd_out = None
                 try:
                     cmd_out = RNS.Destination(
@@ -440,10 +426,7 @@ class RNSDaemon:
             self._log.write("WARN", f"inbound packet drop: {exc}")
 
     def _on_cmd_packet(self, data: bytes, packet: Any) -> None:
-        """Inbound handler for the cmd.v1 IN Destination. Mirrors
-        `_on_packet` but routes into the cmd bridge. The cmd bridge
-        applies the same allowlist + dedupe gates as cot.v1 before
-        invoking the Device-side dispatcher."""
+        """Inbound handler for cmd.v1 IN dest; mirrors `_on_packet`."""
         if self.cmd_bridge is None:
             return
         try:
@@ -491,16 +474,8 @@ class RNSDaemon:
     def _publish_envelope_cmd(self, env_bytes: bytes,
                               reliable: bool = True,
                               peer_h16: Optional[str] = None) -> bool:
-        """Strict-unicast outbound publish for cmd.v1 envelopes.
-
-        UNLIKE `_publish_envelope` (which broadcasts CoT to every
-        learned peer), commands MUST be addressed to a single peer.
-        Broadcast tasking is unsafe — a `tune 433.92 MHz` intended for
-        peer A would also retune peer B, breaking ongoing decodes on
-        unintended sensors. Fail closed: if `peer_h16` is None or the
-        peer is unknown / has no cmd OUT destination, the publish is
-        refused and the caller (`RNSCmdBridge.publish`) returns False.
-        """
+        """Strict-unicast publish for cmd.v1; fail-closed on missing
+        or unknown peer. No broadcast fall-back."""
         if not _HAVE_RNS:
             return False
         if not peer_h16:
@@ -529,10 +504,7 @@ class RNSDaemon:
 
     def send_to_peer_cmd(self, peer_h16: str, env_bytes: bytes,
                          reliable: bool = True) -> bool:
-        """Public helper for code paths that have an envelope and a
-        target peer but don't go through the bridge (e.g. retransmit
-        on Link failure). Same fail-closed semantics as
-        `_publish_envelope_cmd`."""
+        """Public unicast helper for envelopes prepared off-bridge."""
         return self._publish_envelope_cmd(env_bytes, reliable, peer_h16)
 
     def _send_one(self, env_bytes: bytes, dest: Any, reliable: bool,

@@ -112,15 +112,9 @@ class KujhadRNSClient:
 
     def _publish(self, peer_h16: str, payload: Dict[str, Any],
                  *, reliable: Optional[bool] = None) -> bool:
-        """Wrap + strict-unicast one command via the shared bridge.
-
-        `peer_h16` is the load-bearing target identifier: the bridge
-        forwards it to `RNSDaemon._publish_envelope_cmd` which
-        addresses the peer's cmd.v1 OUT destination directly and
-        fails closed when the peer is unknown. There is NO broadcast
-        fall-back — commands must always name their target so a
-        misaddressed `tune` cannot retune unintended peers.
-        """
+        """Wrap + strict-unicast via the shared bridge. `peer_h16` is
+        load-bearing: the daemon fails closed on unknown peers and
+        there is no broadcast fall-back."""
         if not isinstance(peer_h16, str) or len(peer_h16) != 16:
             logger.error(
                 "KujhadRNSClient: bad peer_h16=%r — expected 16 hex chars",

@@ -41,7 +41,9 @@ from backend.fusion.stationarity_gate import (
     FixCandidate, HistoryPoint, StationarityGate)
 from backend.output import CoTEmitter
 from backend.rns.bridge import RNSCotBridge
+from backend.rns.cmd_handler import RNSCmdBridge
 from backend.rns.daemon import RNSDaemon
+from backend.coordination.kujhad_rns_client import KujhadRNSClient
 from backend.coordination.auto_tasker import AutoTasker
 from backend.coordination.custody_election import CustodyElector
 from backend.coc import CoCAggregator
@@ -131,24 +133,40 @@ class PredatorBackend:
         self.rns_bridge: RNSCotBridge = RNSCotBridge(
             own_hash16=("0" * 16),
             reliable_default=getattr(config, "rns_reliable_default", True))
+        # Roadmap #6: cmd.v1 bridge + Controller-side sender. Created
+        # unconditionally so callers can always do
+        # `backend.rns_cmd_client.send_tune_command(peer, hz)`; if the
+        # daemon's `cmd_v1_enabled` flag is off, publish() returns
+        # False and nothing leaves the host.
+        self.rns_cmd_bridge: RNSCmdBridge = RNSCmdBridge(
+            own_hash16=("0" * 16),
+            reliable_default=getattr(config, "rns_reliable_default", True))
+        self.rns_cmd_client: KujhadRNSClient = KujhadRNSClient(
+            self.rns_cmd_bridge)
         self.rns_daemon: Optional[RNSDaemon] = None
         if getattr(config, "rns_enabled", False):
             try:
                 self.rns_daemon = RNSDaemon(
                     state_dir=getattr(config, "rns_state_dir", None) or None,
-                    cot_bridge=self.rns_bridge)
-                # Sync the bridge's hash with the daemon's identity so
-                # loop-suppression and outbound `src` tags match.
-                self.rns_bridge.own_hash16 = self.rns_daemon.identity_hash16()
-                # Apply the configured peer allowlist (empty list = open
-                # mode per spec section D, with a startup warning logged
-                # by the daemon).
-                self.rns_bridge.set_allowlist(
-                    self.rns_daemon.config.get("peer_allowlist", []))
-                # Inbound RNS-CoT is fed to the CoC aggregator path with
-                # source_transport="rns" so it reuses the existing
-                # remote-event handler (track fusion, persistence, dedupe).
+                    cot_bridge=self.rns_bridge,
+                    cmd_bridge=self.rns_cmd_bridge)
+                own = self.rns_daemon.identity_hash16()
+                allowlist = self.rns_daemon.config.get("peer_allowlist", [])
+                self.rns_bridge.own_hash16 = own
+                self.rns_bridge.set_allowlist(allowlist)
                 self.rns_bridge.set_inbound_fn(self._on_rns_inbound_cot)
+                # cmd.v1 wire-up — automatic when rns is enabled. The
+                # daemon's start() will only register the IN destination
+                # and bind the publish path if `cmd_v1_enabled` is true,
+                # so this stays a no-op when the operator hasn't opted
+                # in. Inbound dispatcher is `_on_rns_inbound_cmd` which
+                # rejects-with-log because the Python TOC is not a
+                # Device — RX-only fleet rule. Override on a Device-mode
+                # backend by reassigning `rns_cmd_bridge.set_dispatch_fn`.
+                self.rns_cmd_bridge.own_hash16 = own
+                self.rns_cmd_bridge.set_allowlist(allowlist)
+                self.rns_cmd_bridge.set_dispatch_fn(
+                    self._on_rns_inbound_cmd)
             except Exception as exc:
                 logger.error("RNS daemon init failed: %s — RNS disabled", exc)
                 self.rns_daemon = None
@@ -517,6 +535,15 @@ class PredatorBackend:
                 self.coc.feed_event(ev, source=f"rns:{src_hash16}")
         except Exception as exc:
             logger.debug("RNS inbound CoT handling failed: %s", exc)
+
+    def _on_rns_inbound_cmd(self, cmd: dict, src_hash16: str,
+                            uid: str) -> bool:
+        # Python TOC is RX-only; inbound cmd.v1 envelopes are logged
+        # for audit and rejected. Override on a Device-mode backend.
+        logger.warning("RNS cmd.v1 rejected (TOC is RX-only): "
+                       "src=%s uid=%s class=%s action=%s",
+                       src_hash16, uid, cmd.get("class"), cmd.get("action"))
+        return False
 
     def _on_remote_event(self, ev_dict: dict) -> None:
         """Bridge from CoCAggregator (which delivers dicts) into the
