@@ -211,6 +211,12 @@ bool VFOManager::vfoExists(std::string name) {
     return (vfos.find(name) != vfos.end());
 }
 
+VFOManager::VFO* VFOManager::findVFO(const std::string& name) {
+    auto it = vfos.find(name);
+    if (it == vfos.end()) return nullptr;
+    return it->second;
+}
+
 void VFOManager::updateFromWaterfall(ImGui::WaterFall* wtf) {
     for (auto const& [name, vfo] : vfos) {
         if (vfo->wtfVFO->centerOffsetChanged) {

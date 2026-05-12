@@ -5,6 +5,7 @@
 #include <dsp/stream.h>
 #include <signal_path/vfo_manager.h>
 #include <predator/hold_manager.h>
+#include <predator/hold_decoder_binder.h>
 #include <string>
 #include <utils/event.h>
 #include <mutex>
@@ -110,7 +111,14 @@ private:
     // and unit-tested logic live in core/src/predator/hold_manager.h;
     // wire-up below in main_window.cpp injects sigpath::vfoManager
     // lambdas and ticks once per frame after the marker re-anchor loop.
-    predator::hold::HoldManager predatorHoldManager;
+    predator::hold::HoldManager        predatorHoldManager;
+    // Roadmap #5: spawns a ModuleManager decoder instance per held entry
+    // whose decoder kind maps to a known native module (currently only
+    // Native_RTL433 → "rtl433_decoder"; DSDFME / Radio deferred to
+    // #5.5 / #5.6).  Sigpath / ModuleManager calls are injected as
+    // lambdas so the binder is unit-testable from g++ without linking
+    // against sdrpp_core.  See tests/hold_decoder_binder_test.cpp.
+    predator::hold::HoldDecoderBinder  predatorHoldDecoderBinder;
     bool predatorSuppressDuplicateHits = true;
     bool predatorExtendDwellOnStrongHit = true;
     bool predatorClassifyAutoMarker = true;

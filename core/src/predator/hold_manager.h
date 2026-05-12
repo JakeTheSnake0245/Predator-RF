@@ -151,6 +151,15 @@ public:
     // on the same tick. Optional — null callback preserves the older
     // behaviour for callers that own the VFO lifecycle exclusively.
     using ExistsFn  = std::function<bool(const std::string& vfoName)>;
+    // Optional per-entry bandwidth override.  When supplied, tick()
+    // uses bwOverrideFn(e) wherever it would otherwise use
+    // e.bandwidth_hz — both for the inBand decision AND for the bw
+    // argument to anchorCb each frame.  Without this, a held entry
+    // whose decoder needs a fixed wider bandwidth (e.g. RTL433 at
+    // 250 kHz) gets anchored back to its UI bandwidth on every tick,
+    // breaking the bound decoder.  Returning 0 falls back to
+    // e.bandwidth_hz (so the override fn can opt out per-entry).
+    using BandwidthOverrideFn = std::function<double(const HoldEntry& e)>;
 
     HoldManager() = default;
 
@@ -233,7 +242,8 @@ public:
                    const CreateFn& createCb,
                    const DestroyFn& destroyCb,
                    const AnchorFn& anchorCb,
-                   const ExistsFn& existsCb = ExistsFn{}) {
+                   const ExistsFn& existsCb = ExistsFn{},
+                   const BandwidthOverrideFn& bwOverrideFn = BandwidthOverrideFn{}) {
         TickStats s{};
         // 1) For every live entry: reconcile in-band + vfo_active.
         for (auto& e : entries_) {
@@ -247,7 +257,16 @@ public:
                 rt.vfo_name.clear();
                 rt.last_status_change_ns = now_ns;
             }
-            const bool inBandNow  = inBand(e.frequency_hz, e.bandwidth_hz,
+            // Decoder-aware effective bandwidth.  Used for both the
+            // inBand decision AND the per-frame anchor — without this,
+            // anchorCb would reset VFO bw to e.bandwidth_hz every frame
+            // and undo the wider passband a bound decoder needs.
+            double effBw = e.bandwidth_hz;
+            if (bwOverrideFn) {
+                double o = bwOverrideFn(e);
+                if (o > 0.0) effBw = o;
+            }
+            const bool inBandNow  = inBand(e.frequency_hz, effBw,
                                            sourceCenterHz, sampleRateHz);
             const bool wantActive = e.enabled && inBandNow;
             if (inBandNow != rt.in_band) {
@@ -275,7 +294,7 @@ public:
             if (wantActive && rt.vfo_active && anchorCb) {
                 anchorCb(rt.vfo_name,
                          e.frequency_hz - sourceCenterHz,
-                         e.bandwidth_hz);
+                         effBw);
                 s.anchored++;
             }
         }
@@ -364,6 +383,12 @@ public:
     // True when the entry's filter passband fits ENTIRELY inside the
     // SDR's instantaneous bandwidth. Half-bandwidth guard on each side
     // prevents the channel from being clipped at the spectrum edge.
+    // Public so HoldDecoderBinder (and any future scheduler) can compute
+    // the same "will entry survive this tick" decision the manager uses
+    // — load-bearing for the binder's preTick teardown path which must
+    // beat HoldManager.tick to the punch when a held VFO is about to
+    // disappear (otherwise a bound dsp::sink::Handler would briefly
+    // read from a freed stream).
     static bool inBand(double freq, double bw, double center, double sr) {
         if (!std::isfinite(freq) || !std::isfinite(bw)) return false;
         if (!std::isfinite(center) || !std::isfinite(sr) || sr <= 0.0) return false;
