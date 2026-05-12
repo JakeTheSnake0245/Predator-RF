@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 from backend.models.emitter_track import EmitterTrack
 from backend.models.sensor_node import SensorNodeTrust
 from backend.intelligence.anomaly_detector import AnomalyDetector, AnomalyFlag
+from backend.coordination.custody_election import (
+    CustodyElector, CustodyDecision)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,13 @@ class AssessmentReport:
     recommended_nodes: List[str] = field(default_factory=list)
     escalate_to_atak: bool = False
 
+    # Custody decision (populated when DecisionEngine has a CustodyElector
+    # configured; None when running in legacy mode for back-compat with
+    # tests / older deployments). When set, `recommended_nodes` is
+    # populated from `custody.tasked_nodes` so the AutoTasker code path
+    # doesn't have to know about custody.
+    custody: Optional[CustodyDecision] = None
+
     def to_dict(self) -> dict:
         return {
             "emitter_id": self.emitter_id,
@@ -42,6 +51,7 @@ class AssessmentReport:
             "recommended_action": self.recommended_action,
             "recommended_nodes": list(self.recommended_nodes),
             "escalate_to_atak": self.escalate_to_atak,
+            "custody": self.custody.to_dict() if self.custody else None,
         }
 
 
@@ -62,12 +72,21 @@ class DecisionEngine:
         'marine_vhf': "Marine VHF",
     }
 
-    def __init__(self, anomaly_detector: Optional[AnomalyDetector] = None):
+    def __init__(self,
+                 anomaly_detector: Optional[AnomalyDetector] = None,
+                 custody_elector: Optional[CustodyElector] = None):
         self._anomaly_detector = anomaly_detector or AnomalyDetector()
+        # Optional CustodyElector — when provided, replaces the legacy
+        # _select_nodes_for_tasking() heuristic with the scored N-best
+        # election from backend.coordination.custody_election.
+        # When None, fall back to the legacy heuristic so tests and
+        # standalone DecisionEngine usage keep working unchanged.
+        self._custody = custody_elector
 
     def assess(self, track: EmitterTrack,
                anomaly_flags: Optional[List[AnomalyFlag]] = None,
-               available_nodes: Optional[List[SensorNodeTrust]] = None) -> AssessmentReport:
+               available_nodes: Optional[List[SensorNodeTrust]] = None,
+               node_loads: Optional[Dict[str, int]] = None) -> AssessmentReport:
         """
         Produce a full assessment for a track.
 
@@ -94,8 +113,22 @@ class DecisionEngine:
         report.escalate_to_atak = report.threat_level in ('high', 'critical')
 
         if available_nodes:
-            report.recommended_nodes = self._select_nodes_for_tasking(
-                track, report.threat_level, available_nodes)
+            if self._custody is not None:
+                # Run the scored election. It is critical that we set
+                # track.threat_level (done above on line ~87) BEFORE
+                # calling elect(), because the custody hard-gates read
+                # threat_level to decide whether to require GPS sync /
+                # fresh-fix on candidate nodes.
+                report.custody = self._custody.elect(
+                    track, available_nodes,
+                    node_loads=node_loads)
+                # Backwards compat: AutoTasker reads recommended_nodes,
+                # which we populate from the elected tasked_nodes set
+                # (primary + backups + handover-from during overlap).
+                report.recommended_nodes = list(report.custody.tasked_nodes)
+            else:
+                report.recommended_nodes = self._select_nodes_for_tasking(
+                    track, report.threat_level, available_nodes)
 
         return report
 

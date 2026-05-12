@@ -40,6 +40,7 @@ from backend.output import CoTEmitter
 from backend.rns.bridge import RNSCotBridge
 from backend.rns.daemon import RNSDaemon
 from backend.coordination.auto_tasker import AutoTasker
+from backend.coordination.custody_election import CustodyElector
 from backend.coc import CoCAggregator
 from backend.operator.approvals import ApprovalQueue
 from backend.operator.missions import MissionRegistry
@@ -59,9 +60,31 @@ class PredatorBackend:
         self.baseline = RFBaseline(
             learning_window_hours=config.baseline_learning_window_hours)
         self.anomaly_detector = AnomalyDetector(self.baseline)
-        self.decision_engine = DecisionEngine(self.anomaly_detector)
+        # CustodyElector — N-best scored sensor election with handover
+        # overlap. The on_change callback is wired below (after
+        # track_manager exists) so SSE subscribers see custody hand-offs
+        # in real time. We instantiate it unconditionally because it
+        # has no I/O side effects until elect() is called; if the
+        # operator wants to fall back to the legacy heuristic,
+        # CUSTODY_ELECTION_ENABLED can be turned off in config and we
+        # pass None into DecisionEngine instead.
+        self.custody_elector: Optional[CustodyElector] = None
+        if getattr(config, "custody_election_enabled", True):
+            self.custody_elector = CustodyElector(
+                k_total=getattr(config, "custody_k_total", 3),
+                handover_overlap_s=getattr(
+                    config, "custody_handover_overlap_s", 15.0),
+                stale_gps_after_s=getattr(
+                    config, "custody_stale_gps_after_s", 300.0),
+                on_change=self._on_custody_change,
+            )
+        self.decision_engine = DecisionEngine(
+            self.anomaly_detector,
+            custody_elector=self.custody_elector)
         _proximity = (ProximityEstimator() if config.rssi_proximity_enabled else None)
-        self.track_manager = TrackManager(proximity_estimator=_proximity)
+        self.track_manager = TrackManager(
+            proximity_estimator=_proximity,
+            custody_elector=self.custody_elector)
         self.fleet_manager = KujhadFleetManager()
 
         # TDOA geolocation — needs ≥2 GPS-synced nodes hearing the same
@@ -263,9 +286,30 @@ class PredatorBackend:
         # Produce + persist an assessment so the tasking loop (T002) and
         # CoT exporter (T004) have something to consume. Was previously
         # dead code — DecisionEngine was instantiated but never invoked.
+        # `node_loads` lets the CustodyElector spread custody across
+        # the fleet — without it, every track would pile onto the same
+        # most-trusted node and trigger thermal throttling cascades.
+        # We MUST count only currently-active custody-bearing tracks
+        # (TrackManager.active_tracks() excludes LOST and COASTING) —
+        # if we counted every non-archived track (24 h retention) the
+        # load score would inflate by every track the operator drove
+        # past last night and skew the election against nodes that
+        # legitimately have no current load. Iterating active_tracks()
+        # AND requiring last_decision present means a freshly-coasting
+        # track stops contributing to load the moment it transitions
+        # out of TRACKING/STABLE.
+        node_loads: dict[str, int] = {}
+        if self.custody_elector is not None:
+            for active in self.track_manager.active_tracks():
+                last = self.custody_elector.last_decision(active.emitter_id)
+                if last is None:
+                    continue
+                for nid in last.tasked_nodes:
+                    node_loads[nid] = node_loads.get(nid, 0) + 1
         report = self.decision_engine.assess(
             track, anomaly_flags=flags or [],
-            available_nodes=list(self.track_manager.sensor_nodes.values()))
+            available_nodes=list(self.track_manager.sensor_nodes.values()),
+            node_loads=node_loads)
 
         # TDOA: record this node's hearing of the emitter, then attempt a
         # solve if we now have ≥2 distinct nodes within the time window.
@@ -450,6 +494,35 @@ class PredatorBackend:
     def _on_new_track(self, track):
         logger.info("New track: %s at %.4f MHz",
                     track.emitter_id[:8], track.primary_frequency / 1e6)
+
+    def _on_custody_change(self, decision):
+        """Fired by CustodyElector ONLY when a track's primary node
+        actually changes (initial assignment, handover, or stand-down
+        of last primary). Logs the decision and pushes a custody-event
+        envelope onto the SSE ring so operator UIs can show hand-offs
+        in real time without polling /api/v1/assessments. Backwards
+        compatible: existing SSE consumers see an extra event with
+        kind='custody_change' and can ignore it if they don't care."""
+        try:
+            if decision.is_handover():
+                logger.info(
+                    "Custody handover for %s: %s -> %s (overlap %.0fs, %s)",
+                    decision.track_id[:8],
+                    decision.handover_from, decision.primary,
+                    self.custody_elector.handover_overlap_s
+                        if self.custody_elector else 0.0,
+                    decision.reason)
+            else:
+                logger.info("Custody assigned for %s: %s (%s)",
+                            decision.track_id[:8],
+                            decision.primary, decision.reason)
+            push_event({
+                "kind": "custody_change",
+                "ts_ns": decision.decided_ns,
+                "custody": decision.to_dict(),
+            })
+        except Exception:
+            logger.exception("Custody-change SSE push failed — ignored")
 
     def _on_track_update(self, track):
         metrics.gauge("predator_track_confidence",
