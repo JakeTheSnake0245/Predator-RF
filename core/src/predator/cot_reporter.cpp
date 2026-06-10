@@ -83,7 +83,7 @@ std::string CotReporter::buildSa() {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         "<event version=\"2.0\""
         " uid=\"%s\""
-        " type=\"a-f-G-U-C\""
+        " type=\"a-f-G-E-S\""
         " time=\"%s\""
         " start=\"%s\""
         " stale=\"%s\""
@@ -96,6 +96,7 @@ std::string CotReporter::buildSa() {
           "<takv version=\"4.10.0.0\" platform=\"Predator RF\" device=\"Android\" os=\"30\"/>"
           "<uid Droid=\"%s\"/>"
           "<precisionlocation geopointsrc=\"%s\" altsrc=\"NONE\"/>"
+          "<link uid=\"%s\" type=\"a-f-G-E-S\" relation=\"p-p\"/>"
         "</detail>"
         "</event>",
         uidEsc.c_str(),
@@ -105,7 +106,8 @@ std::string CotReporter::buildSa() {
         lat, lon, (double)hae, (double)ce,
         csEsc.c_str(),
         csEsc.c_str(),
-        hasFix_ ? "GPS" : "????"
+        hasFix_ ? "GPS" : "????",
+        uidEsc.c_str()
     );
     return std::string(buf);
 }

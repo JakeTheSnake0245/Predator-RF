@@ -5,9 +5,9 @@
  * Sends CoT XML to a user-configured TAK endpoint (UDP multicast / UDP
  * unicast / TCP TAK Server).  Two CoT types are emitted:
  *
- *   a-f-G-U-C  — Sensor SA (Situation Awareness) heartbeat.  Sent
+ *   a-f-G-E-S  — Sensor SA (Situation Awareness) heartbeat.  Sent
  *                periodically so the sensor shows up on the ATAK map
- *                as a friendly unit at the GPS fix reported by the phone.
+ *                as a friendly ground equipment sensor at the GPS fix reported by the phone.
  *
  *   b-t-f      — GeoChat message.  Sent to the configured chat room each
  *                time recordPeakHit() sees a non-suppressed hit event.
