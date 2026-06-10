@@ -12,3 +12,9 @@ id = "HAkE7FJse0VJHCY53m4WL"
 uri = "file://docs/OPERATOR_RUNBOOK.md"
 type = "text"
 title = "Predator RF Operator Guide"
+
+[[outputs]]
+id = "WrweKvZoATohv3QeSG-By"
+uri = "file://exports/Predator_RF_Operator_Guide_Updated.pdf"
+type = "pdf"
+title = "Predator RF Operator Guide — Rev 2"

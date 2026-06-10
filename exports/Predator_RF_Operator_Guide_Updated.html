@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Predator RF — Operator Guide</title>
+<style>
+  @page { size: letter; margin: 1.8cm 1.8cm 2cm 1.8cm; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10pt; line-height: 1.55; color: #111; }
+  h1 { font-size: 28pt; font-weight: 900; margin: 0 0 6pt; }
+  .subtitle { font-size: 13pt; color: #444; margin: 0 0 4pt; }
+  .tagline { font-size: 11pt; font-style: italic; color: #555; margin: 0 0 16pt; }
+  h2 { font-size: 13pt; font-weight: 700; border-bottom: 2px solid #222; padding-bottom: 3pt; margin-top: 20pt; margin-bottom: 6pt; page-break-after: avoid; }
+  h3 { font-size: 11pt; font-weight: 700; margin-top: 14pt; margin-bottom: 4pt; page-break-after: avoid; }
+  h4 { font-size: 10pt; font-weight: 700; margin-top: 10pt; margin-bottom: 3pt; page-break-after: avoid; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 4pt 0 8pt 20pt; padding: 0; }
+  li { margin-bottom: 3pt; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0 12pt; font-size: 9.5pt; page-break-inside: avoid; }
+  th { background: #1a1a1a; color: #fff; text-align: left; padding: 5pt 7pt; font-weight: 700; }
+  td { padding: 4pt 7pt; border-bottom: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8f8f8; }
+  code, pre { font-family: "Courier New", Courier, monospace; font-size: 8.5pt; }
+  pre { background: #1a1a1a; color: #e8e8e8; padding: 8pt 10pt; border-radius: 4pt; margin: 6pt 0 10pt; white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; }
+  .toc { margin: 10pt 0 20pt; }
+  .toc-entry { display: flex; justify-content: space-between; margin-bottom: 2pt; font-size: 9.5pt; }
+  .toc-entry a { color: #111; text-decoration: none; }
+  .toc-dots { flex: 1; border-bottom: 1px dotted #999; margin: 0 6pt 2pt; }
+  .warn { background: #fff3cd; border-left: 4pt solid #f0ad00; padding: 8pt 10pt; margin: 8pt 0 10pt; border-radius: 0 4pt 4pt 0; }
+  .warn strong { color: #8a6200; }
+  .critical { background: #fde8e8; border-left: 4pt solid #c0392b; padding: 8pt 10pt; margin: 8pt 0 10pt; border-radius: 0 4pt 4pt 0; }
+  .critical strong { color: #922b21; }
+  .tip { background: #e8f5e9; border-left: 4pt solid #27ae60; padding: 8pt 10pt; margin: 8pt 0 10pt; border-radius: 0 4pt 4pt 0; }
+  .tip strong { color: #1a7a40; }
+  .info { background: #e8f4fd; border-left: 4pt solid #2980b9; padding: 8pt 10pt; margin: 8pt 0 10pt; border-radius: 0 4pt 4pt 0; }
+  .info strong { color: #1a5276; }
+  .cover { text-align: left; padding: 60pt 0 40pt; }
+  .cover-rule { height: 6pt; background: #111; margin: 16pt 0 20pt; border-radius: 2pt; }
+  .section-divider { border: none; border-top: 1px solid #ddd; margin: 16pt 0; }
+  .num { color: #aaa; font-size: 9pt; }
+  .pg { font-size: 8pt; color: #888; text-align: center; padding-top: 4pt; }
+  .badge { display: inline-block; background: #1a1a1a; color: #fff; padding: 1pt 5pt; border-radius: 3pt; font-size: 8pt; font-family: monospace; }
+  .checklist li { list-style: none; margin-left: -16pt; }
+  .checklist li::before { content: "☐ "; font-size: 10pt; }
+  .qr { font-family: monospace; background: #f5f5f5; border: 1px solid #ddd; padding: 4pt 8pt; display: inline-block; font-size: 9pt; border-radius: 3pt; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ COVER ═══════════════ -->
+<div class="cover">
+  <div style="font-size:9pt;color:#888;letter-spacing:1pt;text-transform:uppercase;margin-bottom:8pt">Predator RF</div>
+  <h1>Operator Guide</h1>
+  <div class="subtitle">Pick this up cold. Zero to a working RF picture in under 30 minutes.</div>
+  <div class="cover-rule"></div>
+  <p style="font-size:10pt;color:#444">The single document. If the prior operator is unavailable, this is everything you need to pick the system up cold and operate with it.</p>
+  <p style="font-size:9pt;color:#888">Prices and specs current as of June 2026 &nbsp;·&nbsp; Rev 2 (sensor SA beacon + CoT type corrections)</p>
+</div>
+
+<hr class="section-divider">
+
+<!-- ═══════════════ TABLE OF CONTENTS ═══════════════ -->
+<h2>Table of Contents</h2>
+<div class="toc">
+  <div class="toc-entry"><a href="#s1">1. What this is, in one paragraph</a><span class="toc-dots"></span><span>2</span></div>
+  <div class="toc-entry"><a href="#s2">2. Two deployment paths</a><span class="toc-dots"></span><span>2</span></div>
+  <div class="toc-entry"><a href="#s3">3. Minimum kit</a><span class="toc-dots"></span><span>3</span></div>
+  <div class="toc-entry"><a href="#s4">4. First-time install (sideload)</a><span class="toc-dots"></span><span>3</span></div>
+  <div class="toc-entry"><a href="#s5">5. Plug in the radio and start receiving</a><span class="toc-dots"></span><span>4</span></div>
+  <div class="toc-entry"><a href="#s6">6. The eight tabs</a><span class="toc-dots"></span><span>4</span></div>
+  <div class="toc-entry"><a href="#s7">7. Mission modes</a><span class="toc-dots"></span><span>5</span></div>
+  <div class="toc-entry"><a href="#s8">8. The five day-one workflows</a><span class="toc-dots"></span><span>5</span></div>
+  <div class="toc-entry"><a href="#s9">9. Editing fields on a touchscreen</a><span class="toc-dots"></span><span>7</span></div>
+  <div class="toc-entry"><a href="#s10">10. The status bar</a><span class="toc-dots"></span><span>7</span></div>
+  <div class="toc-entry"><a href="#s11">11. Kujhad fleet — protocol, pairing, TLS pinning</a><span class="toc-dots"></span><span>8</span></div>
+  <div class="toc-entry"><a href="#s12">12. Geolocation — TDOA, error ellipse, confidence</a><span class="toc-dots"></span><span>10</span></div>
+  <div class="toc-entry"><a href="#s13">13. Track lifecycle</a><span class="toc-dots"></span><span>13</span></div>
+  <div class="toc-entry"><a href="#s14">14. Trust model</a><span class="toc-dots"></span><span>14</span></div>
+  <div class="toc-entry"><a href="#s15">15. The intelligence layer</a><span class="toc-dots"></span><span>15</span></div>
+  <div class="toc-entry"><a href="#s16">16. ATAK / TAK CoT integration</a><span class="toc-dots"></span><span>16</span></div>
+  <div class="toc-entry"><a href="#s17">17. AutoTasker</a><span class="toc-dots"></span><span>18</span></div>
+  <div class="toc-entry"><a href="#s18">18. Operator overrides</a><span class="toc-dots"></span><span>18</span></div>
+  <div class="toc-entry"><a href="#s19">19. Mission lifecycle</a><span class="toc-dots"></span><span>19</span></div>
+  <div class="toc-entry"><a href="#s20">20. Path 2: the Python backend</a><span class="toc-dots"></span><span>20</span></div>
+  <div class="toc-entry"><a href="#s21">21. Hardware capability table</a><span class="toc-dots"></span><span>28</span></div>
+  <div class="toc-entry"><a href="#s22">22. Field-day checklist</a><span class="toc-dots"></span><span>30</span></div>
+  <div class="toc-entry"><a href="#s23">23. Troubleshooting</a><span class="toc-dots"></span><span>32</span></div>
+  <div class="toc-entry"><a href="#s24">24. Bill of materials</a><span class="toc-dots"></span><span>34</span></div>
+  <div class="toc-entry"><a href="#s25">25. Glossary</a><span class="toc-dots"></span><span>35</span></div>
+  <div class="toc-entry"><a href="#s26">26. Quick reference card</a><span class="toc-dots"></span><span>36</span></div>
+</div>
+
+<hr class="section-divider">
+
+<!-- ═════ §1 ═════ -->
+<h2 id="s1">1. What this is, in one paragraph</h2>
+<p>Predator RF is a phone-first software-defined-radio cockpit for a solo SIGINT operator. You plug a USB SDR (software-defined radio — a small dongle that acts as a radio receiver) into an Android phone or a Linux box, point an antenna at the world, and the app shows you what's transmitting in real time: frequency, signal power, GPS-stamped location, and whether you've seen it before. It records baselines so the next sweep flags only what's <em>new</em> in the area. It automates band scans with target and exclude lists, links to other phones or Raspberry Pi sensors as a private fleet (called <em>Kujhad</em>), geolocates transmitters by time-difference-of-arrival (TDOA) when you have two or more GPS-synchronized nodes, decodes P25 / RTL433 / POCSAG / ADS-B / AIS, and pushes selected detections to ATAK / TAK as Cursor-on-Target (CoT) alerts. The whole system is <strong>receive-only</strong> — there is no transmit path anywhere. Every output (CoT export, AutoTasker re-tunes) requires the operator to explicitly arm it. Built on the SDR++ core. Sideloads as an APK; the Python backend ships as a systemd service.</p>
+
+<!-- ═════ §2 ═════ -->
+<h2 id="s2">2. Two deployment paths (you can run one or both)</h2>
+<h3>Path 1 — Phone (Android)</h3>
+<p>The C++ Predator RF app on a Galaxy S22 (or any Android 10+ device), driving a USB-C SDR through an OTG (On-The-Go) cable. Standalone — no other infrastructure needed. The phone IS the cockpit. Optionally peers with other phones or RPi sensors via the Kujhad protocol over Wi-Fi or a private VPN overlay (ZeroTier / Tailscale).</p>
+
+<h3>Path 2 — Linux TOC + RPi sensor nodes (Python backend)</h3>
+<p>A Python backend service (<code>predator-rf.service</code>) runs on a Linux operator workstation or a Raspberry Pi. It:</p>
+<ul>
+  <li>Owns persistence (SQLite mission ledger — a local database that logs everything).</li>
+  <li>Aggregates events from one or more Kujhad-equipped C++ sensor nodes (phones, RPi-with-SDR, etc.) via the Kujhad HTTP API.</li>
+  <li>Runs the TDOA coordinator, decision engine, AutoTasker, and CoT emitter centrally.</li>
+  <li>Exposes a REST + SSE API on port 8000 (token-protected) for dashboards, phone pull-mode CoT, or chaining into a higher-echelon TOC (CoC mode).</li>
+</ul>
+<div class="tip"><strong>Tip:</strong> The two paths mix freely. A typical mission: one Linux workstation running the backend, three phones in the field each sharing their picture into Kujhad, and one or two RPi sensors dropped at fixed points for unattended overwatch. All of that fuses into one operator screen.</div>
+
+<!-- ═════ §3 ═════ -->
+<h2 id="s3">3. Minimum kit (you need ALL of these)</h2>
+<table>
+<tr><th>Item</th><th>Why you need it</th></tr>
+<tr><td>Android phone, Android 10 (API 28) or newer</td><td>Runs the app</td></tr>
+<tr><td>USB-C OTG cable or adapter (USB-C → USB-A female)</td><td>Connects the SDR to the phone</td></tr>
+<tr><td>A USB SDR — RTL-SDR Blog v4 ($40) is the minimum; HackRF One ($340) is the recommended upgrade</td><td>The actual radio hardware. Without this, there is nothing to receive.</td></tr>
+<tr><td>An antenna — even the rubber duck shipped with the SDR works to start</td><td>Without one you receive nothing</td></tr>
+<tr><td>The Predator RF APK</td><td>Built from the GitHub repo on Windows, or supplied by your team</td></tr>
+</table>
+<div class="info"><strong>No internet required</strong> after install. No subscription. No account.</div>
+<p>A full tiered bill of materials (cheap → full fleet) is in <a href="#s24">§ 24</a>.</p>
+
+<!-- ═════ §4 ═════ -->
+<h2 id="s4">4. First-time install (sideload)</h2>
+<p>Predator RF is not on the Play Store. You install it manually by "sideloading" — here's exactly how:</p>
+<ol>
+  <li><strong>Unlock developer options:</strong> Settings → About phone → tap <em>Build number</em> seven times until it says "Developer mode is ON".</li>
+  <li>Settings → Developer options → turn on <em>Install via USB</em> and <em>USB debugging</em>.</li>
+  <li>Get the APK file onto the phone (USB cable from a computer, Google Drive, email — anything that puts the file in your Downloads folder).</li>
+  <li>On the phone: open the Files app → Downloads → tap <code>app-debug.apk</code>.</li>
+  <li>When Android asks "Install unknown apps?" → Allow for whatever app you used to open it → Install.</li>
+  <li>Open Predator RF.</li>
+</ol>
+<p>When the app first launches it will ask for these permissions — <strong>grant all of them</strong>:</p>
+<ul>
+  <li><strong>Location ("While using the app")</strong> — required for GPS-stamped hits and TDOA. Without this, no map fixes.</li>
+  <li><strong>Storage / Files</strong> — required for saving baselines and exporting CSVs.</li>
+  <li><strong>USB device access</strong> — pops up the first time you plug in your SDR. Tap <em>Always allow for this device</em>.</li>
+</ul>
+<div class="warn"><strong>If you skip any permission:</strong> the app still runs, but the matching feature goes completely silent — no map fix, no exports, no SDR.</div>
+
+<!-- ═════ §5 ═════ -->
+<h2 id="s5">5. Plug in the radio and start receiving</h2>
+<ol>
+  <li>Connect your SDR to the phone with the USB-C OTG adapter. Antenna goes on the SDR.</li>
+  <li>The first time you plug in, a system dialog pops: <em>"Open Predator RF when this USB device is connected?"</em> — check the box and tap OK.</li>
+  <li>In the app, tap the <strong>source dropdown</strong> (top-left, says None until a radio is selected) → pick the type matching what you plugged in (RTL-SDR, Airspy, HackRF, etc.).</li>
+  <li>Tap <strong>▶ Start Listening</strong> (big button under the source dropdown).</li>
+  <li>The waterfall (the scrolling coloured display) starts moving. You're live.</li>
+</ol>
+<div class="warn"><strong>Waterfall stays black?</strong> See § 23 Troubleshooting.</div>
+
+<!-- ═════ §6 ═════ -->
+<h2 id="s6">6. The eight tabs (left-side rail, top to bottom)</h2>
+<p>Everything is organized into eight tabs. They're labeled by their 3- or 4-letter code on the left rail.</p>
+<table>
+<tr><th>Code</th><th>Name</th><th>What it's for</th></tr>
+<tr><td><span class="badge">SPEC</span></td><td>Spectrum</td><td>Live waterfall + tuner. Where you actually look at signals.</td></tr>
+<tr><td><span class="badge">HITS</span></td><td>Hits &amp; Events</td><td>Every signal the app has noticed, plus the running event log.</td></tr>
+<tr><td><span class="badge">NET</span></td><td>Network</td><td>Catalog of known networks / talkgroups / aliases — your rolodex of emitters.</td></tr>
+<tr><td><span class="badge">MAP</span></td><td>Map</td><td>GPS-stamped hits on a map, with TDOA fix dots, error ellipses, and node positions.</td></tr>
+<tr><td><span class="badge">MIS</span></td><td>Mission Config</td><td>Mission mode (Manual / Classify / Scan / QuickScan), search bands, targets, excludes, dwell timing.</td></tr>
+<tr><td><span class="badge">KUJ</span></td><td>Kujhad Fleet</td><td>Link this phone to other Predator RF phones or Raspberry Pi sensors over a network.</td></tr>
+<tr><td><span class="badge">SYS</span></td><td>System</td><td>App settings — modules, themes, decoder bridges, ATAK/CoT, baseline comparison, TLS fingerprint.</td></tr>
+<tr><td><span class="badge">BASE</span></td><td>Baseline</td><td>Record what the normal noise floor looks like, save it, then suppress it so only NEW signals fire as hits.</td></tr>
+</table>
+
+<!-- ═════ §7 ═════ -->
+<h2 id="s7">7. Mission modes (set on the MIS tab)</h2>
+<table>
+<tr><th>Mode</th><th>What it does</th><th>When to pick it</th></tr>
+<tr><td><strong>Manual</strong></td><td>Direct operator tuning and marker ownership. Nothing automated.</td><td>Free recon, training, demonstration.</td></tr>
+<tr><td><strong>Classify</strong></td><td>You stay in manual control while idle resources watch the band — passively classifying whatever crosses the threshold.</td><td>When you're working a known signal but want background awareness.</td></tr>
+<tr><td><strong>Scan</strong></td><td>Automated search-and-target workflow across all configured bands with full target/exclude logic.</td><td>The default field mode for a real operation.</td></tr>
+<tr><td><strong>QuickScan</strong></td><td>Rapid single-marker sweep for a quick area check — no target persistence.</td><td>Walk into a new area, spend 60 s seeing what's hot, decide whether to stay.</td></tr>
+</table>
+<div class="info"><strong>In a fleet:</strong> the operator workstation typically runs Scan while remote sensors run Scan with their own band lists tuned to their physical position.</div>
+
+<!-- ═════ §8 ═════ -->
+<h2 id="s8">8. The five day-one workflows</h2>
+<h3>8.1 Just look around (passive recon)</h3>
+<ol>
+  <li>SPEC tab → set the source → ▶ Start Listening.</li>
+  <li>Drag the waterfall left/right to retune. Pinch to zoom the view bandwidth.</li>
+  <li>Tap a peak to drop a marker on it.</li>
+  <li>To name it: tap the marker → <em>Assign Marker</em> → tap "Tap to edit" in the popup → type a label.</li>
+</ol>
+
+<h3>8.2 Mark a hit and send it to your team</h3>
+<ol>
+  <li>With a marker on a signal, tap <em>Assign Marker</em> if it isn't already named.</li>
+  <li>The marker becomes a hit — visible on the HITS tab.</li>
+  <li>To push to ATAK / TAK: SYS tab → ATAK / CoT section → enter your TAK server IP + port → Enable CoT. The hit appears on the ATAK map as a sensor marker at your phone's current GPS location, with a chat message showing the frequency and power.</li>
+</ol>
+
+<h3>8.3 Record a baseline so you only see NEW signals</h3>
+<p>The first time you set up in a new area, run a baseline so the app learns what's "normally here" (paging towers, nearby commercial radios, broadcast leakage). Then any signal NOT in the baseline is flagged as new.</p>
+<ol>
+  <li>BASE tab → Frequency Ranges → set Range Name, Start Hz, Stop Hz → <strong>+ Add Range</strong>. Repeat for each band you care about. (Tap <em>From Current View</em> to grab whatever the waterfall is showing.)</li>
+  <li>Recording section → set a filename (or leave blank for auto-naming) → tap <strong>▶ START RECORDING</strong> (green).</li>
+  <li>Let it run for at least 5 minutes (longer = better — 30 min for a thorough sweep).</li>
+  <li><strong>■ STOP RECORDING</strong> → Save to File.</li>
+  <li>SYS tab → Baseline Comparison → load the file → enable <em>Scan against baseline</em>. Set a threshold (default 6 dB). Now only signals exceeding the baseline by that margin become hits.</li>
+</ol>
+
+<h3>8.4 Run an automated scan across multiple bands</h3>
+<ol>
+  <li>MIS tab → Mission Mode → <strong>Scan</strong>.</li>
+  <li>Search Bands section → add the bands you want swept (Name + Start Hz + Stop Hz) → <strong>+ Add Band</strong>.</li>
+  <li>Targets section — frequencies you specifically want to flag as priority (optional).</li>
+  <li>Excludes section — frequencies to ignore (your own gear, known broadcast carriers).</li>
+  <li>Dwell + QuickScan Delay + Duration — defaults are sane. Increase dwell for weak intermittent signals.</li>
+  <li>Back to SPEC → ▶ Start Listening. The app sweeps the bands and drops hits on the HITS tab as it finds them.</li>
+</ol>
+
+<h3>8.5 Link a second phone or RPi sensor</h3>
+<p>See <a href="#s11">§ 11</a> for the full walkthrough. Two-minute version:</p>
+<ul>
+  <li><strong>On the device to publish from:</strong> KUJ → Listen section → set port + Device name + API key → toggle Listen ON.</li>
+  <li><strong>On the operator phone:</strong> KUJ → Add Peer → enter Name, Host (IP), Port, API key. Toggle <em>Mirror peer spectrum</em> to view their waterfall.</li>
+</ul>
+
+<!-- ═════ §9 ═════ -->
+<h2 id="s9">9. Editing fields on a touchscreen</h2>
+<p>Every editable field works the same way:</p>
+<ol>
+  <li>Tap the field. A popup opens at the <em>top</em> of the screen, above the keyboard.</li>
+  <li>The keyboard slides up automatically.</li>
+  <li>Type. The popup is pinned high so the keyboard never covers it.</li>
+  <li>Tap <strong>OK</strong> (or hit Enter) to commit. Cancel to discard.</li>
+</ol>
+<div class="warn"><strong>Letters not appearing?</strong> Some keyboards (composing / autocorrect-heavy keyboards) don't work inside the NativeActivity engine. If a popup goes blank when you type letters, switch your keyboard to a non-composing one (e.g. Google Keyboard with autocorrect off) for the duration of the edit. Numeric input always works regardless of keyboard.</div>
+
+<!-- ═════ §10 ═════ -->
+<h2 id="s10">10. The status bar at the top</h2>
+<table>
+<tr><th>Indicator</th><th>Colour</th><th>What it means</th></tr>
+<tr><td>Thermal</td><td>Green / dim grey</td><td>Phone temperature is fine</td></tr>
+<tr><td></td><td>Orange</td><td>SoC heating up; expect frame rate drops</td></tr>
+<tr><td></td><td>Red</td><td>Severe throttling — lower sample rate, get out of direct sun</td></tr>
+<tr><td>GPS</td><td>Green</td><td>Lock acquired, position fresh (age &lt; 60 s)</td></tr>
+<tr><td></td><td>Yellow</td><td>Lock but ageing — TDOA will refuse this node soon</td></tr>
+<tr><td></td><td>Red / dim</td><td>No lock — TDOA disabled, map uses last known position</td></tr>
+<tr><td>Kujhad</td><td>Green</td><td>All peers connected</td></tr>
+<tr><td></td><td>Yellow</td><td>Some peers down</td></tr>
+<tr><td></td><td>Red</td><td>None reachable</td></tr>
+<tr><td>CoT</td><td>Off / dim</td><td>CoT export disabled</td></tr>
+<tr><td></td><td>Green</td><td>Enabled, packets going out</td></tr>
+<tr><td></td><td>Yellow</td><td>Enabled but holding at the manual-approval queue</td></tr>
+</table>
+
+<!-- ═════ §11 ═════ -->
+<h2 id="s11">11. Kujhad fleet — protocol, pairing, TLS pinning</h2>
+<h3>11.1 What it is</h3>
+<p>Kujhad is the private peer protocol that links Predator RF instances together. Each instance can be a <strong>Device</strong> (publishes its RF state and event stream) and/or a <strong>Controller</strong> (connects to one or more Devices and mirrors their state). It's hub-and-spoke — you pick which devices you want to see. Think of it as a secure private radio network for your sensor nodes.</p>
+
+<h3>11.2 The wire protocol</h3>
+<p>Simple HTTP/1.1 + JSON, with a single API key in the <code>X-Kujhad-Key</code> header on every request. Default port <strong>41947</strong>.</p>
+<div class="info"><strong>Note:</strong> The Python backend's Kujhad client uses a default port of 5259 in the env-var schema — always set the actual port the Device is listening on in your <code>FLEET_NODES</code> config.</div>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><code>GET /v1/identify</code></td><td>Device name, version, role, hardware profile</td></tr>
+<tr><td><code>GET /v1/gps</code></td><td>Current GPS fix</td></tr>
+<tr><td><code>GET /v1/state</code></td><td>Mission mode, scan status, threshold, search bands, decoder roster</td></tr>
+<tr><td><code>GET /v1/events?since=N</code></td><td>Hit / decoded-event stream since serial N</td></tr>
+<tr><td><code>GET /v1/timing</code></td><td>Clock source, PPS lock, offset, drift, last-sync age</td></tr>
+<tr><td><code>POST /v1/command</code></td><td>Issue a typed command: tune, scan, mission, identify</td></tr>
+</table>
+<div class="critical"><strong>Hard safety boundary:</strong> Any command in the <code>tx</code> class is rejected unconditionally by the dispatcher. The whole module never opens a transmit path.</div>
+
+<h3>11.3 Make this device discoverable (publish)</h3>
+<ol>
+  <li>KUJ tab → Listen section.</li>
+  <li>Listen port — leave at default (41947) unless you have a port conflict.</li>
+  <li>Device name — short identifier (e.g. <code>alpha-truck</code>, <code>bravo-roof</code>).</li>
+  <li>API key — leave the auto-generated 32-hex-char key, or paste your own. Every Controller pairing to this Device needs this same key.</li>
+  <li>Advertise address — usually leave blank; the app picks the best interface.</li>
+  <li>Toggle <strong>Listen ON</strong>.</li>
+</ol>
+<p>The KUJ tab shows a green "Listening on &lt;addr&gt;:&lt;port&gt;" banner. Hand the address + port + API key to whoever needs to pair.</p>
+
+<h3>11.4 Pair to a peer (subscribe)</h3>
+<ol>
+  <li>KUJ tab → Add Peer.</li>
+  <li>Name — anything memorable.</li>
+  <li>Host — the publisher's IP address.</li>
+  <li>Port — the publisher's listen port.</li>
+  <li>API key — must match the publisher exactly, character-for-character.</li>
+  <li>TLS — leave OFF unless you've armed TLS on the publisher (see § 11.5).</li>
+  <li>Tap <strong>Add peer</strong>.</li>
+</ol>
+<p>The peer appears in the list with a status dot. Toggle <em>Mirror peer spectrum</em> to view that peer's waterfall while still controlling your own local SDR. Toggle <em>Mirror peer markers</em> to see their hits on your map.</p>
+
+<h3>11.5 TLS pinning (optional — when OpenSSL is built in)</h3>
+<p>By default the Kujhad protocol rides on plain HTTP over your private overlay (ZeroTier / Tailscale) — the overlay IS the trust boundary. If your build links OpenSSL, you can additionally wrap the listener in TLS. The controller pins the server's certificate by SHA-256 fingerprint — same model as SSH host keys (you verify once, then trust thereafter).</p>
+<p><strong>On the publisher:</strong></p>
+<ol>
+  <li>SYS → Kujhad TLS → <em>Generate self-signed cert</em>. The dialog shows the SHA-256 fingerprint as colon-separated hex.</li>
+  <li>Write down the fingerprint and read it to the controller operator <strong>out-of-band</strong> (voice, paper, SMS — NOT the same network you're about to pair on).</li>
+  <li>Toggle <em>TLS enabled</em>.</li>
+</ol>
+<p><strong>On the controller:</strong></p>
+<ol>
+  <li>KUJ → Add Peer → toggle TLS → paste the fingerprint into the <em>Pinned fingerprint</em> field.</li>
+  <li>On first connect the cert is compared against the pinned value. Mismatch = abort with a loud warning.</li>
+</ol>
+
+<h3>11.6 Python backend → Kujhad device</h3>
+<p>To have the Linux backend consume from a C++ Kujhad device, set <code>FLEET_NODES</code> in <code>/etc/predator-rf/predator-rf.env</code>:</p>
+<pre>FLEET_NODES=alpha@192.168.1.10:41947:&lt;api_key&gt;:hackrf,bravo@192.168.1.11:41947:&lt;api_key2&gt;:rtlsdr</pre>
+<p>Format per node: <code>node_id@host:port:api_key:hardware_code</code>. The backend polls each node: events at 1 Hz, GPS at 1 Hz, full state every 5 s, timing telemetry every 30 s.</p>
+<div class="warn"><strong>Hardware mismatch warning:</strong> If the device reports a different hardware code than what's configured in FLEET_NODES, the backend logs a loud warning but continues — operators do mis-configure this. Trust the device, update the env file when you can.</div>
+
+<h3>11.7 Kujhad troubleshooting</h3>
+<table>
+<tr><th>Symptom</th><th>Most likely cause</th><th>Fix</th></tr>
+<tr><td>Peer red / never green</td><td>Network unreachable, port blocked, or API key mismatch</td><td>Ping the host; telnet the port; verify the key character-for-character</td></tr>
+<tr><td>Peer green but no events</td><td>Mission mode is Manual on the peer</td><td>Change peer to Scan or Classify</td></tr>
+<tr><td>401 on every request</td><td>API key wrong</td><td>Re-copy the key</td></tr>
+<tr><td>TLS handshake failure</td><td>Wrong fingerprint pinned, or peer cert was regenerated</td><td>Re-pin the new fingerprint after verifying out-of-band</td></tr>
+<tr><td>Hardware mismatch warning</td><td>FLEET_NODES has wrong hardware code</td><td>Update env; restart predator-rf. Backend trusts the device regardless.</td></tr>
+</table>
+
+<!-- ═════ §12 ═════ -->
+<h2 id="s12">12. Geolocation — TDOA, the error ellipse, what confidence actually means</h2>
+<h3>12.1 What TDOA is</h3>
+<p>TDOA stands for Time-Difference-of-Arrival. When two or more GPS-synchronized sensor nodes hear the same transmission, the tiny difference in <em>when</em> each node received it (multiplied by the speed of light) gives a curved line where the transmitter must be. With three or more nodes those curves intersect at a position fix.</p>
+<p>Think of it as triangulation using time rather than angle — two nodes gives you a search arc, three nodes gives you a point on the map.</p>
+
+<h3>12.2 What you need for a fix</h3>
+<table>
+<tr><th>Requirement</th><th>Why it matters</th></tr>
+<tr><td>≥ 2 distinct sensor nodes</td><td>Two readings from the same receiver give no time-difference information</td></tr>
+<tr><td>GPS lock on each participating node</td><td>Without a position you can't do the geometry at all</td></tr>
+<tr><td>GPS lock age &lt; 60 s on each node (set by GPS_MAX_AGE_S)</td><td>A stale GPS fix means the node may have moved — the math breaks silently if you don't catch this</td></tr>
+<tr><td>Each node's hearings within a 5-second window of each other</td><td>TDOA assumes one transmission; measurements that are too far apart in time can't be compared</td></tr>
+<tr><td>A common time reference</td><td>GPSDO/PPS-disciplined hardware → high trust; system-clock-only → low trust but still produces a fix</td></tr>
+</table>
+<div class="tip"><strong>Inclusive by policy:</strong> Any GPS-equipped node participates, even cheap RTL-SDRs without a GPSDO. Their timing trust is capped at 0.5 instead of 0.98, and the fix confidence is scaled accordingly. A rough fix from four cheap nodes is still operationally useful — it gives you a search area instead of nothing.</div>
+
+<h3>12.3 The math (for briefing TOC)</h3>
+<ul>
+  <li><strong>2 distinct nodes:</strong> falls back to the midpoint of their positions, fixed confidence = 0.3 (then scaled by timing trust).</li>
+  <li><strong>3+ distinct nodes:</strong> iterative least-squares solve in a local coordinate frame, 50 iterations; geometric confidence = min(0.95, 0.5 + 0.1·N) where N is the measurement count, then scaled by timing trust.</li>
+  <li><strong>Timing trust per node:</strong>
+    <table style="margin-top:4pt">
+      <tr><td>GPSDO + PPS lock + |offset| &lt; 10 ms</td><td>0.98</td></tr>
+      <tr><td>GPSDO + PPS lock</td><td>0.90</td></tr>
+      <tr><td>GPSDO, no PPS</td><td>0.75</td></tr>
+      <tr><td>NTP + |offset| &lt; 25 ms + sync &lt; 60 s</td><td>0.70</td></tr>
+      <tr><td>NTP + |offset| &lt; 100 ms</td><td>0.55</td></tr>
+      <tr><td>NTP worse</td><td>0.40</td></tr>
+      <tr><td>System clock only</td><td>0.30</td></tr>
+      <tr><td>Any of the above, last sync &gt; 5 min</td><td>minus 0.20</td></tr>
+    </table>
+  </li>
+  <li><strong>Final fix confidence</strong> = geometric_confidence × mean(timing_trust of all participants)</li>
+</ul>
+
+<h3>12.4 The error ellipse on the map</h3>
+<p>Every TDOA fix is rendered with a 1σ error ellipse, not just a dot. This is the difference between a 50-metre fix and a 5-kilometre search area — and both look like the same dot without it.</p>
+<ul>
+  <li>Base radius scales as 50 m + (1 − confidence) × 4950 m — a high-confidence fix shrinks toward 50 m, a zero-confidence fix grows toward 5 km.</li>
+  <li>Eccentricity comes from your node geometry: clustered nodes → near-circular blob; nodes strung along a line → long thin ellipse perpendicular to the baseline.</li>
+  <li>Rotation follows the principal axis of the node cluster, so the ellipse physically matches your fleet's geometry.</li>
+</ul>
+
+<h3>12.5 What "confidence" actually means in three places</h3>
+<p>The word "confidence" appears on three different things. Keep them distinct:</p>
+<table>
+<tr><th>Where you see it</th><th>What it actually measures</th></tr>
+<tr><td>track.confidence on the HITS row</td><td><em>Detection confidence</em> — how sure the system is that this is a real, persistent emitter (not a one-shot artifact). Starts at 0.1, climbs with corroborating observations.</td></tr>
+<tr><td>track.location_confidence (drives the map ellipse)</td><td><em>Geolocation confidence</em> — TDOA fix quality only. Independent of detection confidence.</td></tr>
+<tr><td>assessment.confidence on the threat assessment</td><td><em>Assessment confidence</em> — the intelligence layer's confidence in its threat level call. Independent of both above.</td></tr>
+</table>
+<div class="info"><strong>Example:</strong> A track can have high detection confidence (0.9 — definitely real), low location confidence (0.2 — five-km search area), and medium assessment confidence (0.5 — probably elevated threat but not certain). All three are surfaced separately.</div>
+
+<h3>12.6 What happens with no GPS-synced nodes (single-phone operator)</h3>
+<p>If you have only one phone, TDOA does not run — it physically can't. You need ≥ 2 GPS-synced sensors hearing the same emission within a 5-second window. Instead, the system uses two fallback behaviours:</p>
+<p><strong>Default (RSSI_PROXIMITY_ENABLED=false):</strong></p>
+<ul>
+  <li>Tracks have no estimated map position of their own.</li>
+  <li>The map shows your phone's GPS dot and its breadcrumb trail, with hit timestamps along the trail. You do the triangulation in your head by walking the area and noticing where the signal gets stronger.</li>
+  <li>This is the honest default: the system never invents an emitter position when it can't measure one.</li>
+  <li>The CoT beacon (§ 16), if armed, falls back to the detecting node's GPS as a stand-in — meaning TAK shows a marker at <em>your phone's position</em>, not the emitter's. This means "I'm here and I heard something," not "the emitter is here."</li>
+</ul>
+<p><strong>Opt-in (RSSI_PROXIMITY_ENABLED=true):</strong> See § 12.7.</p>
+
+<h3>12.7 RSSI proximity fallback (single-node coarse geolocation)</h3>
+<p>When you set <code>RSSI_PROXIMITY_ENABLED=true</code>, single-node tracks get a coarse position estimate so the map shows something per emitter instead of just your phone's dot.</p>
+<div class="warn"><strong>This is NOT real geolocation.</strong> Treat the circle as a search area, not a confirmed position. Never report these coordinates to higher echelon as an emitter fix.</div>
+<p><strong>How it works:</strong> The signal's power is converted to an estimated range using a free-space path-loss model, then multiplied by an uncertainty factor to get the displayed circle radius. The circle is centred on your phone's GPS position — there is no bearing information, so the emitter is "somewhere within radius r, in some unknown direction."</p>
+<p><strong>What it's good for:</strong> Walking the perimeter — as you walk closer the circle visually contracts. Coarse bucketing: "within 100 m or within 5 km?" Giving TAK a non-trivial CE radius so the marker doesn't pretend to be a precise fix.</p>
+<p><strong>What it's NOT for:</strong> Reporting actual emitter coordinates upstream. Heavily cluttered or urban environments (free-space path loss assumes line-of-sight — bump <code>RSSI_RADIUS_UNCERTAINTY_FACTOR</code> to 3 or 4 in urban canyons).</p>
+<p><strong>TDOA always wins:</strong> As soon as a second GPS-synced node hears the same emitter, the location method flips to TDOA and the proximity circle is replaced by the proper ellipse.</p>
+
+<!-- ═════ §13 ═════ -->
+<h2 id="s13">13. Track lifecycle — NEW → TRACKING → STABLE → COASTING → LOST</h2>
+<p>Every emitter the system commits to becomes a <em>track</em> with a state machine:</p>
+<table>
+<tr><th>State</th><th>Triggered by</th><th>What this means for you</th></tr>
+<tr><td><strong>NEW</strong></td><td>First detection</td><td>One sighting, not yet corroborated. Don't act on it alone.</td></tr>
+<tr><td><strong>TRACKING</strong></td><td>≥ 3 observations</td><td>The system believes this is real. Scoring is live. Now is the time to start paying attention.</td></tr>
+<tr><td><strong>STABLE</strong></td><td>≥ 10 observations</td><td>Well-characterised. AutoTasker may auto-task nodes here. High confidence in the assessment.</td></tr>
+<tr><td><strong>COASTING</strong></td><td>Track aged out of the last-seen window but within replay window</td><td>"Was here, hasn't been heard in a while, expected to return." Still in the live picture.</td></tr>
+<tr><td><strong>LOST</strong></td><td>Beyond the replay window</td><td>Archived. Removed from the live picture but stays in the mission ledger.</td></tr>
+</table>
+<p>The state appears on the HITS row and gates how the rest of the system behaves. AutoTasker and CoT escalation are both more conservative on NEW tracks.</p>
+
+<!-- ═════ §14 ═════ -->
+<h2 id="s14">14. Trust model — node trust score, timing trust, sensitivity trust</h2>
+<p>Every sensor node carries a composite trust score between 0.05 and 0.98. This score multiplies the weight of that node's observations during fusion, so a flaky cheap node doesn't drag down a high-quality fix.</p>
+<pre>operational  = base_trust × uptime_fraction × (1 - false_positive_rate)
+multi_node   = multi_node_agreement × 0.2
+hardware     = freq_stability × 0.3
+             + sensitivity    × 0.3
+             + timing         × 0.2
+             + 0.2 (constant)
+trust_score  = (operational + multi_node) × hardware
+               × (0.7 if thermal_throttling else 1.0)</pre>
+<table>
+<tr><th>Component</th><th>What raises it</th><th>What lowers it</th></tr>
+<tr><td>base_trust</td><td>Operator manually marks node as trusted</td><td>Default 0.6</td></tr>
+<tr><td>uptime_fraction</td><td>Node reachable continuously</td><td>Network drops, restarts</td></tr>
+<tr><td>false_positive_rate</td><td>Few unconfirmed-by-other-nodes hits</td><td>High solo-hit rate</td></tr>
+<tr><td>multi_node_agreement</td><td>Hearings corroborated by ≥ 1 other node</td><td>Solo observations only</td></tr>
+<tr><td>freq_stability_trust</td><td>GPSDO-disciplined oscillator (low PPM)</td><td>Stock RTL-SDR tuner (50 PPM)</td></tr>
+<tr><td>sensitivity_trust</td><td>Low noise figure (Airspy R2 at 2.5 dB)</td><td>High noise figure (HackRF at 10 dB)</td></tr>
+<tr><td>timing_stability_trust</td><td>GPSDO + PPS, low offset</td><td>NTP only, large offset, stale sync</td></tr>
+<tr><td>thermal_throttling</td><td>Cool device</td><td>Hot phone in sun → 0.7× multiplier</td></tr>
+</table>
+<p>The hardware components are derived from the per-SDR capability table in <a href="#s21">§ 21</a>.</p>
+
+<!-- ═════ §15 ═════ -->
+<h2 id="s15">15. The intelligence layer — anomaly flags → threat level → recommended action</h2>
+<p>Every track passes through the decision engine which combines anomaly flags, classification confidence, and frequency-band context to produce an assessment report:</p>
+<table>
+<tr><th>Threat level</th><th>When it fires</th><th>Recommended action</th></tr>
+<tr><td>unknown</td><td>No flags AND confidence &lt; 0.3</td><td>continue_monitoring</td></tr>
+<tr><td>low</td><td>At least one flag, low severity</td><td>continue_monitoring</td></tr>
+<tr><td>medium</td><td>One high-severity flag OR ≥ 2 medium flags</td><td>increase_dwell_time</td></tr>
+<tr><td>high</td><td>Two high-severity flags OR (one high + confidence ≥ 0.5)</td><td>focus_all_nodes (auto-tasks every TDOA-capable node to this frequency)</td></tr>
+<tr><td>critical</td><td>Any critical-severity flag</td><td>alert_operator_immediately — <strong>NEVER auto-actioned</strong></td></tr>
+</table>
+<p>Tracks at <strong>high</strong> or <strong>critical</strong> set <code>escalate_to_atak = true</code>, which is one of the two gates the CoT emitter checks (§ 16).</p>
+<p>The frequency-band context labels each track with its regulatory band — Aviation, VHF Public Safety, Marine VHF, UHF Public Safety, ISM 433/915/2.4 GHz, GNSS. This flows into the assessment summary so the operator sees "Emitter at 162.5500 MHz (Marine VHF)" instead of just a raw frequency.</p>
+
+<!-- ═════ §16 ═════ -->
+<h2 id="s16">16. ATAK / TAK CoT integration — two-key gate, manual approval queue</h2>
+<h3>16.1 The two-key gate</h3>
+<p>Predator RF starts in RX-only posture. Two flags must both be true for a CoT packet to leave the system:</p>
+<ol>
+  <li><code>cot_enabled</code> (env var <code>COT_ENABLED=true</code>, or the toggle in SYS → ATAK / CoT) — the operator-level kill switch.</li>
+  <li>The track's most recent assessment must have <code>escalate_to_atak = true</code> (set automatically for high or critical threat levels).</li>
+</ol>
+<p>Even an automated critical assessment cannot bypass the operator's <code>cot_enabled</code> flag.</p>
+
+<h3>16.2 The manual approval queue (third key for field use)</h3>
+<p>In the field, set <code>COT_REQUIRE_MANUAL_APPROVAL=true</code> (or the <em>Require manual approval</em> toggle in SYS). With this on, <code>escalate_to_atak</code> no longer auto-fires. Each escalation queues at <code>GET /api/v1/approvals</code> and waits for the operator to explicitly approve before the packet goes out. Reject drops it; expire happens after 2 hours by default (<code>COT_APPROVAL_EXPIRY_S</code>).</p>
+<div class="warn"><strong>Use this in the field.</strong> This is the two-person-rule equivalent for a solo operator. A single false-positive can spam the TOC feed otherwise.</div>
+
+<h3>16.3 What goes on the wire</h3>
+<p>CoT 2.0 XML over UDP, defaulting to multicast 239.2.3.1:6969 (the TAK SA feed). For unicast to a TAK Server, override <code>COT_DEST_HOST</code> and <code>COT_DEST_PORT</code>.</p>
+<table>
+<tr><th>CoT field</th><th>What's in it</th></tr>
+<tr><td>type (geolocated emitter)</td><td><code>a-u-G</code> (unknown ground unit) — when there's a TDOA fix</td></tr>
+<tr><td>type (un-geolocated / LOB)</td><td><code>b-m-p-s-p-loc</code> (point of interest) — when only a fallback or LOB location</td></tr>
+<tr><td>type (sensor node SA)</td><td><code>a-f-G-E-S</code> (friendly ground electronic sensor) — the sensor node's own position beacon, so your nodes appear on the TAK map as sensor icons</td></tr>
+<tr><td>point lat / lon</td><td>The TDOA fix, or the most-trustworthy node's GPS as fallback</td></tr>
+<tr><td>point ce (circular error)</td><td>Scales 50 m (high confidence) → 5 km (zero confidence). TAK renders this as the circle around the marker.</td></tr>
+<tr><td>point hae / le</td><td>9 999 999 (unknown altitude) — the platform does not claim altitude information</td></tr>
+<tr><td>uid</td><td><code>&lt;COT_UID_PREFIX&gt;.&lt;emitter_id&gt;</code> (note: dot separator)</td></tr>
+<tr><td>contact callsign</td><td><code>&lt;COT_UID_PREFIX&gt;-&lt;emitter_id_first_8_chars&gt;</code> (dash separator — this is what appears as the label on the ATAK map)</td></tr>
+<tr><td>remarks</td><td><code>PREDATOR-RF &lt;THREAT&gt; | &lt;freq&gt; MHz | obs=&lt;n&gt; | conf=&lt;x&gt; | &lt;summary&gt;</code></td></tr>
+<tr><td>stale</td><td>Default 5 min after emit (<code>COT_STALE_S</code>), then TAK fades the marker</td></tr>
+<tr><td>__group name="Cyan" role="Team Member"</td><td>Renders as a friendly contact, not a hostile</td></tr>
+</table>
+<div class="info"><strong>Per-emitter rate limit:</strong> 5 seconds between beacons for the same emitter so a chatty source can't flood the TOC.</div>
+
+<h3>16.4 Test the path before you go live</h3>
+<p>The CoT export pull endpoint lets you verify the TAK pipeline works before the field. From any device that can reach the backend:</p>
+<pre>curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/v1/cot/export</pre>
+<p>This returns all tracks that currently pass the escalation gate as CoT XML. Pipe it to a file and import via ATAK's CoT file import — if sensor and emitter markers appear you're wired correctly. No synthetic beacon is injected, so what you see is what the system would actually send.</p>
+<p>To test a single specific track:</p>
+<pre>curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/v1/cot/export?emitter_id=&lt;id&gt;"</pre>
+<div class="tip"><strong>On mobile (ATAK plugin pull mode):</strong> When multicast UDP isn't available (carrier NAT, hotspot, school network), the ATAK plugin polls <code>GET /api/v1/cot/export</code> directly and feeds the XML into ATAK's local CoT pipeline. No extra config needed on the phone — it falls back to pull mode automatically.</div>
+
+<!-- ═════ §17 ═════ -->
+<h2 id="s17">17. AutoTasker — the action loop and its three brakes</h2>
+<p>When a <strong>high</strong> assessment recommends <code>focus_all_nodes</code>, AutoTasker re-tunes every TDOA-capable node to the track's primary frequency by issuing <code>POST /v1/command {class:"tune", action:"set", args:{frequencyHz, vfo}}</code> to each Kujhad device.</p>
+<p><strong>Critical</strong> assessments are never auto-actioned — the operator pushes the button.</p>
+<p>Three brakes prevent runaway tasking:</p>
+<ol>
+  <li><strong>Per-node rate limit</strong> — 30 s between tunes per node by default (<code>AUTO_TASKER_MIN_INTERVAL_S</code>). Prevents a chatty emitter from thrashing one node.</li>
+  <li><strong>Already-tuned check</strong> — skips the tune if the node is already within ±2 kHz of the requested centre frequency.</li>
+  <li><strong>Global per-fleet budget</strong> — at most 30 tunes/min across the entire fleet by default (<code>AUTO_TASKER_GLOBAL_MAX_PER_MIN</code>). Sized for ~6 nodes worth of churn. Prevents an assessment-loop bug from thrashing every node simultaneously at 0200 in the field.</li>
+</ol>
+<div class="warn"><strong>AutoTasker is OFF by default</strong> (<code>AUTO_TASKER_ENABLED=false</code>). Re-tune commands modify the SDR posture, so this is an explicit opt-in.</div>
+
+<!-- ═════ §18 ═════ -->
+<h2 id="s18">18. Operator overrides — friendly list, blacklist, manual location</h2>
+<p>Three classes of override, all persistent across restarts:</p>
+<h3>18.1 Friendly list</h3>
+<p>Mark an <code>emitter_id</code> as own-force or known-benign (your team's GMRS handhelds, the local police scanner, your own backhaul). Effect:</p>
+<ul>
+  <li>Suppresses AutoTasker tunes for that emitter</li>
+  <li>Suppresses CoT escalation</li>
+  <li>Tags the track friendly in the UI (different icon, different colour)</li>
+</ul>
+<p>Always recoverable — un-friend in the same UI.</p>
+<h3>18.2 Frequency blacklist</h3>
+<p>Add (start_hz, end_hz) ranges that the SweepCoordinator must skip and the TrackManager must drop on ingest. Use cases:</p>
+<ul>
+  <li>A noisy commercial broadcaster you don't want clogging the HITS list</li>
+  <li>A known interferer (your own LO leakage)</li>
+  <li>An off-limits band you have a regulatory obligation NOT to log</li>
+</ul>
+<h3>18.3 Manual location override</h3>
+<p>Operator supplies a manual lat/lon for an <code>emitter_id</code> (confirmed via DF gear or visual). Wins over any TDOA estimate until cleared. Confidence is pinned to 0.95 by default. The map ellipse shrinks accordingly.</p>
+<p>All three overrides live in the mission database and rehydrate on restart. Every add/remove is stamped so AAR exports show exactly when an operator declared something friendly or moved it manually.</p>
+
+<!-- ═════ §19 ═════ -->
+<h2 id="s19">19. Mission lifecycle — start, run, end, export the AAR</h2>
+<p>The mission ledger groups everything (events, tracks, assessments, approvals, overrides) under a <code>mission_id</code> so you can retrieve everything from a specific operation or hand over a complete after-action package.</p>
+<h3>19.1 Start</h3>
+<pre>TOKEN=$(grep API_BEARER_TOKEN /etc/predator-rf/predator-rf.env | cut -d= -f2)
+curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8000/api/v1/missions \
+  -d '{"name":"OVERWATCH-20260315","operator":"K9-Actual"}'</pre>
+<p>Or from the phone: MIS tab → Mission section → <em>Start mission</em> → enter name → Start.</p>
+<p>Starting a new mission auto-ends any in-flight one — no need to remember to close the previous mission first.</p>
+<h3>19.2 Check active mission</h3>
+<pre>curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/missions/active</pre>
+<h3>19.3 End</h3>
+<pre>curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8000/api/v1/missions/end</pre>
+<h3>19.4 Export the after-action package</h3>
+<pre>curl -H "Authorization: Bearer $TOKEN" -OJ \
+  localhost:8000/api/v1/missions/&lt;mission_id&gt;/export</pre>
+<p>Bundles a JSONL tarball: every event, track, assessment, approval (approved AND rejected), and override change. Time-stamped and self-contained.</p>
+
+<!-- ═════ §20 ═════ -->
+<h2 id="s20">20. Path 2: the Python backend (TOC workstation + RPi sensors)</h2>
+<div class="info"><strong>Two separate programs:</strong> <code>predator-rf.service</code> (Python, port 8000) is the intelligence backend — track fusion, TDOA, decision engine, CoT. <code>predator-rfd</code> (C++ web backend, port 5555) is the headless sensor daemon for a Linux node acting as a Kujhad Device. They are <em>not</em> interchangeable; they serve different roles.</div>
+
+<h3>20.1 Install (one-time)</h3>
+<p>On a Linux box (Debian / Ubuntu / Raspberry Pi OS):</p>
+<pre>sudo mkdir -p /opt/predator-rf /etc/predator-rf /var/lib/predator-rf/backups
+sudo git clone &lt;repo&gt; /opt/predator-rf
+cd /opt/predator-rf
+sudo python3 -m venv venv
+sudo venv/bin/pip install -r requirements.txt
+sudo cp deploy/predator-rf.env.example /etc/predator-rf/predator-rf.env
+sudoedit /etc/predator-rf/predator-rf.env       # see § 20.3
+sudo cp deploy/predator-rf.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now predator-rf</pre>
+
+<h3>20.2 Where things live</h3>
+<table>
+<tr><th>Path</th><th>What it is</th></tr>
+<tr><td><code>/opt/predator-rf</code></td><td>Source checkout + Python venv</td></tr>
+<tr><td><code>/etc/predator-rf/predator-rf.env</code></td><td>All env-var config</td></tr>
+<tr><td><code>/var/lib/predator-rf/mission.db</code></td><td>SQLite mission ledger</td></tr>
+<tr><td><code>/var/lib/predator-rf/backups/</code></td><td>Snapshots from deploy/backup_mission.sh</td></tr>
+<tr><td><code>/etc/systemd/system/predator-rf.service</code></td><td>systemd unit</td></tr>
+<tr><td><code>journalctl -u predator-rf -f</code></td><td>Live log tail command</td></tr>
+</table>
+<p>Backend listens on :8000. For TLS, terminate at nginx / Caddy / Traefik in front — the backend itself stays plain HTTP intentionally.</p>
+
+<h3>20.3 The full env-var reference</h3>
+<p>Every knob, defaults shown. Edit <code>/etc/predator-rf/predator-rf.env</code>.</p>
+<pre># API
+API_HOST=0.0.0.0
+API_PORT=8000
+API_BEARER_TOKEN=            # empty = open (lab only); strongly recommended for any LAN deploy
+
+# Fusion
+TRACK_MAINTENANCE_S=10.0
+TRACK_MERGE_S=30.0
+MIN_CONFIDENCE=0.3
+
+# Baseline learning
+BASELINE_WINDOW_H=24.0
+BASELINE_PRUNE_H=6.0
+
+# Kujhad fleet
+# Format per node: node_id@host:port:api_key:hardware_code
+# Port must match the Device's listen port (default 41947 for C++ nodes)
+FLEET_NODES=alpha@192.168.1.10:41947:KEY:hackrf,bravo@192.168.1.11:41947:KEY:rtlsdr
+
+# TDOA
+TDOA_ENABLED=true
+GPS_MAX_AGE_S=60.0
+TIMING_POLL_INTERVAL_S=30.0
+
+# Persistence
+PERSISTENCE_ENABLED=true
+DATA_DIR=/var/lib/predator-rf
+MISSION_DB=mission.db
+TRACK_REPLAY_WINDOW_H=24.0
+
+# CoT (RX-only by default)
+COT_ENABLED=false
+COT_DEST_HOST=239.2.3.1
+COT_DEST_PORT=6969
+COT_UID_PREFIX=PREDATOR
+COT_STALE_S=300.0
+COT_MULTICAST_TTL=1
+COT_REQUIRE_MANUAL_APPROVAL=false      # SET TRUE IN THE FIELD
+COT_APPROVAL_EXPIRY_S=7200.0
+COT_APPROVAL_MAX_PENDING=200
+
+# AutoTasker (RX-only by default)
+AUTO_TASKER_ENABLED=false
+AUTO_TASKER_MIN_INTERVAL_S=30.0
+AUTO_TASKER_GLOBAL_MAX_PER_MIN=30
+
+# CoC mode (TOC-of-TOCs)
+COC_MODE_ENABLED=false
+COC_UPSTREAM_URLS=           # CSV: http://stationA:8000,http://stationB:8000
+COC_RECONNECT_DELAY_S=5.0
+COC_DEDUP_INTERVAL_S=15.0
+COC_DEDUP_FREQ_TOL_HZ=5000.0
+COC_DEDUP_LOC_TOL_M=500.0
+
+# Observability
+LOG_LEVEL=INFO
+LOG_FORMAT=text              # 'json' for Loki/Splunk/journald ingest
+METRICS_ENABLED=true
+SHUTDOWN_DRAIN_TIMEOUT_S=5.0</pre>
+
+<h3>20.4 Day-of operations (Linux side)</h3>
+<pre>sudo systemctl restart predator-rf            # apply env changes
+sudo systemctl status predator-rf
+journalctl -u predator-rf -f                  # tail logs
+curl -s localhost:8000/healthz                # quick health check
+curl -s localhost:8000/metrics                # Prometheus-format metrics
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/nodes    # fleet status
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/tracks   # live tracks
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/approvals # pending</pre>
+
+<h3>20.5 RPi sensor node</h3>
+<p>A Raspberry Pi running the Predator RF C++ build acts as a Kujhad Device. Drop it at a fixed point with:</p>
+<ul>
+  <li>An SDR (RTL-SDR Blog v4 minimum, Airspy or HackRF preferred for sensitivity)</li>
+  <li>A GPS HAT or USB GPS (Adafruit Ultimate GPS HAT, BU-353N5)</li>
+  <li>Power (PoE injector or 12 V → USB-C PD)</li>
+  <li>Networking (Ethernet preferred; ZeroTier / Tailscale installed for off-LAN reach)</li>
+  <li>An antenna mounted as high as your mast allows</li>
+</ul>
+<p>Configure its Kujhad listen address + port + API key. Add it to <code>FLEET_NODES</code> on the operator workstation. Done — the operator now sees its picture.</p>
+
+<h3>20.6 CoC mode (Center of Control — TOC of TOCs)</h3>
+<p>Set <code>COC_MODE_ENABLED=true</code> + <code>COC_UPSTREAM_URLS=http://station-alpha:8000,http://station-bravo:8000</code> and this backend additionally consumes events from those upstream backends' SSE feeds. Every aggregated event is tagged with <code>_upstream</code> so you know which station originated it. CrossStationDedup coalesces tracks where frequency + location agree (default tolerances: ±5 kHz, ±500 m, ±30 s co-occurrence).</p>
+
+<h3>20.7 RNS Layers (Reticulum transport for CoT)</h3>
+<p>The RNS layer is a parallel transport that sends the same CoT XML traffic over Reticulum (RNS) at the same time as the regular TAK UDP path. RNS handles path selection across whatever interfaces you've brought up — LoRa, packet radio, I2P, mesh. This is what gets your CoT to TAK when regular IP is unavailable or untrusted.</p>
+<p>The daemon ships in the Python backend (<code>backend/rns/</code>). Crypto stack: cbor2 envelopes, Argon2id (t=3, m=64MiB, p=1) KDF, XChaCha20-Poly1305 IETF AEAD with version byte bound as AAD (downgrade-resistant).</p>
+<p>Inbound CoT over RNS is auto-forwarded to a local TAK app over UDP. On Linux it's opt-in (<code>RNS_ATAK_LOCAL_PORT</code> env var); on Android the port defaults to 4242 so peer-relayed CoT shows on the device's TAK map without operator action.</p>
+
+<h4>20.7.1 Where to access it</h4>
+<table>
+<tr><th>Platform</th><th>How to open it</th><th>How it talks to the daemon</th></tr>
+<tr><td>Linux (Kujhad GUI on the backend host)</td><td>Kujhad panel → "RNS Interfaces (Reticulum)" section</td><td>Unix socket (ControlServer), uid-checked, no network exposure</td></tr>
+<tr><td>Android (Predator RF app, Tier 2+ deployment)</td><td>Same Kujhad panel — the C++ UI is rendered through NativeActivity so the layout is identical</td><td>android.net.LocalSocket against the same Unix-socket path</td></tr>
+</table>
+<div class="info"><strong>No HTTP control plane.</strong> The HTTP routes in backend/api/routes/rns.py exist as importable scaffolding but are deliberately not mounted — the daemon control plane is local-only. If you need to script it, use the daemon's Unix socket directly.</div>
+
+<h4>20.7.2 The nine interface types — when to use each</h4>
+<table>
+<tr><th>Type</th><th>When to use it</th><th>Per-type required fields</th></tr>
+<tr><td>tcp_client</td><td>Reach a remote RNS node by dialing its TCP listener (e.g. an RNS hub on the public internet)</td><td>target_host, target_port; optional kiss_framing, i2p_tunneled</td></tr>
+<tr><td>tcp_server</td><td>Let other RNS nodes dial you on TCP (run a local RNS hub)</td><td>listen_port; optional listen_address, prefer_ipv6, i2p_tunneled</td></tr>
+<tr><td>udp</td><td>Cheap stateless UDP transport, useful for LAN setups</td><td>listen_port; optional listen_address, forward_address, forward_port</td></tr>
+<tr><td>i2p</td><td>Anonymized transport over I2P; the SAM bridge handles routing</td><td>optional peers, connectable, i2p_sam_address</td></tr>
+<tr><td>auto_interface</td><td>Discover other Reticulum nodes on the same LAN automatically</td><td>group_id; optional discovery_scope, discovery_port, data_port, allowed_interfaces, ignored_interfaces</td></tr>
+<tr><td>rnode</td><td>LoRa via an RNode (the most common long-range field setup)</td><td>port (e.g. /dev/ttyUSB0), frequency_hz, bandwidth_hz, txpower_dbm (−10…30), spreadingfactor (7…12), codingrate (5…8); optional flow_control, id_callsign, id_interval_s</td></tr>
+<tr><td>kiss_tnc</td><td>Generic packet-radio TNC running KISS protocol</td><td>port, speed_baud; optional databits, parity, stopbits, preamble_ms, txtail_ms, persistence, slottime_ms, flow_control, beacon_interval_s, beacon_data</td></tr>
+<tr><td>ax25_kiss</td><td>Amateur AX.25 packet radio (callsign required)</td><td>Everything kiss_tnc has, plus callsign, ssid (0…15), axint_port</td></tr>
+<tr><td>pipe</td><td>Wrap an arbitrary external process as an RNS interface (advanced)</td><td>command; optional respawn_delay_s</td></tr>
+</table>
+<p><strong>reliable_cot defaults by type:</strong> rnode → False (LoRa airtime is precious; unconfirmed send). Everything else → True (TCP/UDP/I2P/Auto/Pipe/KISS — link overhead is cheap, so CoT escalations are confirmed).</p>
+
+<h4>20.7.3 Common fields (every interface)</h4>
+<table>
+<tr><th>Field</th><th>Default</th><th>Purpose</th></tr>
+<tr><td>id</td><td>auto (UUID4)</td><td>Stable identifier; never changes after creation</td></tr>
+<tr><td>name</td><td>required</td><td>Human label shown in the panel. Must be unique.</td></tr>
+<tr><td>type</td><td>required</td><td>One of the nine types above</td></tr>
+<tr><td>enabled</td><td>true</td><td>Toggle without deleting. Disabled interfaces don't bind.</td></tr>
+<tr><td>mode</td><td>full</td><td>full / gateway / access_point / roaming / boundary — RNS routing role. Use full unless you've read the RNS docs.</td></tr>
+<tr><td>outgoing</td><td>true</td><td>Whether RNS may originate transmissions on this iface. RX-only nodes set false.</td></tr>
+<tr><td>bitrate_hint_bps</td><td>unset</td><td>Hint for RNS scheduler; LoRa typically 1200, TCP 10⁶+</td></tr>
+<tr><td>announce_interval_s</td><td>unset</td><td>How often this node announces itself on the iface</td></tr>
+<tr><td>notes</td><td>unset</td><td>Free-form operator note shown in the panel; not transmitted</td></tr>
+<tr><td>reliable_cot</td><td>type-default</td><td>Per-iface override of the publish reliability mode</td></tr>
+<tr><td>ifac_netname</td><td>unset</td><td>Reticulum IFAC network name — scopes which nodes can decode frames on this iface. Must be set together with ifac_netkey.</td></tr>
+<tr><td>ifac_netkey</td><td>unset</td><td>Pre-shared passphrase that derives the IFAC keyed-hash. Treat as a secret — never logged in cleartext.</td></tr>
+<tr><td>ifac_size</td><td>unset</td><td>Truncation length in bytes of the IFAC keyed hash (8..512). Leave unset for Reticulum's default.</td></tr>
+</table>
+
+<h4>20.7.3.1 IFAC — when to use it</h4>
+<p>IFAC is Reticulum's per-interface pre-shared-key gate. With both <code>ifac_netname</code> and <code>ifac_netkey</code> set, every Reticulum frame is hashed with the netkey so nodes that don't share the key can't decode link-layer framing at all — your traffic is invisible to them, not just rejected.</p>
+<p><strong>Use IFAC when:</strong> sharing a physical link layer with other Reticulum users on an open LoRa frequency or public TCP hub; running auto_interface on a multi-tenant LAN; wanting the link layer to refuse non-mission traffic before any allowlist logic runs.</p>
+<p><strong>Don't use IFAC when:</strong> you're on a dedicated point-to-point link where the peer allowlist already gates trust; operating under amateur radio rules that forbid encryption (IFAC keyed framing may not be permitted on Part 97 frequencies — check local regs).</p>
+<div class="warn"><strong>Both fields are required for IFAC to take effect.</strong> Setting only ifac_netname does nothing.</div>
+
+<h4>20.7.4 Adding an interface — UI flow</h4>
+<ol>
+  <li>Open the Kujhad panel → "RNS Interfaces (Reticulum)".</li>
+  <li>Click <em>Add interface</em>.</li>
+  <li>Pick a type from the combo. The form regenerates with COMMON fields + per-type fields.</li>
+  <li>Fill in the required fields (the form validates inline before letting you save).</li>
+  <li>Click <em>Save</em>. The daemon brings the interface up. Watch the live status row for online=true. If last_error populates, fix the field and click <em>Restart</em>.</li>
+</ol>
+
+<h4>20.7.5 Restart behavior</h4>
+<p>When you click Restart (or call restart_interface), the daemon: (1) drains the current iface for drain_timeout_s (default 5 s); (2) spawns the new iface from the current config; (3) waits up to start_timeout_s for the iface to report up; (4) returns {forced_close, timed_out, last_error}. A forced teardown surfaces as last_error="forced". Per-interface peer entries are purged on teardown (rebuilt as remote nodes re-announce).</p>
+
+<h4>20.7.6 Replication tokens — moving a config between nodes</h4>
+<p>A replication token is a passphrase-encrypted bundle of the daemon's config (and optionally its identity) that you mint on one node and import on another to clone the RNS posture without retyping every field.</p>
+<p><strong>Mint:</strong> Kujhad → Mint token → choose include_identity → enter a strong passphrase (Argon2id derives the AEAD key) → copy the resulting <code>prf-rns-v1.*</code> string. Share out-of-band.</p>
+<p><strong>Device-local placeholders:</strong> Fields like serial port paths (<code>/dev/ttyUSB0</code>), LAN IPs, etc. are replaced with placeholder markers during mint. The importer is re-prompted for them — this prevents leaking device-specific config across an op.</p>
+<p><strong>Import:</strong> Kujhad → Import token → paste the string → enter the passphrase → provide each device-local placeholder for this machine → daemon validates and applies.</p>
+<p><strong>Scripted import (Linux):</strong> <code>deploy/rns-setup.sh</code> accepts a token + <code>PRF_RNS_PLACEHOLDERS_JSON</code> env var (or prompts on /dev/tty, retrying up to 5 times). Use <code>--non-interactive</code> to fast-fail with the missing list.</p>
+
+<h4>20.7.7 Peer allowlist</h4>
+<p><code>peer_allowlist</code> (a list of identity hashes in the daemon config) restricts which announces the bridge accepts. Leave it empty to accept any peer on the predatorrf.cot.v1 channel (fine for closed deployments). Populate it for higher-trust ops. Changes via UI take effect on the next config reload.</p>
+
+<h4>20.7.8 Status fields</h4>
+<table>
+<tr><th>Field</th><th>Meaning</th></tr>
+<tr><td>daemon</td><td>running / stub (stub = rns Python package not installed)</td></tr>
+<tr><td>identity_hash16</td><td>This node's RNS hash (16 hex chars)</td></tr>
+<tr><td>interfaces[]</td><td>Per-iface live: online, rxb (bytes), txb, bitrate, clients, last_error, forced_close, timed_out, ifac_active, ifac_netname</td></tr>
+<tr><td>cot_bridge</td><td>Stats: published, received, dropped_dedupe, dropped_loop, dropped_allowlist, dropped_invalid</td></tr>
+<tr><td>peer_allowlist_size</td><td>Count of allowlisted peers</td></tr>
+</table>
+
+<h4>20.7.9 Logs</h4>
+<p><code>get_logs(level, since_seq)</code> returns from the daemon's in-memory log buffer. The Kujhad panel renders this as a tail at the bottom — filter by level (DEBUG/INFO/WARN/ERROR).</p>
+
+<h4>20.7.10 Identity &amp; state files (Linux)</h4>
+<table>
+<tr><th>Path</th><th>Purpose</th></tr>
+<tr><td><code>/var/lib/predator-rf/rns/identity.prv</code></td><td>RNS identity private key (mode 0600) — back this up before any major change</td></tr>
+<tr><td><code>/var/lib/predator-rf/rns/config.json</code></td><td>Daemon config — interfaces[], cot_bridge, peer_allowlist, schema_version</td></tr>
+<tr><td><code>/var/lib/predator-rf/rns/control.sock</code></td><td>Unix control socket (uid-checked)</td></tr>
+<tr><td><code>/var/lib/predator-rf/rns/logs/</code></td><td>Rotating daemon logs</td></tr>
+</table>
+<div class="critical"><strong>Back up identity.prv before any major change.</strong> Losing it means losing your node's RNS hash — every peer that allowlisted you needs to re-add the new hash.</div>
+
+<h4>20.7.11 Common field workflows</h4>
+<p><strong>A. Bring up a 2-node LoRa mesh between two RNodes (915 MHz ISM):</strong> Both nodes add an rnode iface — port=/dev/ttyUSB0, frequency_hz=915000000, bandwidth_hz=125000, txpower_dbm=17, spreadingfactor=8, codingrate=5, id_callsign=YOURCALL if licensed. Wait ~1 announce interval. Each panel's status table should show the other node under clients. CoT publishes over LoRa with reliable_cot=false (single-pass, unconfirmed).</p>
+<p><strong>B. Bridge to a remote RNS hub over the public internet:</strong> Local: tcp_client → target_host=hub.example.com, target_port=4242, mode=full. Mint a replication token without identity, import on local with the hub's address as the placeholder.</p>
+<p><strong>C. AX.25 packet-radio gateway with a callsign:</strong> ax25_kiss iface — port=/dev/ttyUSB0, speed_baud=9600, callsign=YOURCALL, ssid=7, axint_port=ax0. Set id_callsign for periodic ID beacons. reliable_cot=true makes sense on AX.25.</p>
+<p><strong>D. RX-only listening node:</strong> Set outgoing=false on every iface. The node will receive announces and inbound CoT but will not originate transmissions.</p>
+
+<h4>20.7.12 Security posture</h4>
+<table>
+<tr><th>Threat</th><th>Mitigation</th></tr>
+<tr><td>Remote attacker reaches daemon control plane</td><td>Not possible. Control plane is a Unix socket; HTTP routes are not mounted. Linux uses uid checks; Android uses LocalSocket (kernel-enforced same-app boundary).</td></tr>
+<tr><td>Replication token sniffed on the wire</td><td>Argon2id + XChaCha20-Poly1305-IETF; AAD-bound version byte blocks downgrade. Useless without the passphrase.</td></tr>
+<tr><td>Importing a leaked token</td><td>Use a strong passphrase; mint with include_identity=false if you don't trust the recipient with your node hash.</td></tr>
+<tr><td>Hostile peer floods the bridge</td><td>peer_allowlist keeps fanout O(allowlisted peers). Per-peer LRU dedup (4096 entries / peer) drops repeated CoT.</td></tr>
+<tr><td>LoRa replay / loop</td><td>Bridge-level loop suppression on own src tag; per-peer dedupe LRU.</td></tr>
+<tr><td>RNS interface hangs and blocks shutdown</td><td>Restart drains for drain_timeout_s, then forces close — last_error="forced" shows in the panel.</td></tr>
+<tr><td>TX-class command injected via Kujhad</td><td>Dispatcher unconditionally rejects any tx-class command.</td></tr>
+</table>
+
+<h4>20.7.13 Troubleshooting</h4>
+<table>
+<tr><th>Symptom</th><th>Cause / fix</th></tr>
+<tr><td>daemon=stub in status</td><td>rns Python package not installed. <code>pip install -r backend/rns/requirements.txt</code> and restart.</td></tr>
+<tr><td>Iface online=false, last_error="..."</td><td>Read the error string. Most common: serial port permissions (<code>sudo usermod -aG dialout $USER</code>), wrong port path, port already open by another process.</td></tr>
+<tr><td>LoRa peers can hear you but you never see them</td><td>Check announce_interval_s on both sides. Set to 600 (10 min) for a stable mesh.</td></tr>
+<tr><td>Iface online=true but peers can't see each other, link looks healthy</td><td>IFAC mismatch — one side has IFAC set and the other doesn't, or netname/netkey differ. Clear IFAC on both sides or copy the same values to both.</td></tr>
+<tr><td>You enabled IFAC and now your own restart makes the iface dead</td><td>ifac_size outside 8..512 rejected. Fall back: clear ifac_size (=0) so RNS uses its default.</td></tr>
+<tr><td>cot_bridge.dropped_allowlist &gt; 0</td><td>A peer is announcing but not in your allowlist. Either add their hash or accept you're filtering them out.</td></tr>
+<tr><td>Inbound CoT not appearing in TAK on Android</td><td>Check RNS_ATAK_LOCAL_PORT (defaults to 4242 on Android, opt-in elsewhere). Make sure ATAK is listening on that UDP port.</td></tr>
+<tr><td>restart_interface returns forced_close=true, timed_out=true</td><td>Iface hung in shutdown — common on serial USB resets. Re-plug the radio, click Restart again.</td></tr>
+<tr><td>Token import re-prompts for fields you don't recognise</td><td>Device-local placeholders from the source config. Provide the appropriate value for your machine.</td></tr>
+<tr><td>Identity hash changed after import_config</td><td>Token was minted with include_identity=true. By design — you now share that node's identity.</td></tr>
+</table>
+
+<!-- ═════ §21 ═════ -->
+<h2 id="s21">21. Hardware capability table (every supported SDR)</h2>
+<p>These drive the trust calculus. Pick your hardware knowing what trust score you'll get.</p>
+<table>
+<tr><th>SDR</th><th>Freq range</th><th>Max sample</th><th>NF</th><th>MDS</th><th>TDOA-cap</th><th>Timing uncertainty</th><th>Price (USD)</th></tr>
+<tr><td>RTL-SDR Blog v4</td><td>25 MHz–1.7 GHz</td><td>3.2 MS/s</td><td>6.0 dB</td><td>−110 dBm</td><td>NO</td><td>1000 ns</td><td>$40</td></tr>
+<tr><td>HackRF One</td><td>1 MHz–6 GHz</td><td>20 MS/s</td><td>10.0 dB</td><td>−100 dBm</td><td>YES</td><td>500 ns</td><td>$340</td></tr>
+<tr><td>Airspy R2</td><td>24 MHz–1.7 GHz</td><td>20 MS/s</td><td>2.5 dB</td><td>−125 dBm</td><td>YES</td><td>50 ns</td><td>$170</td></tr>
+<tr><td>LimeSDR-USB</td><td>100 kHz–3.8 GHz</td><td>61.4 MS/s</td><td>3.0 dB</td><td>−120 dBm</td><td>YES (PPS out)</td><td>100 ns</td><td>$600</td></tr>
+<tr><td>bladeRF 2.0</td><td>47 MHz–6 GHz</td><td>61.4 MS/s</td><td>4.0 dB</td><td>−118 dBm</td><td>YES</td><td>80 ns</td><td>$480</td></tr>
+<tr><td>ADALM-PLUTO</td><td>325 MHz–3.8 GHz</td><td>61.4 MS/s</td><td>5.0 dB</td><td>−115 dBm</td><td>YES</td><td>200 ns</td><td>$200</td></tr>
+<tr><td>SoapySDR generic</td><td>1 MHz–6 GHz</td><td>10 MS/s</td><td>8.0 dB</td><td>−105 dBm</td><td>NO</td><td>500 ns</td><td>varies</td></tr>
+</table>
+<ul>
+  <li><strong>For TDOA:</strong> Airspy or LimeSDR. Both have low timing uncertainty AND great sensitivity. LimeSDR's PPS output lets you discipline the LO from a GPSDO directly.</li>
+  <li><strong>HackRF One:</strong> The workhorse for HF coverage — the only SDR in the list that goes below 24 MHz. Acceptable for TDOA; not the best. At $340 it's the recommended upgrade from RTL-SDR.</li>
+  <li><strong>RTL-SDR Blog v4:</strong> The "I'm here too" node. No TDOA timing path, so it gets the 0.5-cap timing trust. Still useful as a 4th observer.</li>
+  <li><strong>PlutoSDR:</strong> The budget TDOA node — half the price of an Airspy with TDOA capability.</li>
+</ul>
+
+<!-- ═════ §22 ═════ -->
+<h2 id="s22">22. Field-day checklist (print this)</h2>
+<h3>Pre-departure (in shop / vehicle, with WAN)</h3>
+<ul class="checklist">
+  <li>Phone(s) charged + power bank packed</li>
+  <li>APK version verified — open app → SYS → check version against your team's current build</li>
+  <li>SDR + antenna + USB-C OTG cable in the bag (one set per phone)</li>
+  <li>At least one baseline file for the area you're going to (record ahead if possible)</li>
+  <li>If using ATAK: TAK server reachable + credentials entered + a successful test beacon yesterday</li>
+  <li>If using Kujhad fleet: peers added, all on the same overlay (ZeroTier / Tailscale / LAN), API keys match, TLS fingerprints pinned if TLS is on</li>
+  <li>If running the Linux backend: <code>sudo apt update &amp;&amp; sudo apt upgrade -y</code> on workstation + each RPi</li>
+  <li>Mission DB backed up: <code>deploy/backup_mission.sh</code> to USB</li>
+  <li>System time disciplined: <code>chronyc tracking</code> shows Leap status: Normal</li>
+  <li><code>/etc/predator-rf/predator-rf.env</code> reviewed; FLEET_NODES matches today's node serials</li>
+  <li>API_BEARER_TOKEN rotated for this mission: <code>openssl rand -hex 32</code></li>
+  <li>CoT/TAK destination + UID prefix set ONLY if you intend to push to TOC</li>
+  <li>COT_REQUIRE_MANUAL_APPROVAL=true if COT_ENABLED=true (two-key gate)</li>
+  <li>AUTO_TASKER_ENABLED matches your ROE — leave OFF unless you're authorized to re-tune nodes</li>
+</ul>
+<h3>On-site, before fleet power-on</h3>
+<ul class="checklist">
+  <li>Each sensor node placed; antennas oriented; GPS sky-view confirmed</li>
+  <li>Power budget sanity-checked (battery / vehicle alternator vs. node draw)</li>
+  <li>Network reachable: ping &lt;node-ip&gt; from operator workstation</li>
+  <li>Each node's clock disciplined (GPSDO PPS lock visible, or chronyc tracking green)</li>
+</ul>
+<h3>Bring-up sequence</h3>
+<ol>
+  <li>Power on all sensor nodes; wait 60 s for GPS lock + Kujhad ready</li>
+  <li>Operator workstation: <code>sudo systemctl start predator-rf</code></li>
+  <li><code>python deploy/preflight.py</code> → must report GO</li>
+  <li><code>journalctl -u predator-rf -f</code> → no ERROR lines in the first 30 s</li>
+  <li><code>curl http://localhost:8000/healthz</code> → <code>{"status":"ok"}</code></li>
+  <li><code>curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/nodes</code> → every expected node listed, gps_synchronized=true on TDOA-capable ones</li>
+  <li><code>curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8000/api/v1/missions -d '{"name":"&lt;callsign-YYYYMMDD&gt;"}'</code></li>
+  <li>On the operator phone: SPEC → ▶ Start. Verify waterfall + GPS green + KUJ green + CoT (if armed) green.</li>
+</ol>
+<h3>In-mission checks (every 30 minutes)</h3>
+<ul class="checklist">
+  <li>Glance at thermal indicator on each phone</li>
+  <li>Glance at GPS lock on each phone</li>
+  <li><code>curl /metrics</code> → predator_events_total is climbing</li>
+  <li><code>curl /api/v1/android-pull?since_ns=0</code> → all nodes show gps_lock=true AND gps_age_s &lt; 60</li>
+  <li>No CoT approvals stuck &gt; 5 min in /api/v1/approvals (operator backlog)</li>
+  <li>Phone batteries &gt; 20% — swap to power bank before 10%</li>
+</ul>
+<h3>End of mission</h3>
+<ol>
+  <li>Phones: MIS → mode back to Manual; HITS → export hits to CSV; BASE → save fresh baseline if recorded</li>
+  <li>Phones: ▶ Stop Listening → close app → unplug SDR</li>
+  <li>Workstation: <code>POST /api/v1/missions/end</code></li>
+  <li><code>GET /api/v1/missions/&lt;id&gt;/export</code> → save the AAR tarball</li>
+  <li><code>deploy/backup_mission.sh</code> → USB</li>
+</ol>
+
+<!-- ═════ §23 ═════ -->
+<h2 id="s23">23. Troubleshooting (every symptom we've actually seen)</h2>
+<table>
+<tr><th>Symptom</th><th>Most likely cause</th><th>Fix</th></tr>
+<tr><td>Waterfall is black after Start Listening</td><td>SDR not selected, or USB permission denied</td><td>Source dropdown → re-pick. Unplug + replug SDR → "Always allow" on dialog.</td></tr>
+<tr><td>App says "device busy"</td><td>Another app (or previous Predator RF session) holds the SDR</td><td>Force-stop in Settings → Apps; unplug + replug</td></tr>
+<tr><td>Touch feels unresponsive / wrong widget fires</td><td>Old build — fixed in the touch-passthrough + ID-stack patches</td><td>Update APK</td></tr>
+<tr><td>Soft keyboard covers the input field</td><td>Old build — fixed by IME-inset clamp</td><td>Update APK</td></tr>
+<tr><td>GPS never locks</td><td>Phone needs sky view; indoor/urban canyon = no fix</td><td>Step outside; wait 60 s</td></tr>
+<tr><td>Letters don't appear when typing in popup</td><td>NativeActivity IME composing path</td><td>Switch to non-composing keyboard for the edit; numeric input always works</td></tr>
+<tr><td>Kujhad peer red / disconnected</td><td>Network unreachable, port blocked, API keys differ</td><td>Ping the peer from a terminal app; verify keys character-for-character</td></tr>
+<tr><td>Kujhad TLS handshake fails</td><td>Wrong fingerprint pinned, or cert was regenerated</td><td>Re-pin the new fingerprint (verify out-of-band first)</td></tr>
+<tr><td>Kujhad peer green but no events</td><td>Peer is in Manual mission mode</td><td>Switch peer to Scan or Classify</td></tr>
+<tr><td>ATAK sensor node markers missing (sensor SA)</td><td>COT_ENABLED is false, or sensor SA beacon not configured</td><td>Enable COT_ENABLED=true. Sensor nodes send their own <code>a-f-G-E-S</code> SA beacons; check the sensor node's CoT config is active.</td></tr>
+<tr><td>ATAK emitter marker never appears</td><td>Wrong TAK server IP/port, filtering by UID prefix on TAK server, or no track has TDOA fix + escalation</td><td>Check TAK server logs. Pull-test the CoT export: <code>curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/cot/export</code> — if XML returns with events, the backend is generating CoT correctly and the issue is on the TAK side.</td></tr>
+<tr><td>ATAK markers stop coming</td><td>Approval queue is on and operator hasn't approved</td><td>Check <code>GET /api/v1/approvals</code>; approve or disable manual approval</td></tr>
+<tr><td>Phone hot, framerate drops</td><td>Thermal throttling</td><td>Get out of sun; reduce sample rate (SPEC → source settings); trust score drops 30% while throttled</td></tr>
+<tr><td>App crashes on startup after install</td><td>APK was sideloaded over a different signing key</td><td>Uninstall completely (Settings → Apps → Predator RF → Uninstall), reinstall</td></tr>
+<tr><td>TDOA fix never appears on map</td><td>&lt; 2 GPS-synced nodes hearing the same emission within 5 s</td><td>Check <code>/api/v1/nodes</code> — at least 2 must show gps_synchronized=true and gps_age_s &lt; 60</td></tr>
+<tr><td>TDOA ellipse is huge (5 km)</td><td>Low-confidence fix — only 2 nodes, or all timing-trust-capped RTL-SDRs</td><td>Add more nodes; deploy at least one Airspy or HackRF with GPSDO</td></tr>
+<tr><td>TDOA fix wildly off</td><td>One node's GPS is stale</td><td><code>GET /api/v1/nodes</code> and check gps_age_s per node; the offending one will be &gt; 60 s</td></tr>
+<tr><td>AutoTasker not retuning</td><td>AUTO_TASKER_ENABLED=false, OR the global-budget brake is firing</td><td>Check env, then <code>/metrics</code> for predator_autotasker_* counters</td></tr>
+<tr><td>AutoTasker retuning the wrong nodes</td><td>DecisionEngine recommends only TDOA-capable nodes for high threats</td><td>This is by design; mark known-good non-TDOA nodes as friendly to suppress</td></tr>
+<tr><td>Backend won't start: ERROR: address in use</td><td>Another process owns :8000</td><td><code>lsof -i :8000</code>; kill or change API_PORT</td></tr>
+<tr><td>Mission ledger growing huge</td><td>No prune configured</td><td><code>deploy/backup_mission.sh</code> to archive; truncate per your retention policy</td></tr>
+<tr><td>401 on every API call</td><td>API_BEARER_TOKEN set but no header sent</td><td>Add <code>-H "Authorization: Bearer $TOKEN"</code></td></tr>
+</table>
+
+<!-- ═════ §24 ═════ -->
+<h2 id="s24">24. Bill of materials — pick your tier</h2>
+<p><em>Prices USD, June 2026, ballpark.</em></p>
+
+<h3>Tier 0 — Bare minimum (~$48)</h3>
+<ul>
+  <li>Android phone you already own — $0</li>
+  <li>RTL-SDR Blog v4 — $40</li>
+  <li>USB-C OTG adapter — $8</li>
+  <li>Rubber-duck antenna (included with SDR) — $0</li>
+</ul>
+<p><strong>What you can do:</strong> Live spectrum, hits, baseline, scans up to 1.7 GHz on a single phone. No HF, no fleet, no TDOA.</p>
+
+<h3>Tier 1 — Solo field operator (~$330–540)</h3>
+<ul>
+  <li>Tier 0 kit — $48</li>
+  <li>Airspy Mini ($130) <em>or</em> HackRF One ($340)</li>
+  <li>Diamond RH-77CA telescoping whip — $50</li>
+  <li>External USB GPS (BU-353N5) — $35</li>
+  <li>Powered USB-C OTG hub — $25</li>
+  <li>20,000 mAh USB-C PD power bank — $40</li>
+</ul>
+<p><strong>What you can do:</strong> All of Tier 0 plus HF coverage (HackRF), all-day battery, fast GPS, ATAK-ready.</p>
+
+<h3>Tier 2 — Solo TOC + one remote sensor (~$1,400)</h3>
+<ul>
+  <li>Tier 1 kit (HackRF flavor) — $540</li>
+  <li>Raspberry Pi 5 8 GB + case + cooler + PSU — $130</li>
+  <li>256 GB A2 microSD — $25</li>
+  <li>Second RTL-SDR Blog v4 (for the Pi) — $40</li>
+  <li>GPS HAT (Adafruit Ultimate GPS HAT) — $45</li>
+  <li>Linux laptop you already own OR add $500 for one</li>
+  <li>Outdoor antenna mount + 25 ft LMR-400 + N-to-SMA pigtails — $80</li>
+  <li>Diamond D130J discone — $130</li>
+  <li>Pelican 1450 case — $130</li>
+  <li>ZeroTier / Tailscale (free tier) — $0</li>
+</ul>
+<p><strong>What you can do:</strong> Drop-and-walk sensor node, distributed collection, mission ledger, after-action exports, ONE TDOA pair (phone + RPi).</p>
+
+<h3>Tier 3 — Small team / multi-node fleet ($5,000–$10,000+)</h3>
+<ul>
+  <li>Tier 2 kit — $1,400</li>
+  <li>3 more RPi sensor nodes (~$500 each) — $1,500</li>
+  <li>At least one Airspy R2 + GPSDO for high-trust TDOA — $200</li>
+  <li>Cellular hotspot + data plan — $300, OR mesh radio link (goTenna Pro X2 / RAJANT) — $500–$5,000</li>
+  <li>Commercial directional antennas (Yagi for DF, dipoles per band) — $400</li>
+  <li>10–25 ft fiberglass tactical mast — $150</li>
+  <li>Pelican / Storm cases per node — $400</li>
+  <li>Operator laptop (rugged ThinkPad / Dell) — $500–$2,000</li>
+</ul>
+<p><strong>What you can do:</strong> Full-perimeter overwatch from one operator screen, real TDOA fixes (GPSDO-disciplined nodes, tight ellipses), ATAK to higher-echelon TOC, ledger across the fleet, real DF capability.</p>
+
+<!-- ═════ §25 ═════ -->
+<h2 id="s25">25. Glossary</h2>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>AAR</td><td>After-Action Report — the mission ledger export tarball</td></tr>
+<tr><td>AutoTasker</td><td>The action-loop module that re-tunes nodes based on threat assessments</td></tr>
+<tr><td>Baseline</td><td>A recorded snapshot of "normal" RF in an area, used for new-vs-known comparison</td></tr>
+<tr><td>CE</td><td>Circular Error — the radius around a CoT marker representing 1σ position uncertainty</td></tr>
+<tr><td>CoC</td><td>Center of Control — backend mode that aggregates from upstream backends (TOC of TOCs)</td></tr>
+<tr><td>CoT</td><td>Cursor-on-Target — TAK's standard XML-over-UDP situational-awareness wire format</td></tr>
+<tr><td>DecisionEngine</td><td>The module that turns tracks + anomalies into threat assessments</td></tr>
+<tr><td>DSD-FME</td><td>The P25 P1+P2 decoder bridge</td></tr>
+<tr><td>GPSDO</td><td>GPS-Disciplined Oscillator — a GPS receiver that locks the SDR's local oscillator for sub-ppm timing accuracy</td></tr>
+<tr><td>HAE</td><td>Height Above Ellipsoid — CoT altitude field; Predator RF always sends 9999999 (unknown)</td></tr>
+<tr><td>Hit</td><td>A persisted detection that the operator (or system) chose to commit to memory</td></tr>
+<tr><td>Kujhad</td><td>The C++ Predator RF peer protocol (HTTP+JSON, X-Kujhad-Key auth, optional TLS pinning)</td></tr>
+<tr><td>MDS</td><td>Minimum Detectable Signal — the noise-floor sensitivity in dBm. Lower (more negative) is better.</td></tr>
+<tr><td>NF</td><td>Noise Figure — front-end noise contribution in dB. Lower is better.</td></tr>
+<tr><td>OTG</td><td>USB On-The-Go — host-mode USB on the phone so it can power and command the SDR</td></tr>
+<tr><td>PPS</td><td>Pulse-Per-Second — the 1 Hz timing pulse from a GPSDO that disciplines the SDR clock</td></tr>
+<tr><td>ROE</td><td>Rules of Engagement</td></tr>
+<tr><td>SAF</td><td>Storage Access Framework — Android's file picker; how the app does Import/Export</td></tr>
+<tr><td>SDR</td><td>Software-Defined Radio — a radio receiver implemented in software, typically a small USB dongle</td></tr>
+<tr><td>TAK</td><td>Team Awareness Kit — the situational-awareness platform family (ATAK Android, WinTAK Windows, iTAK iOS)</td></tr>
+<tr><td>TDOA</td><td>Time-Difference-of-Arrival — multi-receiver hyperbolic geolocation technique</td></tr>
+<tr><td>TOC</td><td>Tactical Operations Center</td></tr>
+<tr><td>Track</td><td>A fused, persistent identity for an emitter — unique by (frequency, modulation, detecting_node_set)</td></tr>
+<tr><td>VFO</td><td>Variable Frequency Oscillator — in this app, one of two independent tuners</td></tr>
+</table>
+
+<!-- ═════ §26 ═════ -->
+<h2 id="s26">26. Quick reference card</h2>
+<table>
+<tr><th colspan="2">Core operations</th></tr>
+<tr><td><strong>START LISTENING</strong></td><td>SPEC tab → source dropdown → ▶ Start</td></tr>
+<tr><td><strong>DROP A MARKER</strong></td><td>Tap a waterfall peak</td></tr>
+<tr><td><strong>NAME A MARKER</strong></td><td>Tap marker → Assign Marker → tap "Tap to edit"</td></tr>
+<tr><td><strong>RECORD BASELINE</strong></td><td>BASE → +Add Range → ▶ START RECORDING (5+ min) → Save</td></tr>
+<tr><td><strong>USE BASELINE</strong></td><td>SYS → Baseline Comparison → load → enable</td></tr>
+<tr><td><strong>START AUTO SCAN</strong></td><td>MIS → Mission Mode = Scan → +Add Band → SPEC → ▶ Start</td></tr>
+<tr><td><strong>ADD KUJHAD PEER</strong></td><td>KUJ → Add Peer → Name/Host/Port/Key → Add</td></tr>
+<tr><td><strong>PUBLISH ON KUJHAD</strong></td><td>KUJ → Listen → port/name/key → toggle Listen</td></tr>
+<tr><td><strong>ENABLE ATAK</strong></td><td>SYS → ATAK/CoT → server IP+port → Enable CoT (also: COT_REQUIRE_MANUAL_APPROVAL=true in field)</td></tr>
+<tr><td><strong>APPROVE A COT</strong></td><td>GET /api/v1/approvals → POST /{id}/approve</td></tr>
+<tr><td><strong>TEST COT EXPORT</strong></td><td>GET /api/v1/cot/export (returns live CoT XML for all escalated tracks)</td></tr>
+<tr><td><strong>START MISSION</strong></td><td>MIS → Start mission → name (or POST /api/v1/missions)</td></tr>
+<tr><td><strong>END MISSION</strong></td><td>MIS → End mission (or POST /api/v1/missions/end)</td></tr>
+<tr><td><strong>EXPORT AAR</strong></td><td>GET /api/v1/missions/&lt;id&gt;/export</td></tr>
+</table>
+<table style="margin-top:10pt">
+<tr><th colspan="2">Status indicators</th></tr>
+<tr><td><strong>THERMAL ORANGE</strong></td><td>Reduce sample rate, get out of sun</td></tr>
+<tr><td><strong>GPS RED</strong></td><td>Step outside, wait 60 s</td></tr>
+<tr><td><strong>KUJHAD RED</strong></td><td>Check network, ping peer, verify API key</td></tr>
+<tr><td><strong>TDOA NO FIX</strong></td><td>Need ≥ 2 GPS-synced nodes hearing same emission &lt; 5 s apart</td></tr>
+<tr><td><strong>HUGE ELLIPSE</strong></td><td>Low confidence — add more nodes / better timing hardware</td></tr>
+</table>
+<table style="margin-top:10pt">
+<tr><th colspan="2">Backend commands</th></tr>
+<tr><td><strong>BACKEND HEALTH</strong></td><td><code>curl localhost:8000/healthz</code></td></tr>
+<tr><td><strong>FLEET STATUS</strong></td><td><code>curl -H "Authorization: Bearer $TOKEN" .../api/v1/nodes</code></td></tr>
+<tr><td><strong>LIVE TRACKS</strong></td><td><code>curl -H "Authorization: Bearer $TOKEN" .../api/v1/tracks</code></td></tr>
+<tr><td><strong>PENDING APPROVALS</strong></td><td><code>curl -H "Authorization: Bearer $TOKEN" .../api/v1/approvals</code></td></tr>
+<tr><td><strong>LIVE LOGS</strong></td><td><code>journalctl -u predator-rf -f</code></td></tr>
+<tr><td><strong>RESTART BACKEND</strong></td><td><code>sudo systemctl restart predator-rf</code></td></tr>
+<tr><td><strong>BACKUP DB</strong></td><td><code>deploy/backup_mission.sh</code></td></tr>
+</table>
+
+<hr class="section-divider" style="margin-top:24pt">
+<p style="font-size:8.5pt;color:#888;text-align:center;margin-top:12pt"><em>This document is the contract with the operator. If something here is wrong or out of date, fix it and commit. Rev 2 — June 2026.</em></p>
+
+</body>
+</html>
