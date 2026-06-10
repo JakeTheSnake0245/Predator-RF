@@ -6,3 +6,9 @@ id = "_DHob8EujAiUqyIwMsmc-"
 uri = "file://docs/Predator_RF_Operator_Guide.pdf"
 type = "pdf"
 title = "Predator RF — Operator Guide v3 (36 pp, new §20.7 RNS Layers)"
+
+[[outputs]]
+id = "HAkE7FJse0VJHCY53m4WL"
+uri = "file://docs/OPERATOR_RUNBOOK.md"
+type = "text"
+title = "Predator RF Operator Guide"
