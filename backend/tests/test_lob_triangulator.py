@@ -2,6 +2,11 @@
 Unit tests for backend.fusion.lob_triangulator.
 
 Run:  python -m unittest backend.tests.test_lob_triangulator -v
+
+numpy / scipy are optional in the triangulator (it falls back to the
+closed-form 2-LOB solver when they are absent).  Tests that require the
+WLS N-node solver are skipped automatically when numpy/scipy are not
+installed.
 """
 import math
 import time
@@ -12,6 +17,15 @@ from backend.fusion.lob_triangulator import (
     LOBTriangulator, LOBFix,
     MIN_CROSS_DEG, _to_xy, _from_xy, _valid_coords,
 )
+
+try:
+    import numpy  # noqa: F401
+    import scipy  # noqa: F401
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
+_skip_wls = unittest.skipUnless(_HAS_SCIPY, "numpy/scipy required for N-node WLS tests")
 
 
 def _meas(node_id, node_lat, node_lon, bearing_deg,
@@ -158,8 +172,12 @@ class TestTwoNodeFix(unittest.TestCase):
 class TestThreeNodeFix(unittest.TestCase):
     """
     Three nodes in a triangle around a target.  WLS should recover the target.
+    These tests require numpy/scipy for the N-node WLS solver; they are skipped
+    automatically when those libraries are absent (fallback 2-LOB solver is
+    tested separately in TestTwoNodeFix).
     """
 
+    @_skip_wls
     def test_three_node_wls(self):
         tgt_lat, tgt_lon = 48.8566, 2.3522   # Paris
 
@@ -190,6 +208,7 @@ class TestThreeNodeFix(unittest.TestCase):
         self.assertAlmostEqual(fix.estimated_lon, tgt_lon, delta=0.004)
         self.assertEqual(fix.n_measurements, 3)
 
+    @_skip_wls
     def test_three_node_with_one_low_confidence(self):
         tgt_lat, tgt_lon = 51.5, -0.12
 

@@ -105,6 +105,46 @@ private:
     // ── GUI ──────────────────────────────────────────────────────────────
 
     void drawMenu() {
+#ifdef __ANDROID__
+        // Android: KrakenSDR requires a companion RPi running krakensdr_doa.
+        // Direct USB access is not possible from Android; the kraken_lob_decoder
+        // connects over Wi-Fi/LAN WebSocket.
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.1f, 1.0f), "Android — Network mode only");
+        ImGui::Spacing();
+        ImGui::TextWrapped(
+            "KrakenSDR requires a companion Raspberry Pi running\n"
+            "krakensdr_doa. Android cannot access the USB interface\n"
+            "directly. Connect over Wi-Fi or LAN."
+        );
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "Setup:");
+        ImGui::Bullet(); ImGui::TextWrapped("Run krakensdr_doa on RPi (port 8081)");
+        ImGui::Bullet(); ImGui::TextWrapped("Enable  kraken_lob_decoder  in Module Manager");
+        ImGui::Bullet(); ImGui::TextWrapped("Set Host = RPi IP address, Port = 8081");
+        ImGui::Spacing();
+
+        // Live connection status from the kraken_lob_decoder
+        // (polled from sigpath config; shows last-seen confidence).
+        float conf = 0.0f;
+        bool connected = false;
+        if (core::configManager.conf.contains("krakenLobConnected"))
+            connected = core::configManager.conf["krakenLobConnected"].get<bool>();
+        if (core::configManager.conf.contains("krakenLobLastConfidence"))
+            conf = core::configManager.conf["krakenLobLastConfidence"].get<float>();
+
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (connected) {
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.3f, 1.0f), "Status: CONNECTED");
+            ImGui::Text("  Last DOA confidence: %.2f", conf);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "Status: NOT CONNECTED");
+            ImGui::TextWrapped("  kraken_lob_decoder not connected to krakensdr_doa.");
+        }
+#else
+        // Linux / Desktop: local krakensdr_doa on the same host.
         ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.1f, 1.0f), "KrakenSDR — DOA hardware");
         ImGui::Spacing();
         ImGui::TextWrapped(
@@ -117,13 +157,34 @@ private:
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "To receive LOB bearing data:");
         ImGui::Bullet(); ImGui::TextWrapped("Enable  kraken_lob_decoder  in Module Manager");
-        ImGui::Bullet(); ImGui::TextWrapped("Set Host = krakensdr_doa IP, Port = 8082");
+        ImGui::Bullet(); ImGui::TextWrapped("Set Host = krakensdr_doa IP, Port = 8081");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.55f, 1.0f), "companion processes:");
         ImGui::Text("  daq_fw         port 5000  (firmware bridge)");
-        ImGui::Text("  krakensdr_doa  port 8082  (DOA / WebSocket)");
+        ImGui::Text("  krakensdr_doa  port 8081  (DOA / WebSocket)");
+        ImGui::Spacing();
+
+        // Live status from kraken_lob_decoder config keys (set by the decoder
+        // module whenever its WebSocket connects or receives a bearing).
+        bool connected = false;
+        float conf = 0.0f;
+        if (core::configManager.conf.contains("krakenLobConnected"))
+            connected = core::configManager.conf["krakenLobConnected"].get<bool>();
+        if (core::configManager.conf.contains("krakenLobLastConfidence"))
+            conf = core::configManager.conf["krakenLobLastConfidence"].get<float>();
+
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (connected) {
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.3f, 1.0f), "Status: CONNECTED");
+            ImGui::Text("  Last DOA confidence: %.2f", conf);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "Status: NOT CONNECTED");
+            ImGui::TextWrapped("  Start krakensdr_doa and enable kraken_lob_decoder.");
+        }
+#endif
     }
 
     // ── State ────────────────────────────────────────────────────────────

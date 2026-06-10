@@ -73,11 +73,8 @@ static std::string good_msg(double bearing = 127.5, double conf = 0.83,
         + R"(,"gps_lon":)"         + std::to_string(lon)
         + R"(,"heading_deg":0.0)"
         + R"(,"timestamp_unix":1718035200.123)"
-        + R"(,"node_id":")" + node_id + R"("}"
-        + "}"
+        + R"(,"node_id":")" + node_id + R"("})"
     ;
-    // Note: the above builds a JSON string that may have a trailing "}" issue.
-    // Let's use a cleaner approach below.
 }
 
 // Build a clean JSON message using a helper.
