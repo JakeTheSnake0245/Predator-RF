@@ -4,6 +4,7 @@ project(sdrpp)
 # Backends
 option(OPT_BACKEND_GLFW "Use the GLFW backend" ON)
 option(OPT_BACKEND_ANDROID "Use the Android backend" OFF)
+option(OPT_BACKEND_WEB "Use the headless web backend (no display; HTTP+WebSocket on port 5555)" OFF)
 
 # Compatibility Options
 option(OPT_OVERRIDE_STD_FILESYSTEM "Use a local version of std::filesystem on systems that don't have it yet" OFF)
@@ -319,6 +320,26 @@ endif (OPT_BUILD_SCANNER)
 if (OPT_BUILD_SCHEDULER)
 add_subdirectory("misc_modules/scheduler")
 endif (OPT_BUILD_SCHEDULER)
+
+if (OPT_BACKEND_WEB AND NOT ANDROID)
+    add_subdirectory("predator-rfctl")
+endif ()
+
+if (OPT_BACKEND_WEB AND NOT ANDROID)
+    add_executable(predator-rfd "src/main.cpp")
+    target_link_libraries(predator-rfd PRIVATE sdrpp_core)
+    target_compile_options(predator-rfd PRIVATE ${SDRPP_COMPILER_FLAGS})
+    if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+        add_custom_target(predator_rfd_cp ALL cp
+            \"$<TARGET_FILE_DIR:sdrpp_core>/libsdrpp_core.so\"
+            \"$<TARGET_FILE_DIR:predator-rfd>\")
+    endif ()
+    install(TARGETS predator-rfd DESTINATION bin)
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/web DESTINATION share/predator-rf
+            FILES_MATCHING PATTERN "*.html" PATTERN "*.js" PATTERN "*.css")
+    install(FILES ${CMAKE_SOURCE_DIR}/deploy/predator-rfd.service
+            DESTINATION lib/systemd/system)
+endif ()
 
 if (NOT ANDROID)
     add_executable(sdrpp "src/main.cpp" "win32/resources.rc")

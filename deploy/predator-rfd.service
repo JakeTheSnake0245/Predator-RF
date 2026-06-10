@@ -1,0 +1,56 @@
+[Unit]
+Description=Predator-RF daemon — headless web backend (C++ SDR engine + browser UI)
+Documentation=file:/usr/share/doc/predator-rf/linux_web_frontend.md
+After=network-online.target chronyd.service gpsd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=predator
+Group=predator
+WorkingDirectory=/var/lib/predator-rf
+
+EnvironmentFile=-/etc/predator-rf/predator-rf.env
+# PREDATOR_WEB_ROOT  — path to web assets   (default: /usr/share/predator-rf/web)
+# PREDATOR_CTRL_SOCK — Unix socket for rfctl (default: /run/predator-rfd/control.sock)
+
+ExecStartPre=/bin/mkdir -p /run/predator-rfd
+ExecStartPre=/bin/chown predator:predator /run/predator-rfd
+ExecStart=/usr/bin/predator-rfd \
+    -r /usr/share/sdrpp \
+    -c /etc/predator-rf/config.json
+
+ExecStop=/bin/kill -TERM $MAINPID
+
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+RuntimeDirectory=predator-rfd
+RuntimeDirectoryMode=0750
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ReadWritePaths=/var/lib/predator-rf /var/log/predator-rf /run/predator-rfd
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+SystemCallArchitectures=native
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predator-rfd
+
+LimitNOFILE=8192
+MemoryMax=1G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

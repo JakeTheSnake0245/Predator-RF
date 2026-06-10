@@ -41,15 +41,23 @@ _Populate as you build_
 - `backend/fusion/stationarity_gate.py`: TDOA fix sanity filter (rejects physically-impossible velocity jumps, NaN/inf/out-of-range coords, zero/negative timestamps) + motion-state classifier (RMS-spread vs ellipse → stationary/mobile/unknown with hysteresis). Stateless — caller owns the per-track history list. Wired into `PredatorBackend._try_tdoa_solve` and `EmitterTrack._advance_state` (mobile tracks need 25 obs to promote to STABLE vs 10 for stationary/unknown).
 - `core/src/predator/tdoa_coordinator.h`, `core/src/predator/stationarity_gate.h`, `core/src/predator/fleet_tdoa_aggregator.h`: Controller-mode (#7) C++ ports of the Python TDOA pipeline. Header-only, pure stdlib. See `docs/tdoa_controller.md` for parity contract, wire-up sketch, and the MapLibre payload schema.
 - `deploy/`: Deployment scripts and configurations for the Python backend.
+- `deploy/predator-rfd.service`: systemd unit for the headless C++ web backend daemon.
+- `core/backends/web/backend.cpp`: Headless web backend — implements the `backend::` interface with an embedded HTTP+WebSocket server (port 5555) instead of a display. Exposes `/tracks/`, `/nodes/`, `/events/stream`, `/api/spectrum`, `/ws` (WebSocket), and `/v1/*` Kujhad aliases. Feeds live data via `backend::webBackendPush*()` hooks.
+- `core/backends/web/web_server.h`: Standalone HTTP+WebSocket+SSE server (header-only, POSIX, no external deps beyond optional OpenSSL SHA-1). Used only by the web backend. Self-contained SHA-1 fallback when OpenSSL is absent.
+- `predator-rfctl/main.cpp`: CLI tool that connects to the daemon's Unix control socket (`/run/predator-rfd/control.sock`) and sends typed JSON commands. Build with `OPT_BACKEND_WEB=ON`.
+- `predator-rfctl/CMakeLists.txt`: Build config for `predator-rfctl`.
+- `web/`: Static web assets served by `predator-rfd`. `preview.html` is the canonical dashboard; copy or symlink it here for the installed package.
+- `docs/linux_web_frontend.md`: Build instructions, API reference, CLI usage, and parity contract for the web backend.
 - `docs/`: Project documentation, including API contracts and integration guides.
 
 ## Architecture decisions
 
 - **Two-tier system:** Python backend consumes the Kujhad Fleet HTTP API from C++ Predator-RF nodes.
-- **RX-only focus:** The C++ build hard-rejects `tx.*` commands at the wire layer for security and simplicity.
+- **RX-only focus:** The C++ build hard-rejects `tx.*` commands at the wire layer for security and simplicity. This applies to Kujhad HTTP, RNS commanding, AND the `predator-rfctl` Unix socket.
 - **Multi-transport for CoT:** CoT XML fans out over both IP (TAK UDP/TCP) and RNS (`predatorrf/cot.v1`) simultaneously.
 - **Manual CoT export:** CoT export is operator-initiated only in v1, even if the DecisionEngine advises escalation.
 - **Android UI scaling:** Dynamic UI scaling with touch-friendly tweaks applied based on device detection.
+- **Android↔Linux parity contract:** `preview.html` (the operator dashboard) is the canonical cross-platform UI. It MUST work against both the Python FastAPI backend (port 8073, `GET /tracks/`, `GET /nodes/`, `GET /events/stream`) and the C++ web backend (`predator-rfd`, port 5555, identical endpoint surface). Any feature that adds a new dashboard endpoint must add it to **both** backends before merging. Spectrum data (FFT bins / waterfall) is C++-only — that tab degrades gracefully to a placeholder on the Python side. See `docs/linux_web_frontend.md`.
 
 ## Product
 
@@ -68,10 +76,17 @@ _Populate as you build_
 ## Gotchas
 
 ### Cross-cutting
-- The Replit environment only serves an informational landing page and interactive UI mockup (`server.py`). It does **not** run the Android build or the Python backend.
+- The Replit environment only serves an informational landing page and interactive UI mockup (`server.py`). It does **not** run the Android build, the Python backend, or `predator-rfd`.
 - `X-Kujhad-Key` header is required for authentication on all `/v1/*` Kujhad API calls.
 - The `predatorrf/cot.v1` RNS Destination is additive, not a replacement for TCP/TLS Kujhad control-plane transport.
 - For Android builds, `assembleDebug` is the documented happy path as `release` is unsigned by design.
+
+### Linux web backend (predator-rfd)
+- **Build flag:** set `OPT_BACKEND_WEB=ON` and `OPT_BACKEND_GLFW=OFF`. Both backends compile different `backend.cpp` TUs into `sdrpp_core`; you cannot enable both in the same build.
+- **Headless mode:** `predator-rfd` never calls ImGui or OpenGL. `backend::render()` and `backend::beginFrame()` are no-ops. The main loop in `backend::renderLoop()` sleeps 50 ms per tick and lets the web server threads handle requests. State that previously lived in `main_window.cpp`'s kujhad snapshots is NOT automatically populated — wire-up hooks `backend::webBackendPush*()` must be called from the signal path or from a future thin shim that reads `sigpath::*` singletons.
+- **Dashboard parity:** `preview.html` is the canonical dashboard. It is copied to `web/index.html` and served as the static root. Any change to the dashboard's API surface must be reflected in both `backend/main.py` (Python) and `core/backends/web/backend.cpp` (C++). See architecture decision above.
+- **Control socket perms:** `/run/predator-rfd/control.sock` is created with `chmod 600` so only the `predator` user (daemon owner) and root can talk to it. `predator-rfctl` must run as the same user or root.
+- **tx.* rejection:** `tx.*` class commands are rejected by the control socket AND by the web `/api/command` endpoint, matching the Kujhad and RNS rejection posture.
 
 ### Android
 All deeply Android-specific gotchas live in `docs/android_gotchas.md`. The
@@ -98,6 +113,7 @@ short list of what's covered there:
 ## Pointers
 
 - [SDR++ GitHub](https://github.com/AlexandreRouma/SDRPlusPlus)
+- `docs/linux_web_frontend.md`
 - `docs/tdoa_controller.md`
 - `docs/predator_hold.md`
 - `docs/custody_election.md`

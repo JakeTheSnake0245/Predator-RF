@@ -26,6 +26,9 @@ if (OPT_BACKEND_ANDROID)
     file(GLOB_RECURSE BACKEND_SRC "backends/android/*.cpp" "backends/android/*.c")
     set(BACKEND_SRC ${BACKEND_SRC} ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
 endif (OPT_BACKEND_ANDROID)
+if (OPT_BACKEND_WEB)
+    file(GLOB_RECURSE BACKEND_SRC "backends/web/*.cpp" "backends/web/*.c")
+endif (OPT_BACKEND_WEB)
 
 # Add code to dyn lib
 add_library(sdrpp_core SHARED ${SRC} ${BACKEND_SRC})
@@ -62,6 +65,10 @@ if (OPT_BACKEND_ANDROID)
     target_include_directories(sdrpp_core PUBLIC "backends/android")
     target_include_directories(sdrpp_core PUBLIC "backends/android/imgui")
 endif (OPT_BACKEND_ANDROID)
+if (OPT_BACKEND_WEB)
+    target_include_directories(sdrpp_core PUBLIC "backends/web")
+    target_compile_definitions(sdrpp_core PUBLIC PREDATOR_BACKEND_WEB)
+endif (OPT_BACKEND_WEB)
 
 # Link to libcorrect
 if (USE_INTERNAL_LIBCORRECT)
