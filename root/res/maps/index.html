@@ -55,6 +55,12 @@
             gap: 6px;
             z-index: 10;
             user-select: none;
+            /* Scroll vertically if the iframe is too short to show all rows */
+            max-height: calc(100% - 24px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(131,208,153,0.3) transparent;
         }
 
         .ctrl-section {
