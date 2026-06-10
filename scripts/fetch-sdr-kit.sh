@@ -234,6 +234,22 @@ echo "  → EEPROM images at $EEPROM_DIR"
 echo "     Flash with: rtl_eeprom -d <N> -f $EEPROM_DIR/kraken<N>.eeprom"
 echo "     (run once per device, requires root + rtl-sdr installed)"
 
+# ── Optional: clone krakensdr_doa for development/offline use ────────────
+# `install_rpi.sh --kraken` is authoritative for production RPi deployment
+# (full service/venv/daemon wiring).  Here we optionally mirror the repo
+# into the local workspace so C++ developers can browse the protocol source
+# without internet access and can run the DOA solver locally.
+KRAKEN_LOCAL="$(dirname "$KIT")/krakensdr_doa"
+if [[ ! -d "${KRAKEN_LOCAL}/.git" ]]; then
+    echo "  → cloning krakensdr_doa into ${KRAKEN_LOCAL} (skip with Ctrl-C)"
+    git clone --depth 1 \
+        https://github.com/krakenrf/krakensdr_doa.git \
+        "${KRAKEN_LOCAL}" 2>/dev/null || \
+        echo "     WARNING: clone failed (offline?). skipping."
+else
+    echo "  → krakensdr_doa already present at ${KRAKEN_LOCAL} — skipping clone"
+fi
+
 fi
 
 echo

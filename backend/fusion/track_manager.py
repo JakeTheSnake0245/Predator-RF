@@ -296,7 +296,7 @@ class TrackManager:
                     blend_lon  = (w_tdoa * track.estimated_lon  + w_lob * fix.estimated_lon)  / w_sum
                     blend_r    = math.sqrt(1.0 / w_sum)
                     blend_conf = min(
-                        MAX_LOB_TDOA_BLEND_CONF,
+                        MAX_LOB_TDOA_HYBRID_CONF,
                         (w_tdoa * track.location_confidence + w_lob * fix.location_confidence)
                         / w_sum,
                     )

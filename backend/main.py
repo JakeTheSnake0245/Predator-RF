@@ -46,6 +46,7 @@ from backend.rns.daemon import RNSDaemon
 from backend.coordination.kujhad_rns_client import KujhadRNSClient
 from backend.coordination.auto_tasker import AutoTasker
 from backend.coordination.custody_election import CustodyElector
+from backend.models.lob_measurement import LOBMeasurement
 from backend.coc import CoCAggregator
 from backend.operator.approvals import ApprovalQueue
 from backend.operator.missions import MissionRegistry
@@ -290,6 +291,15 @@ class PredatorBackend:
 
     def _on_rf_event(self, event):
         """Called for every RFEvent arriving from any C++ node."""
+        # ── KrakenSDR LOB events are routed to ingest_lob(), not the
+        # standard RF pipeline.  The C++ KrakenWsIngester marks these with
+        # detector="KRAKEN_LOB" and serialises the LOB fields into
+        # decoded_payload as a JSON string (bearing_deg / doa_max_deg,
+        # gps_lat, gps_lon, confidence, bearing_std_deg, timestamp_unix, …).
+        if getattr(event, "detector", None) == "KRAKEN_LOB":
+            self._handle_kraken_lob_event(event)
+            return
+
         # Frequency blacklist gate — operator-marked freqs (regulatory
         # off-limits, known interferer, our own beacons) are dropped at
         # ingest. Counted so the operator can see the muting working.
@@ -391,6 +401,92 @@ class PredatorBackend:
 
         # Publish to SSE subscribers
         push_event(event.to_dict())
+
+    def _handle_kraken_lob_event(self, event) -> None:
+        """
+        Route a KRAKEN_LOB decoder event into the LOB fusion path.
+
+        The C++ KrakenWsIngester sets `detector="KRAKEN_LOB"` and encodes
+        all bearing/position fields in `decoded_payload` as a JSON string:
+          {
+            "bearing_deg":     <float>   # true bearing (doa_max_deg alias)
+            "bearing_std_deg": <float>   # 1-sigma uncertainty degrees
+            "confidence":      <float>   # 0..1
+            "gps_lat":         <float>   # node WGS-84 latitude
+            "gps_lon":         <float>   # node WGS-84 longitude
+            "heading_deg":     <float>   # platform heading (0 = static)
+            "timestamp_unix":  <float>   # UNIX seconds (fractional)
+          }
+        `event.frequency` carries the centre frequency (Hz) and
+        `event.node_id` carries the KrakenSDR device identifier.
+
+        Unknown / malformed payloads are logged and silently dropped so a
+        firmware mismatch on one node does not poison the whole pipeline.
+        """
+        import json as _json
+
+        raw: dict = {}
+        payload = getattr(event, "decoded_payload", None)
+        if payload:
+            try:
+                raw = _json.loads(payload) if isinstance(payload, str) else dict(payload)
+            except Exception as exc:
+                logger.debug("KRAKEN_LOB bad payload on node %s: %s",
+                             getattr(event, "node_id", "?"), exc)
+                return
+
+        # Extract bearing — support both native doa_max_deg and legacy alias
+        bearing = raw.get("doa_max_deg") or raw.get("bearing_deg")
+        if bearing is None:
+            logger.debug("KRAKEN_LOB event from %s missing bearing field — dropped",
+                         getattr(event, "node_id", "?"))
+            return
+
+        # Node GPS from payload; fall back to event's node_lat/lon fields
+        node_lat = raw.get("gps_lat") or getattr(event, "node_lat", None) or 0.0
+        node_lon = raw.get("gps_lon") or getattr(event, "node_lon", None) or 0.0
+
+        # Timestamp: prefer payload unix ts, fall back to event timestamp_ns
+        ts_unix = raw.get("timestamp_unix")
+        if ts_unix:
+            timestamp_ns = int(ts_unix * 1e9)
+        else:
+            timestamp_ns = getattr(event, "timestamp_ns", int(time.time() * 1e9))
+
+        measurement = LOBMeasurement(
+            node_id=str(getattr(event, "node_id", raw.get("node_id", "kraken-0"))),
+            node_lat=float(node_lat),
+            node_lon=float(node_lon),
+            bearing_deg=float(bearing) % 360.0,
+            bearing_uncert_deg=float(
+                raw.get("bearing_std_deg") or raw.get("doa_std_deg") or 10.0),
+            confidence=float(max(0.0, min(1.0, raw.get("confidence", 0.5)))),
+            frequency_hz=float(getattr(event, "frequency", 0.0)),
+            heading_deg=float(raw.get("heading_deg", 0.0)),
+            timestamp_ns=timestamp_ns,
+        )
+
+        track = self.track_manager.ingest_lob(measurement)
+        if track is None:
+            return
+
+        metrics.counter("predator_lob_measurements_total",
+                         labels={"node": measurement.node_id},
+                         help_text="KrakenSDR LOB measurements ingested")
+
+        if self.store is not None:
+            self._spawn(self.store.record_track(track.to_dict()))
+
+        push_event({
+            "type": "lob_update",
+            "track_id": track.emitter_id,
+            "node_id": measurement.node_id,
+            "bearing_deg": measurement.bearing_deg,
+            "frequency_hz": measurement.frequency_hz,
+            "lob_crosscut_lat": track.lob_crosscut_lat,
+            "lob_crosscut_lon": track.lob_crosscut_lon,
+            "lob_crosscut_radius_m": track.lob_crosscut_radius_m,
+        })
 
     async def _try_tdoa_solve(self, emitter_id: str,
                                max_age_s: float = 5.0):
