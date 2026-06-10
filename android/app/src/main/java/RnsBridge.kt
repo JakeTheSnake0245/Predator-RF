@@ -169,4 +169,33 @@ class RnsBridge(private val context: Context) {
                 .put("level", level)
                 .put("since_ms", sinceMs)
                 .put("limit", limit))
+
+    // ── Peer discovery (Task #35) ──────────────────────────────────────
+
+    /**
+     * Return all RNS peers currently known to the daemon.
+     *
+     * Each element is a JSONObject with fields:
+     *   hash16          — 16-hex identity prefix
+     *   iface_id        — interface UUID or null
+     *   first_seen_ms   — epoch ms
+     *   last_heard_ms   — epoch ms
+     *   kujhad_endpoint — JSONObject{host,port,name,role} or null
+     *
+     * Peers whose operator did not advertise a Kujhad endpoint will have
+     * kujhad_endpoint=null; the row is still shown so the operator knows
+     * the RF neighbor exists, just without a one-tap "Add to fleet" path.
+     */
+    fun listPeers(): JSONArray =
+        callArr("list_peers", JSONObject())
+
+    /**
+     * Evict a peer from the local RNS peer table by its 16-hex identity
+     * prefix. Returns true when the peer was found and removed.
+     *
+     * The peer may re-appear after its next RNS announce broadcast.
+     * This is a manual eviction for stale or unwanted entries, not a ban.
+     */
+    fun forgetPeer(h16: String): Boolean =
+        callBool("forget_peer", JSONObject().put("h16", h16))
 }

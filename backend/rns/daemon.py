@@ -4,7 +4,8 @@ Implements the control API in section F of the task spec:
   status / list_interfaces / get_interface / add_interface / update_interface
   remove_interface / set_enabled / restart_interface / restart_all
   validate_interface / export_config / import_config /
-  mint_replication_token / get_logs
+  mint_replication_token / get_logs /
+  list_peers / forget_peer / update_kujhad_config
 
 Talks to RNS via the upstream `rns` Python package. RNS itself owns
 interface lifecycle once we hand it the right config dict, so this
@@ -205,7 +206,8 @@ class RNSDaemon:
                             "predatorrf", "cot.v1")
                         self._destination.set_packet_callback(
                             self._on_packet)
-                        self._destination.announce()
+                        self._destination.announce(
+                            app_data=self._kujhad_announce_data())
                     except Exception as exc:
                         self._log.write(
                             "ERROR", f"destination create failed: {exc}")
@@ -234,7 +236,8 @@ class RNSDaemon:
                             "predatorrf", "cmd.v1")
                         self._cmd_destination.set_packet_callback(
                             self._on_cmd_packet)
-                        self._cmd_destination.announce()
+                        self._cmd_destination.announce(
+                            app_data=self._kujhad_announce_data())
                         self._log.write(
                             "INFO", "cmd.v1 destination registered")
                     except Exception as exc:
@@ -270,6 +273,34 @@ class RNSDaemon:
 
     # ── RNS plumbing ───────────────────────────────────────────────────
 
+    def _kujhad_announce_data(self) -> Optional[bytes]:
+        """Return compact JSON bytes for the Kujhad endpoint to embed in
+        RNS announces, or None when the device server isn't configured.
+
+        The payload shape is ``{"host":str,"port":int,"name":str,"role":str}``.
+        Receivers parse this in the announce handler and store it as
+        ``kujhad_endpoint`` in ``_peers[h16]`` so the Controller UI can
+        offer a one-tap "Add to fleet" for every RF-discovered neighbor.
+
+        Announce is opt-out via ``config["kujhad_announce_enabled"]``
+        (default ``True`` when a Kujhad address is present). Operators
+        who don't want their Kujhad endpoint broadcast over RF can set it
+        to ``False`` in the daemon config.
+        """
+        host = self.config.get("kujhad_advertise_address", "")
+        port = self.config.get("kujhad_port", 0)
+        if not host or not port:
+            return None
+        if not self.config.get("kujhad_announce_enabled", True):
+            return None
+        payload = {
+            "host": str(host),
+            "port": int(port),
+            "name": str(self.config.get("kujhad_device_name", "")),
+            "role": str(self.config.get("kujhad_role", "device")),
+        }
+        return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
     def _make_announce_handler(self) -> Any:
         """Construct an RNS announce handler that learns remote peer
         identities advertising the same `predatorrf.cot.v1` aspect.
@@ -303,10 +334,24 @@ class RNSDaemon:
                         f"peer announce ignored (not in allowlist): {h16}")
                     return
                 if h16 in daemon._peers:
-                    # Update last-heard on every re-announce so the operator
-                    # dashboard can display a live "last heard" age rather
-                    # than only the first-seen time.
+                    # Update last-heard on every re-announce. Also refresh
+                    # the kujhad_endpoint if the peer re-announces with
+                    # updated app_data (e.g. after a port change).
                     daemon._peers[h16]["last_heard"] = time.time()
+                    if app_data:
+                        try:
+                            ep = json.loads(app_data.decode("utf-8")
+                                            if isinstance(app_data, (bytes, bytearray))
+                                            else app_data)
+                            if isinstance(ep, dict) and "host" in ep and "port" in ep:
+                                daemon._peers[h16]["kujhad_endpoint"] = {
+                                    "host": str(ep.get("host", "")),
+                                    "port": int(ep.get("port", 0)),
+                                    "name": str(ep.get("name", "")),
+                                    "role": str(ep.get("role", "")),
+                                }
+                        except Exception:
+                            pass
                     return
                 try:
                     out = RNS.Destination(
@@ -341,6 +386,23 @@ class RNSDaemon:
                     daemon._log.write(
                         "WARN",
                         f"could not build cmd.v1 OUT dest for {h16}: {exc}")
+                # Parse app_data Kujhad endpoint (compact JSON from peer).
+                kujhad_ep = None
+                if app_data:
+                    try:
+                        raw = (app_data.decode("utf-8")
+                               if isinstance(app_data, (bytes, bytearray))
+                               else app_data)
+                        ep = json.loads(raw)
+                        if isinstance(ep, dict) and "host" in ep and "port" in ep:
+                            kujhad_ep = {
+                                "host": str(ep.get("host", "")),
+                                "port": int(ep.get("port", 0)),
+                                "name": str(ep.get("name", "")),
+                                "role": str(ep.get("role", "")),
+                            }
+                    except Exception:
+                        pass
                 _now = time.time()
                 daemon._peers[h16] = {
                     "identity": announced_identity,
@@ -349,9 +411,12 @@ class RNSDaemon:
                     "iface_id": iface_id,
                     "first_seen": _now,
                     "last_heard": _now,
+                    "kujhad_endpoint": kujhad_ep,
                 }
                 daemon._log.write("INFO",
-                                  f"learned peer {h16} via iface={iface_id}")
+                                  f"learned peer {h16} via iface={iface_id}"
+                                  + (f" kujhad={kujhad_ep['host']}:{kujhad_ep['port']}"
+                                     if kujhad_ep else ""))
 
         return _Handler()
 
@@ -867,17 +932,98 @@ class RNSDaemon:
         for longer than necessary.  Only serialisable scalar fields are
         included — RNS Identity / Destination objects are intentionally
         omitted so callers never hold a reference to live RNS state.
+
+        ``kujhad_endpoint`` is ``None`` for peers that did not include
+        Kujhad endpoint data in their announce ``app_data``.
         """
         snapshot = list(self._peers.items())   # atomic CPython dict snapshot
         result = []
         for h16, meta in snapshot:
             result.append({
-                "hash16":        h16,
-                "iface_id":      meta.get("iface_id"),
-                "first_seen_ms": int(meta.get("first_seen", 0) * 1000),
-                "last_heard_ms": int(meta.get("last_heard", 0) * 1000),
+                "hash16":          h16,
+                "iface_id":        meta.get("iface_id"),
+                "first_seen_ms":   int(meta.get("first_seen", 0) * 1000),
+                "last_heard_ms":   int(meta.get("last_heard", 0) * 1000),
+                "kujhad_endpoint": meta.get("kujhad_endpoint"),
             })
         return result
+
+    def list_peers(self) -> List[Dict[str, Any]]:
+        """Control-socket method: return a serialisable snapshot of all
+        known RNS peers.
+
+        Identical to ``peers_snapshot()`` but wired into the
+        ``ControlServer`` dispatch table so the UI (C++ / Kotlin) can
+        call it over the Unix socket.
+
+        Return shape per entry::
+
+            {
+              "hash16":          "<16-hex identity prefix>",
+              "iface_id":        "<interface UUID>" | null,
+              "first_seen_ms":   <epoch ms>,
+              "last_heard_ms":   <epoch ms>,
+              "kujhad_endpoint": {"host":str,"port":int,"name":str,"role":str} | null
+            }
+        """
+        return self.peers_snapshot()
+
+    def forget_peer(self, h16: str) -> bool:
+        """Remove a peer from the local table by its 16-hex identity prefix.
+
+        Returns ``True`` when the peer was found and removed, ``False``
+        when it was not known. The peer may re-appear in the table the
+        next time it broadcasts an announce (which is the expected
+        behaviour — this is a manual eviction, not a permanent ban).
+        """
+        h16 = (h16 or "").lower()
+        removed = h16 in self._peers
+        self._peers.pop(h16, None)
+        if removed:
+            self._log.write("INFO", f"peer {h16} evicted from table (operator request)")
+        return removed
+
+    def update_kujhad_config(self, host: str = "", port: int = 0,
+                              name: str = "", role: str = "device") -> Dict[str, Any]:
+        """Write Kujhad endpoint fields into the daemon config and
+        re-announce immediately so the new endpoint is broadcast to
+        neighboring nodes.
+
+        Called by the C++ GUI (via ``kujhadRnsUpdateKujhadConfig`` in
+        ``kujhad_rns.h``) whenever the device server starts with an
+        advertise address, ensuring the RNS announce and the device
+        server stay in sync without a daemon restart.
+
+        Returns the current ``status()`` dict.
+        """
+        with self._lock:
+            if host:
+                self.config["kujhad_advertise_address"] = str(host)
+            if port > 0:
+                self.config["kujhad_port"] = int(port)
+            if name:
+                self.config["kujhad_device_name"] = str(name)
+            if role:
+                self.config["kujhad_role"] = str(role)
+            self._save_config()
+            # Re-announce with the new app_data so neighbors pick up
+            # the change on their next announce-handler invocation.
+            if self._destination is not None:
+                try:
+                    self._destination.announce(
+                        app_data=self._kujhad_announce_data())
+                except Exception as exc:
+                    self._log.write("WARN", f"re-announce after endpoint update failed: {exc}")
+            if self._cmd_destination is not None:
+                try:
+                    self._cmd_destination.announce(
+                        app_data=self._kujhad_announce_data())
+                except Exception as exc:
+                    self._log.write("WARN",
+                                    f"cmd re-announce after endpoint update failed: {exc}")
+            self._log.write("INFO",
+                            f"kujhad endpoint updated: {host}:{port} name={name!r} role={role}")
+        return self.status()
 
     def list_interfaces(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -1258,6 +1404,9 @@ class ControlServer:
         "import_config": "import_config",
         "mint_replication_token": "mint_replication_token",
         "get_logs": "get_logs",
+        "list_peers": "list_peers",
+        "forget_peer": "forget_peer",
+        "update_kujhad_config": "update_kujhad_config",
     }
 
     def _call(self, method: str, params: Dict[str, Any]) -> Any:

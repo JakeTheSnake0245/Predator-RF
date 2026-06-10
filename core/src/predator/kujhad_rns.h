@@ -236,4 +236,46 @@ inline std::string kujhadRnsLogs(const std::string& level,
     return resp;
 }
 
+// ── Peer discovery methods (Task #35) ──────────────────────────────────────
+
+inline std::string kujhadRnsListPeers(std::string& errOut) {
+    auto resp = kujhadRnsRequest(
+        R"({"id":15,"method":"list_peers"})", errOut);
+    if (resp.empty()) return errOut;
+    return resp;
+}
+
+inline std::string kujhadRnsForgetPeer(const std::string& h16,
+                                        std::string& errOut) {
+    std::string req = std::string(
+        R"({"id":16,"method":"forget_peer","params":{"h16":")")
+        + kujhadRnsJsonEscape(h16) + R"("}})";
+    auto resp = kujhadRnsRequest(req, errOut);
+    if (resp.empty()) return errOut;
+    return resp;
+}
+
+// Push the current Kujhad device-server endpoint into the RNS daemon
+// config so it is included in future RNS announces. Call this whenever
+// the device server starts (or config changes) with a non-empty advertise
+// address. The daemon re-announces immediately after updating.
+inline std::string kujhadRnsUpdateKujhadConfig(const std::string& host,
+                                                int port,
+                                                const std::string& name,
+                                                const std::string& role,
+                                                std::string& errOut) {
+    char portBuf[16];
+    std::snprintf(portBuf, sizeof(portBuf), "%d", port);
+    std::string req =
+        std::string(R"({"id":17,"method":"update_kujhad_config","params":{"host":")")
+        + kujhadRnsJsonEscape(host)
+        + R"(","port":)" + portBuf
+        + R"(,"name":")" + kujhadRnsJsonEscape(name)
+        + R"(","role":")" + kujhadRnsJsonEscape(role)
+        + R"("}})";
+    auto resp = kujhadRnsRequest(req, errOut);
+    if (resp.empty()) return errOut;
+    return resp;
+}
+
 }  // namespace predator

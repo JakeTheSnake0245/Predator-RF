@@ -47,6 +47,9 @@ task spec is rendered with the matching input control on both UIs.
 | `import_config`          | "Import"          | "Import" + scan   | ✓ |
 | `mint_replication_token` | "Mint token"      | "Mint token"      | ✓ |
 | `get_logs`               | log tail panel    | log tail panel    | ✓ |
+| `list_peers`             | Discovered Peers panel | `RnsBridge.listPeers()` | ✓ |
+| `forget_peer`            | Discovered Peers "Forget" | `RnsBridge.forgetPeer()` | ✓ |
+| `update_kujhad_config`   | auto on device-server start | – (C++ only) | ✓ |
 
 ## Token portability
 

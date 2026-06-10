@@ -2266,6 +2266,42 @@ void MainWindow::draw() {
         kujhadServer.setSpectrumIntervalMs(kujhadSpectrumIntervalMs.load(std::memory_order_relaxed));
         kujhadDeviceServerStatus = kujhadServer.status();
         kujhadDeviceServerRunning = kujhadServer.isListening();
+
+        // When the device server is running with an advertise address,
+        // push the current endpoint into the RNS daemon config so it
+        // is included in announce app_data. Tracked by a dirty-check
+        // so we only invoke the Unix socket round-trip on actual change.
+        static std::string rnsEpLastHost;
+        static int         rnsEpLastPort = 0;
+        static std::string rnsEpLastName;
+        static std::string rnsEpLastRole;
+        if (kujhadDeviceServerRunning && !kujhadAdvertiseAddress.empty()) {
+            std::string curRole = (predatorRole == PREDATOR_ROLE_DEVICE)
+                                  ? "device" : "controller";
+            if (kujhadAdvertiseAddress != rnsEpLastHost
+                || kujhadDeviceListenPort != rnsEpLastPort
+                || kujhadDeviceName       != rnsEpLastName
+                || curRole                != rnsEpLastRole) {
+                std::string err;
+                predator::kujhadRnsUpdateKujhadConfig(
+                    kujhadAdvertiseAddress,
+                    kujhadDeviceListenPort,
+                    kujhadDeviceName,
+                    curRole,
+                    err);
+                if (err.empty()) {
+                    rnsEpLastHost = kujhadAdvertiseAddress;
+                    rnsEpLastPort = kujhadDeviceListenPort;
+                    rnsEpLastName = kujhadDeviceName;
+                    rnsEpLastRole = curRole;
+                }
+            }
+        } else if (!kujhadDeviceServerRunning) {
+            // Clear the dirty-tracking cache when the server goes down
+            // so the next start re-pushes the endpoint to the daemon.
+            rnsEpLastHost.clear();
+            rnsEpLastPort = 0;
+        }
     }
 
     // Controller side: persisted peers turn into per-peer worker clients.
@@ -6033,6 +6069,33 @@ void MainWindow::draw() {
                 }
             }
             else { // Controller
+                // ── Pre-fill state: written by Discovered Peers "Add to fleet",
+                // consumed by the Add Peer form on the same/next frame ──────────
+                static bool rnsPreFillPending   = false;
+                static char rnsPreFillName[64]  = "";
+                static char rnsPreFillHost[128] = "";
+                static int  rnsPreFillPort      = 8080;
+
+                // ── Discovered Peers poll (5 s background, shared with the
+                // Discovered Peers CollapsingHeader below) ────────────────────
+                static json   rnsPeersList     = json::array();
+                static double rnsPeersLastPoll = -1.0;
+                {
+                    double tPeers = ImGui::GetTime();
+                    if (rnsPeersLastPoll < 0.0 || tPeers - rnsPeersLastPoll >= 5.0) {
+                        std::string pErr;
+                        auto pRaw = predator::kujhadRnsListPeers(pErr);
+                        if (pErr.empty() && !pRaw.empty()) {
+                            try {
+                                auto pResp = json::parse(pRaw);
+                                if (pResp.contains("result") && pResp["result"].is_array())
+                                    rnsPeersList = pResp["result"];
+                            } catch (...) {}
+                        }
+                        rnsPeersLastPoll = tPeers;
+                    }
+                }
+
                 if (ImGui::CollapsingHeader(T("Peers"), ImGuiTreeNodeFlags_DefaultOpen)) {
                     json& peers = core::configManager.conf["kujhadPeers"];
                     if (!peers.is_array()) peers = json::array();
@@ -6137,6 +6200,18 @@ void MainWindow::draw() {
                     static bool kujhadAddPeerTls = false;
                     static char kujhadAddPeerPin[128] = {0};
 
+                    // Apply any pending pre-fill from "Discovered Peers → Add to fleet".
+                    // Runs before the form is rendered so the operator sees the values
+                    // immediately without an extra frame of blank fields.
+                    if (rnsPreFillPending) {
+                        std::snprintf(kujhadAddPeerName, sizeof(kujhadAddPeerName),
+                                      "%s", rnsPreFillName);
+                        std::snprintf(kujhadAddPeerHost, sizeof(kujhadAddPeerHost),
+                                      "%s", rnsPreFillHost);
+                        kujhadAddPeerPort  = rnsPreFillPort;
+                        rnsPreFillPending  = false;
+                    }
+
                     drawEditButton(T("Name"), std::string(kujhadAddPeerName),
                         [](std::string nextName) {
                             snprintf(kujhadAddPeerName, sizeof(kujhadAddPeerName), "%s", nextName.c_str());
@@ -6186,6 +6261,111 @@ void MainWindow::draw() {
                             kujhadAddPeerPin[0]  = 0;
                             kujhadAddPeerTls     = false;
                         }
+                    }
+                }
+
+                // ── Discovered Peers (RNS) ─────────────────────────────────────
+                // Shows all peers that have announced themselves over Reticulum.
+                // Peers that included a Kujhad endpoint in their app_data get an
+                // "Add to fleet" button that pre-fills the Add Peer form above
+                // (the operator still has to enter the API key manually).
+                if (ImGui::CollapsingHeader(T("Discovered Peers (RNS)"))) {
+                    if (rnsPeersList.empty()) {
+                        ImGui::TextDisabled("%s", T("No RNS peers heard yet. Waiting for announce broadcasts..."));
+                    } else {
+                        // Wall-clock epoch seconds — last_heard_ms from the
+                        // daemon is also epoch-based, so this comparison is valid.
+                        // ImGui::GetTime() is NOT epoch time; don't mix them.
+                        double nowEpochSec = (double)std::time(nullptr);
+                        int forgetIdx = -1;
+                        for (size_t pi = 0; pi < rnsPeersList.size(); pi++) {
+                            const json& p = rnsPeersList[pi];
+                            if (!p.is_object()) continue;
+                            std::string h16 = p.value("hash16", std::string("?"));
+                            std::string iface = p.value("iface_id", std::string(""));
+                            double lastMs  = p.value("last_heard_ms", 0.0);
+                            double ageSec  = nowEpochSec - lastMs / 1000.0;
+                            bool hasEp = p.contains("kujhad_endpoint")
+                                         && p["kujhad_endpoint"].is_object();
+                            std::string epHost, epName, epRole;
+                            int epPort = 0;
+                            if (hasEp) {
+                                const json& ep = p["kujhad_endpoint"];
+                                epHost = ep.value("host", std::string(""));
+                                epPort = ep.value("port", 0);
+                                epName = ep.value("name", std::string(""));
+                                epRole = ep.value("role", std::string(""));
+                            }
+                            ImGui::PushID((int)pi);
+                            // Peer identity header.
+                            ImGui::PushStyleColor(ImGuiCol_Text,
+                                ImVec4(0.55f, 0.85f, 0.95f, 1.0f));
+                            ImGui::Text("%s", h16.c_str());
+                            ImGui::PopStyleColor();
+                            ImGui::SameLine();
+                            if (hasEp && !epName.empty()) {
+                                ImGui::Text("[%s]", epName.c_str());
+                                ImGui::SameLine();
+                            }
+                            if (hasEp && !epRole.empty()) {
+                                ImGui::TextDisabled("%s", epRole.c_str());
+                                ImGui::SameLine();
+                            }
+                            // Last-heard age.
+                            if (ageSec < 120.0) {
+                                ImGui::TextDisabled("%.0fs ago", ageSec);
+                            } else {
+                                ImGui::TextDisabled("%.0fm ago", ageSec / 60.0);
+                            }
+                            // Interface tag.
+                            if (!iface.empty()) {
+                                ImGui::SameLine();
+                                ImGui::TextDisabled("iface=%s", iface.c_str());
+                            }
+                            // Kujhad endpoint row.
+                            if (hasEp && !epHost.empty() && epPort > 0) {
+                                ImGui::TextDisabled("  %s:%d", epHost.c_str(), epPort);
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(T("Add to fleet"))) {
+                                    // Write pre-fill statics; the Add Peer section
+                                    // above will apply them on the next render.
+                                    std::snprintf(rnsPreFillName, sizeof(rnsPreFillName),
+                                                  "%s", epName.empty()
+                                                        ? h16.substr(0, 8).c_str()
+                                                        : epName.c_str());
+                                    std::snprintf(rnsPreFillHost, sizeof(rnsPreFillHost),
+                                                  "%s", epHost.c_str());
+                                    rnsPreFillPort    = epPort;
+                                    rnsPreFillPending = true;
+                                    // Add Peer form is above this header; the
+                                    // pre-fill values will appear there on the
+                                    // next frame. Operator scrolls up to enter
+                                    // the API key and click "Add peer".
+                                }
+                            } else {
+                                ImGui::TextDisabled("  %s", T("(no Kujhad endpoint advertised)"));
+                            }
+                            // Forget button.
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(T("Forget"))) {
+                                forgetIdx = (int)pi;
+                            }
+                            ImGui::Separator();
+                            ImGui::PopID();
+                        }
+                        if (forgetIdx >= 0) {
+                            const json& pf = rnsPeersList[forgetIdx];
+                            std::string fh16 = pf.value("hash16", std::string(""));
+                            if (!fh16.empty()) {
+                                std::string fErr;
+                                predator::kujhadRnsForgetPeer(fh16, fErr);
+                                // Force immediate re-poll so the row disappears.
+                                rnsPeersLastPoll = -1.0;
+                            }
+                        }
+                    }
+                    if (ImGui::Button(T("Refresh"))) {
+                        rnsPeersLastPoll = -1.0;
                     }
                 }
 
