@@ -17,7 +17,7 @@ from xml.etree import ElementTree as ET
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from backend.output.cot_emitter import CoTEmitter, build_cot_xml
+from backend.output.cot_emitter import CoTEmitter, build_cot_xml, build_cot_geochat
 
 
 def _track(emitter_id="abc1234556789", lat=None, lon=None,
@@ -182,6 +182,70 @@ class CoTEmitterGateTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(host, s["destination"])
             finally:
                 emit.close()
+
+
+class CoTGeoChatXMLTests(unittest.TestCase):
+    """Verify build_cot_geochat produces valid, correctly-typed CoT XML."""
+
+    def _parse(self, **kw) -> ET.Element:
+        xml = build_cot_geochat(
+            uid=kw.get("uid", "PREDATORF-Sensor-ABCD"),
+            callsign=kw.get("callsign", "PredatorRF"),
+            lat=kw.get("lat", 38.9),
+            lon=kw.get("lon", -77.0),
+            message=kw.get("message", "EMITTER hit at 462.6 MHz"),
+            chat_room=kw.get("chat_room", "All Chat Rooms"),
+        )
+        return ET.fromstring(xml.decode("utf-8"))
+
+    def test_event_type_is_geochat(self):
+        root = self._parse()
+        self.assertEqual(root.attrib["type"], "b-t-f")
+
+    def test_uid_starts_with_geochat_prefix(self):
+        root = self._parse(uid="PREDATORF-X-1234")
+        self.assertTrue(root.attrib["uid"].startswith("GeoChat.PREDATORF-X-1234."))
+
+    def test_sender_link_type_is_sensor_icon(self):
+        """<link> back-reference must use a-f-G-E-S (sensor), not a-f-G-U-C."""
+        root = self._parse()
+        link = root.find("./detail/link")
+        self.assertIsNotNone(link, "<link> element missing from GeoChat detail")
+        self.assertEqual(link.attrib["type"], "a-f-G-E-S",
+                         "Sender link type must be a-f-G-E-S (sensor icon)")
+        self.assertEqual(link.attrib["relation"], "p-p")
+
+    def test_sender_link_uid_matches_sender(self):
+        root = self._parse(uid="PREDATORF-MySensor-CAFE")
+        link = root.find("./detail/link")
+        self.assertEqual(link.attrib["uid"], "PREDATORF-MySensor-CAFE")
+
+    def test_chat_element_present_with_correct_callsign(self):
+        root = self._parse(callsign="Sensor-7")
+        chat = root.find("./detail/__chat")
+        self.assertIsNotNone(chat)
+        self.assertEqual(chat.attrib["senderCallsign"], "Sensor-7")
+
+    def test_message_survives_xml_escaping(self):
+        root = self._parse(message='Hit at 462MHz & SNR>30dB "good"')
+        remarks = root.find("./detail/remarks")
+        self.assertIsNotNone(remarks)
+        self.assertEqual(remarks.text, 'Hit at 462MHz & SNR>30dB "good"')
+
+    def test_stale_after_start(self):
+        root = self._parse()
+        self.assertGreater(root.attrib["stale"], root.attrib["start"])
+
+    def test_point_coordinates(self):
+        root = self._parse(lat=35.123, lon=-106.456)
+        point = root.find("point")
+        self.assertIsNotNone(point)
+        self.assertAlmostEqual(float(point.attrib["lat"]), 35.123, places=4)
+        self.assertAlmostEqual(float(point.attrib["lon"]), -106.456, places=4)
+
+    def test_how_attribute_is_human_initiated(self):
+        root = self._parse()
+        self.assertEqual(root.attrib["how"], "h-g-i-g-o")
 
 
 # ── Test helper: ephemeral UDP listener ─────────────────────────────────

@@ -33,6 +33,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Tuple
 from xml.sax.saxutils import escape as _xmlesc
 
+# Sender CoT type for the <link> back-reference in GeoChat events.
+# Matches the C++ SA beacon type (a-f-G-E-S = friendly ground electronic
+# sensor) so ATAK renders the same sensor icon for the sender regardless of
+# which transport delivered the message.
+_SENDER_COT_TYPE = "a-f-G-E-S"
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,6 +144,78 @@ def build_cot_xml_lob(*,
         '<__group name="Cyan" role="Team Member"/>',
         '<precisionlocation altsrc="???" geopointsrc="GPS"/>',
         sensor_el,
+        '</detail>',
+        '</event>',
+    ]
+    return "".join(parts).encode("utf-8")
+
+
+def build_cot_geochat(*,
+                      uid: str,
+                      callsign: str,
+                      lat: float,
+                      lon: float,
+                      message: str,
+                      chat_room: str = "All Chat Rooms",
+                      stale_seconds: float = 60.0) -> bytes:
+    """Build a GeoChat (type ``b-t-f``) CoT event for sending hit alerts to
+    an ATAK chat room.
+
+    The ``<link>`` sender back-reference uses ``type="a-f-G-E-S"``
+    (friendly ground electronic sensor) so ATAK renders the same sensor icon
+    for the sender as the SA beacon, regardless of transport.
+
+    Parameters
+    ----------
+    uid:         Stable device UID (e.g. ``"PREDATORF-MySensor-ABCD"``).
+    callsign:    Human-readable sender label shown in the ATAK chat pane.
+    lat / lon:   Sender position (used for the CoT ``<point>``; CE is left at
+                 the TAK "unknown" sentinel since position accuracy isn't
+                 meaningful for a chat message).
+    message:     Plain-text chat body.  XML-escaped automatically.
+    chat_room:   ATAK chat room name (default ``"All Chat Rooms"``).
+    stale_seconds: How long (seconds) before ATAK discards the event
+                 (default 60 s — chat messages age out quickly).
+    """
+    now = datetime.now(timezone.utc)
+    stale = now + timedelta(seconds=max(1.0, stale_seconds))
+
+    # Message UID follows the ATAK convention used by the C++ reporter so
+    # dedup logic in TAK servers treats Python-originated and C++-originated
+    # messages as distinct events from the same sender entity.
+    msg_uid = f"GeoChat.{_xmlesc(uid)}.{_xmlesc(chat_room)}.{int(now.timestamp() * 1000)}"
+
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<event version="2.0"'
+        f' uid="{_xmlesc(msg_uid)}"'
+        ' type="b-t-f"'
+        f' time="{_iso(now)}"'
+        f' start="{_iso(now)}"'
+        f' stale="{_iso(stale)}"'
+        ' how="h-g-i-g-o"'
+        ' access="Undefined"'
+        ' qos="1-r-c"'
+        ' opex="*">',
+        f'<point lat="{lat:.7f}" lon="{lon:.7f}"'
+        ' hae="9999999.0" ce="9999999.0" le="9999999.0"/>',
+        '<detail>',
+        f'<__chat parent="TeamBlue" groupOwner="false"'
+        f' chatroom="{_xmlesc(chat_room)}"'
+        f' senderCallsign="{_xmlesc(callsign)}"'
+        f' id="{_xmlesc(chat_room)}">',
+        f'<chatgrp uid0="{_xmlesc(uid)}" uid1="{_xmlesc(chat_room)}"'
+        f' id="{_xmlesc(chat_room)}"/>',
+        '</__chat>',
+        # Sender back-reference: use a-f-G-E-S (sensor icon) to match the SA
+        # beacon type so ATAK shows the same icon for every appearance of this
+        # sender — SA heartbeat, chat message, and any future CoT types.
+        f'<link uid="{_xmlesc(uid)}" type="{_SENDER_COT_TYPE}" relation="p-p"/>',
+        f'<remarks source="BAO.F.ATAK.{_xmlesc(uid)}"'
+        f' to="{_xmlesc(chat_room)}"'
+        f' time="{_iso(now)}">{_xmlesc(message)}</remarks>',
+        f'<__serverdestination destinations="{_xmlesc(chat_room)}:broadcast"/>',
+        f'<marti><dest callsign="{_xmlesc(chat_room)}"/></marti>',
         '</detail>',
         '</event>',
     ]
