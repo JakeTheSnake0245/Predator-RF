@@ -84,30 +84,24 @@ class PredatorBackend:
                     config, "custody_stale_gps_after_s", 300.0),
                 on_change=self._on_custody_change,
             )
+        # StationarityGate — must be initialised before TrackManager so it
+        # can be passed in at construction time (used by both the TDOA solve
+        # path and the LOB crosscut promotion path).  Configurable via
+        # STATIONARITY_* env vars; sane defaults cover urban + GA scenarios.
+        self.stationarity_gate = StationarityGate(
+            v_max_mps=config.stationarity_v_max_mps,
+            dt_floor_s=config.stationarity_dt_floor_s,
+            history_max=config.stationarity_history_max,
+        )
+
         self.decision_engine = DecisionEngine(
             self.anomaly_detector,
             custody_elector=self.custody_elector)
         _proximity = (ProximityEstimator() if config.rssi_proximity_enabled else None)
         self.track_manager = TrackManager(
             proximity_estimator=_proximity,
-            custody_elector=self.custody_elector)
-        self.fleet_manager = KujhadFleetManager()
-
-        # StationarityGate — sanity-check incoming TDOA fixes against
-        # the track's recent location history and classify motion. The
-        # gate is stateless w.r.t. tracks (each call takes the per-
-        # track history list inline), so we keep one shared instance
-        # for the whole backend; per-track state lives on EmitterTrack.
-        # Configurable via STATIONARITY_* env vars; sane defaults
-        # cover urban + general-aviation scenarios.
-        # Direct field access (not getattr) so a future config typo
-        # fails at startup rather than silently using the gate's
-        # module-level defaults.
-        self.stationarity_gate = StationarityGate(
-            v_max_mps=config.stationarity_v_max_mps,
-            dt_floor_s=config.stationarity_dt_floor_s,
-            history_max=config.stationarity_history_max,
-        )
+            custody_elector=self.custody_elector,
+            stationarity_gate=self.stationarity_gate)
 
         # TDOA geolocation — needs ≥2 GPS-synced nodes hearing the same
         # emitter inside a 5s window. Was previously instantiated nowhere;
@@ -435,8 +429,10 @@ class PredatorBackend:
                              getattr(event, "node_id", "?"), exc)
                 return
 
-        # Extract bearing — support both native doa_max_deg and legacy alias
-        bearing = raw.get("doa_max_deg") or raw.get("bearing_deg")
+        # Extract bearing — explicit None check avoids false-negative on 0° (due north).
+        bearing = raw.get("doa_max_deg")
+        if bearing is None:
+            bearing = raw.get("bearing_deg")
         if bearing is None:
             logger.debug("KRAKEN_LOB event from %s missing bearing field — dropped",
                          getattr(event, "node_id", "?"))

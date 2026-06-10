@@ -220,8 +220,8 @@ track = track_manager.ingest_lob(measurement)
   2. **LOB+TDOA hybrid merge** (if `track.location_method == "tdoa"`):
      blends the LOB crosscut with the existing TDOA fix using
      inverse-variance weighting (`w = 1/r²`).  The result is stored as
-     `location_method = "lob_tdoa_blend"` with a confidence ceiling of
-     `MAX_LOB_TDOA_BLEND_CONF = 0.85`.
+     `location_method = "lob_tdoa_hybrid"` with a confidence ceiling of
+     `MAX_LOB_TDOA_HYBRID_CONF = 0.85`.
   3. **LOB-only promotion** (if no TDOA fix present): promotes crosscut
      to primary only when the current method is `None`,
      `"rssi_proximity"`, or `"lob_crosscut"` with _lower_ confidence —

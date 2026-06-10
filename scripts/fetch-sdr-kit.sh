@@ -234,20 +234,74 @@ echo "  → EEPROM images at $EEPROM_DIR"
 echo "     Flash with: rtl_eeprom -d <N> -f $EEPROM_DIR/kraken<N>.eeprom"
 echo "     (run once per device, requires root + rtl-sdr installed)"
 
-# ── Optional: clone krakensdr_doa for development/offline use ────────────
-# `install_rpi.sh --kraken` is authoritative for production RPi deployment
-# (full service/venv/daemon wiring).  Here we optionally mirror the repo
-# into the local workspace so C++ developers can browse the protocol source
-# without internet access and can run the DOA solver locally.
-KRAKEN_LOCAL="$(dirname "$KIT")/krakensdr_doa"
-if [[ ! -d "${KRAKEN_LOCAL}/.git" ]]; then
-    echo "  → cloning krakensdr_doa into ${KRAKEN_LOCAL} (skip with Ctrl-C)"
-    git clone --depth 1 \
-        https://github.com/krakenrf/krakensdr_doa.git \
-        "${KRAKEN_LOCAL}" 2>/dev/null || \
-        echo "     WARNING: clone failed (offline?). skipping."
+# ── krakensdr_doa: managed clone + optional service install ──────────────
+# On a Linux host running as root, provision /opt/krakensdr_doa with the
+# same steps used by deploy/install_rpi.sh --kraken (clone, pip-install,
+# systemd service, env file).  On a non-root / non-Linux host, mirror the
+# repo locally for offline C++ development only.
+KRAKEN_OPT="/opt/krakensdr_doa"
+KRAKEN_REPO="https://github.com/krakenrf/krakensdr_doa.git"
+
+if [[ "$(uname -s)" == "Linux" ]] && [[ "$EUID" -eq 0 ]]; then
+    # ── Root on Linux: full managed install ──────────────────────────────
+    if [[ -d "${KRAKEN_OPT}/.git" ]]; then
+        echo "  → krakensdr_doa at ${KRAKEN_OPT} — pulling latest"
+        git -C "${KRAKEN_OPT}" pull --ff-only 2>/dev/null || true
+    else
+        echo "  → cloning krakensdr_doa into ${KRAKEN_OPT}"
+        apt-get install -y --no-install-recommends git 2>/dev/null || true
+        git clone --depth 1 "${KRAKEN_REPO}" "${KRAKEN_OPT}"
+    fi
+
+    if [[ -f "${KRAKEN_OPT}/requirements.txt" ]]; then
+        echo "  → pip-installing krakensdr_doa requirements"
+        pip3 install -q --break-system-packages \
+            -r "${KRAKEN_OPT}/requirements.txt" 2>/dev/null || \
+        pip3 install -q -r "${KRAKEN_OPT}/requirements.txt"
+    fi
+
+    mkdir -p /etc/krakensdr
+    if [[ ! -f /etc/krakensdr/predator.env ]]; then
+        cat > /etc/krakensdr/predator.env <<'KENV'
+PREDATOR_LOB_WS_PORT=8082
+PREDATOR_LOB_WS_PATH=/ws
+KRAKEN_DOA_HOST=127.0.0.1
+KRAKEN_DOA_DOA_PORT=8081
+KENV
+        echo "  → wrote /etc/krakensdr/predator.env"
+    fi
+
+    if [[ ! -f /etc/systemd/system/krakensdr-doa.service ]]; then
+        cat > /etc/systemd/system/krakensdr-doa.service <<'SVCEOF'
+[Unit]
+Description=KrakenSDR DOA engine
+After=network.target
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/krakensdr_doa
+EnvironmentFile=-/etc/krakensdr/predator.env
+ExecStart=/usr/bin/python3 /opt/krakensdr_doa/_UI/kraken_web_interface.py
+Restart=on-failure
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        echo "  → wrote krakensdr-doa.service"
+    fi
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable krakensdr-doa.service 2>/dev/null || true
+    echo "  → krakensdr-doa.service enabled (start: systemctl start krakensdr-doa)"
 else
-    echo "  → krakensdr_doa already present at ${KRAKEN_LOCAL} — skipping clone"
+    # ── Non-root / macOS / CI: local mirror for offline C++ development ──
+    KRAKEN_LOCAL="$(dirname "$KIT")/krakensdr_doa"
+    if [[ ! -d "${KRAKEN_LOCAL}/.git" ]]; then
+        echo "  → cloning krakensdr_doa into ${KRAKEN_LOCAL} (for offline dev)"
+        git clone --depth 1 "${KRAKEN_REPO}" "${KRAKEN_LOCAL}" 2>/dev/null || \
+            echo "     WARNING: clone failed (offline?). skipping."
+    else
+        echo "  → krakensdr_doa already at ${KRAKEN_LOCAL} — skipping clone"
+    fi
 fi
 
 fi
