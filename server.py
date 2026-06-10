@@ -35,7 +35,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
-            self._serve_file("index.html", "text/html; charset=utf-8")
+            self._serve_file(os.path.join("dashboard", "index.html"),
+                             "text/html; charset=utf-8")
         elif self.path == "/preview" or self.path == "/preview.html":
             self._serve_file("preview.html", "text/html; charset=utf-8")
         elif self.path in ("/dashboard", "/dashboard/"):
