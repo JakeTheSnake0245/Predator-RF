@@ -1144,6 +1144,7 @@
     function drawFrame() {
       if (!fft.width) { resize(); }
       const w = fft.width, h = fft.height;
+      if (!w || !h) return; // canvas not laid out yet — skip this frame
       const samples = fftSample(w);
 
       // fft: filled trace
