@@ -102,6 +102,7 @@ class PredatorBackend:
             proximity_estimator=_proximity,
             custody_elector=self.custody_elector,
             stationarity_gate=self.stationarity_gate)
+        self.fleet_manager = KujhadFleetManager()
 
         # TDOA geolocation — needs ≥2 GPS-synced nodes hearing the same
         # emitter inside a 5s window. Was previously instantiated nowhere;
@@ -470,8 +471,48 @@ class PredatorBackend:
                          labels={"node": measurement.node_id},
                          help_text="KrakenSDR LOB measurements ingested")
 
+        # ── Run the same assessment / CoT pipeline as standard RF events ─
+        # LOB events do not have a full RFEvent, but DecisionEngine.assess()
+        # only needs the track and available nodes; anomaly detection checks
+        # history on the track object directly.
+        flags = self.anomaly_detector.analyze(track, event)
+        if flags:
+            track.anomaly_flags = [f.description for f in flags]
+
+        node_loads: dict[str, int] = {}
+        if self.custody_elector is not None:
+            for active in self.track_manager.active_tracks():
+                last = self.custody_elector.last_decision(active.emitter_id)
+                if last is None:
+                    continue
+                for nid in last.tasked_nodes:
+                    node_loads[nid] = node_loads.get(nid, 0) + 1
+        report = self.decision_engine.assess(
+            track, anomaly_flags=flags or [],
+            available_nodes=list(self.track_manager.sensor_nodes.values()),
+            node_loads=node_loads)
+
         if self.store is not None:
             self._spawn(self.store.record_track(track.to_dict()))
+            self._spawn(self.store.record_assessment(report.to_dict()))
+
+        self.auto_tasker.handle_assessment(track.to_dict(), report.to_dict())
+
+        # CoT escalation — bearing-only LOB tracks use CE=9999 (no fix);
+        # crosscut and hybrid tracks carry the actual position.
+        if (self.cot.enabled and report.escalate_to_atak
+                and not self.overrides.is_friendly(track.emitter_id)):
+            # Use node position as fallback so bearing-only tracks still
+            # appear on the TAK map anchored at the sensor.
+            fallback = (measurement.node_lat, measurement.node_lon)
+            track_d = self.overrides.apply_to_track(track.to_dict())
+            if config.cot_require_manual_approval:
+                self._spawn(self.approvals.enqueue(
+                    track_d, report.to_dict(), fallback))
+            else:
+                self._spawn(self.cot.emit_track(
+                    track_d, report.to_dict(),
+                    fallback_location=fallback))
 
         push_event({
             "type": "lob_update",

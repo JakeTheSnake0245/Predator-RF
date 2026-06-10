@@ -219,6 +219,14 @@ class TrackManager:
         if measurement.node_id not in track.detecting_nodes:
             track.detecting_nodes.append(measurement.node_id)
 
+        # Advance observation count and track state so LOB-only deployments
+        # progress through the same NEW → TRACKING → STABLE lifecycle as
+        # RF+TDOA tracks.  For new tracks `observation_count` is already 1
+        # at construction; increment here on each subsequent measurement.
+        if candidates:
+            track.observation_count += 1
+            track._advance_state()
+
         # Append to bounded per-track history.
         track.lob_measurement_history.append(measurement)
         if len(track.lob_measurement_history) > self.LOB_HISTORY_MAX:
