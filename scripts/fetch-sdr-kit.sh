@@ -135,43 +135,46 @@ cp volk/build/include/volk/*.h                                       "$KIT/inclu
 cp volk/build/lib/volk_machines.h                                    "$KIT/include/volk/" 2>/dev/null || true
 
 ############################################################
-# 5) Optional: KrakenSDR companion headers (--kraken flag)
+# 5) Optional: KrakenSDR companion assets (--kraken flag)
 ############################################################
 if [[ "$KRAKEN" -eq 1 ]]; then
 echo
-echo "==> KrakenSDR opt-in: installing krakensdr_doa headers"
+echo "==> KrakenSDR opt-in: headers, udev rules, EEPROM firmware"
+
+# ── Protocol reference header ─────────────────────────────────────────────
 mkdir -p "$KIT/include/krakensdr"
 
-# krakensdr_doa doesn't ship a C header — the integration is pure WebSocket
-# JSON.  We create a minimal documentation header so the C++ module can
-# #include it for the canonical field names and range constants.
 cat > "$KIT/include/krakensdr/krakensdr_doa_protocol.h" <<'KRAKENHDR'
 /*
  * krakensdr_doa wire protocol — Predator RF reference header.
  *
- * krakensdr_doa streams JSON text frames over WebSocket (default port 8082).
- * This header documents the field names and value ranges; the actual parser
- * lives in core/src/predator/decoder_ingest.h (KrakenWsIngester).
+ * krakensdr_doa streams JSON text frames over WebSocket.
+ * Default port: 8081 (native krakensdr_doa); 8082 is a legacy alias.
  *
- *  Message type: "doa_result"
- *  ─────────────────────────
- *  "freq_hz"          double  Centre frequency (Hz)
- *  "bearing_deg"      double  True bearing, [0, 360)
- *  "bearing_std_deg"  double  1-sigma bearing uncertainty (degrees)
+ * Native field names (krakensdr_doa ≥ v1.0 on port 8081):
+ *  "frequency_hz"     double  Centre frequency (Hz)        ← preferred
+ *  "doa_max_deg"      double  True bearing, [0, 360)       ← preferred
+ *  "doa_std_deg"      double  1-sigma bearing uncertainty (degrees)
  *  "confidence"       double  DOA confidence, [0, 1]
  *  "power_dbfs"       double  Received power (dBFS)
  *  "snr_db"           double  Signal-to-noise ratio (dB)
  *  "gps_lat"          double  Node WGS-84 latitude
  *  "gps_lon"          double  Node WGS-84 longitude
- *  "heading_deg"      double  Platform heading (0 = stationary / north)
+ *  "heading_deg"      double  Platform heading (0 = north / stationary)
  *  "timestamp_unix"   double  UNIX timestamp (seconds, fractional)
  *  "node_id"          string  Device identifier (e.g. "kraken-0")
  *
- *  Other message types ("status", "config", etc.) are silently ignored.
+ * Legacy alias names (port 8082, accepted for backward-compat):
+ *  "freq_hz"          → frequency_hz
+ *  "bearing_deg"      → doa_max_deg
+ *  "bearing_std_deg"  → doa_std_deg
+ *
+ * Other message types ("status", "config", etc.) are silently ignored.
  */
 #pragma once
 
-#define KRAKEN_DOA_DEFAULT_PORT   8082
+#define KRAKEN_DOA_DEFAULT_PORT   8081
+#define KRAKEN_DOA_LEGACY_PORT    8082
 #define KRAKEN_DOA_DEFAULT_PATH   "/ws"
 #define KRAKEN_DAQ_DEFAULT_PORT   5000
 #define KRAKEN_MIN_CROSSING_DEG   15.0   /* degenerate geometry veto */
@@ -179,6 +182,58 @@ cat > "$KIT/include/krakensdr/krakensdr_doa_protocol.h" <<'KRAKENHDR'
 KRAKENHDR
 
 echo "  → wrote $KIT/include/krakensdr/krakensdr_doa_protocol.h"
+
+# ── Linux udev rules (development host) ──────────────────────────────────
+# Write udev rules to the local sdr-kit tree for reference and to the
+# system udev directory if running as root on a Linux host.
+mkdir -p "$KIT/udev"
+cat > "$KIT/udev/99-krakensdr.rules" <<'UDEV'
+# KrakenSDR — 5-element coherent SDR array (RTL2832U-based)
+# Grant the sdr / plugdev group RW access to each of the 5 USB interfaces.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", \
+    MODE="0664", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", \
+    MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# RTL-SDR Blog v4 (KrakenSDR coherent variant)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="8832", \
+    MODE="0664", GROUP="plugdev", TAG+="uaccess"
+UDEV
+
+if [[ "$(uname -s)" == "Linux" ]] && [[ -d /etc/udev/rules.d ]]; then
+    if [[ "$EUID" -eq 0 ]]; then
+        cp "$KIT/udev/99-krakensdr.rules" /etc/udev/rules.d/
+        udevadm control --reload-rules 2>/dev/null || true
+        echo "  → installed udev rules to /etc/udev/rules.d/"
+    else
+        echo "  → udev rules written to $KIT/udev/99-krakensdr.rules"
+        echo "     (run as root to install system-wide)"
+    fi
+fi
+
+# ── KrakenSDR EEPROM firmware ─────────────────────────────────────────────
+# The KrakenSDR array requires each RTL2832U stick to have its EEPROM
+# programmed with a unique serial (kraken0..kraken4) so the coherent
+# driver can claim all 5 interfaces in order.  The programming utility
+# is rtl_eeprom (part of rtl-sdr).  Reference EEPROM images are hosted
+# in the krakenrf/krakensdr_doa repository; we download them here so
+# the operator can flash offline without needing git.
+EEPROM_DIR="$KIT/eeprom/krakensdr"
+mkdir -p "$EEPROM_DIR"
+EEPROM_BASE="https://raw.githubusercontent.com/krakenrf/krakensdr_doa/main/krakensdr_doa/eeprom"
+echo "  → downloading KrakenSDR EEPROM images (0..4)"
+for i in 0 1 2 3 4; do
+    DST="$EEPROM_DIR/kraken${i}.eeprom"
+    if [[ ! -f "$DST" ]]; then
+        curl -sSfL "${EEPROM_BASE}/kraken${i}.eeprom" -o "$DST" 2>/dev/null || \
+            echo "     WARNING: could not download kraken${i}.eeprom (offline?)"
+    else
+        echo "     kraken${i}.eeprom already present"
+    fi
+done
+echo "  → EEPROM images at $EEPROM_DIR"
+echo "     Flash with: rtl_eeprom -d <N> -f $EEPROM_DIR/kraken<N>.eeprom"
+echo "     (run once per device, requires root + rtl-sdr installed)"
+
 fi
 
 echo

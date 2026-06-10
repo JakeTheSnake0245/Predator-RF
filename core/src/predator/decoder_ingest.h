@@ -818,24 +818,35 @@ protected:
 
 // ── KrakenSDR LOB WebSocket ingester ─────────────────────────────────────────
 //
-// Connects to krakensdr_doa's WebSocket feed (default ws://host:8082/ws) and
+// Connects to krakensdr_doa's WebSocket feed (default ws://host:8081/ws) and
 // converts each "doa_result" JSON message into a DecoderIngestEvent with
 // decoder="KRAKEN_LOB".  No external WebSocket library is required — the
 // handshake and frame parser are implemented inline with POSIX sockets /
 // Winsock2 (the same platform layer used by LineIngester above).
 //
-// Wire format expected from krakensdr_doa:
-//   {"type":"doa_result","freq_hz":433920000,"bearing_deg":127.5,
-//    "bearing_std_deg":5.2,"confidence":0.83,"power_dbfs":-42.1,
+// Wire format accepted (both native krakensdr_doa and legacy aliases):
+//
+//   Native krakensdr_doa (port 8081, preferred):
+//   {"type":"doa_result","frequency_hz":433920000,"doa_max_deg":127.5,
+//    "doa_std_deg":5.2,"confidence":0.83,"power_dbfs":-42.1,
 //    "snr_db":12.3,"gps_lat":37.4,"gps_lon":-122.1,"heading_deg":0.0,
 //    "timestamp_unix":1718035200.123,"node_id":"kraken-0"}
+//
+//   Legacy alias names (port 8082, backward-compat):
+//   {"type":"doa_result","freq_hz":433920000,"bearing_deg":127.5,
+//    "bearing_std_deg":5.2,...}
+//
+// Field resolution order:
+//   bearing:     doa_max_deg → bearing_deg  (one must be present)
+//   frequency:   frequency_hz → freq_hz
+//   uncertainty: bearing_std_deg → doa_std_deg (default 10°)
 //
 // Messages with any other "type" value are silently dropped so the ingester
 // survives krakensdr_doa status / config broadcasts on the same feed.
 //
 // Suppression rules (enqueue only if ALL pass):
 //   - type == "doa_result"
-//   - bearing_deg present and in [0, 360)
+//   - doa_max_deg or bearing_deg present and in [0, 360)
 //   - gps_lat and gps_lon present and non-zero
 //   - confidence clamped to [0, 1]
 //
@@ -918,11 +929,21 @@ private:
         if (!j.contains("type") || j["type"].get<std::string>() != "doa_result")
             return;
 
-        // Mandatory fields.
-        if (!j.contains("bearing_deg") || !j.contains("gps_lat") || !j.contains("gps_lon"))
+        // Mandatory geo fields.
+        if (!j.contains("gps_lat") || !j.contains("gps_lon"))
             return;
 
-        double bearing_deg = j["bearing_deg"].get<double>();
+        // Bearing field: accept both the task-contract name ("doa_max_deg",
+        // native krakensdr_doa output on port 8081) and the legacy alias
+        // ("bearing_deg") so both producer versions work without reconfiguring.
+        double bearing_deg = 0.0;
+        if (j.contains("doa_max_deg"))
+            bearing_deg = j["doa_max_deg"].get<double>();
+        else if (j.contains("bearing_deg"))
+            bearing_deg = j["bearing_deg"].get<double>();
+        else
+            return;  // no bearing present — discard
+
         double gps_lat     = j["gps_lat"].get<double>();
         double gps_lon     = j["gps_lon"].get<double>();
 
@@ -940,10 +961,22 @@ private:
         if (confidence < 0.0) confidence = 0.0;
         if (confidence > 1.0) confidence = 1.0;
 
-        double freq_hz     = j.value("freq_hz",       0.0);
+        // Frequency: accept both "frequency_hz" (task-contract / krakensdr_doa
+        // native) and "freq_hz" (legacy alias).
+        double freq_hz = 0.0;
+        if (j.contains("frequency_hz"))
+            freq_hz = j["frequency_hz"].get<double>();
+        else
+            freq_hz = j.value("freq_hz", 0.0);
+
         double power_dbfs  = j.value("power_dbfs",    0.0);
         double snr_db      = j.value("snr_db",        0.0);
-        double bearing_std = j.value("bearing_std_deg", 10.0);
+        // Uncertainty: accept "bearing_std_deg" or "doa_std_deg" (native).
+        double bearing_std = 10.0;
+        if (j.contains("bearing_std_deg"))
+            bearing_std = j["bearing_std_deg"].get<double>();
+        else if (j.contains("doa_std_deg"))
+            bearing_std = j["doa_std_deg"].get<double>();
         double heading_deg = j.value("heading_deg",   0.0);
         double ts_unix     = j.value("timestamp_unix", 0.0);
 

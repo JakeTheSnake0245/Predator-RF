@@ -75,7 +75,7 @@ ConfigManager config;
 
 static const json DEFAULT_CONFIG = {
     {"krakenHost",    "127.0.0.1"},
-    {"krakenPort",    8082},
+    {"krakenPort",    8081},    // krakensdr_doa default; 8082 is legacy
     {"krakenPath",    "/ws"},
     {"krakenNodeId",  "kraken-0"},
     {"krakenEnabled", false}
@@ -227,7 +227,7 @@ private:
 
     std::string name_;
     bool enabled_ = false;
-    int  port_ = 8082;
+    int  port_ = 8081;
 
     char hostBuf_[256]   = "127.0.0.1";
     char pathBuf_[128]   = "/ws";

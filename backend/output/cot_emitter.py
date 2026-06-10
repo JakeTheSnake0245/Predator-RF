@@ -279,11 +279,19 @@ class CoTEmitter:
         callsign = f"{self.uid_prefix}-{emitter_id[:8]}"
 
         lob_tag = ""
-        if loc_method in ("lob_crosscut", "lob_tdoa_hybrid"):
-            lob_tag = " | LOB-XCUT"
+        if loc_method == "lob_tdoa_hybrid":
+            lob_tag = " | LOB+TDOA-HYBRID"
+        elif loc_method == "lob_crosscut":
+            node_str = ",".join(lob_nodes[:3]) if lob_nodes else "?"
+            lob_tag = f" | LOB-XCUT {lob_bearing:.1f}° [{node_str}] r={ce:.0f}m"
         elif lob_bearing is not None:
             nodes_str = ",".join(lob_nodes[:3]) if lob_nodes else "?"
-            lob_tag = f" | LOB {lob_bearing:.1f}° ±{lob_uncert:.1f}° [{nodes_str}]"
+            # CE=9999 bearing-only — operator note per TAK spec: this marker
+            # is placed at the array position, not the emitter position.
+            lob_tag = (
+                f" | LOB {lob_bearing:.1f}°±{lob_uncert:.1f}° [{nodes_str}]"
+                " BEARING-ONLY: marker at sensor, not emitter"
+            )
 
         remarks = (
             f"PREDATOR-RF {threat} | "
@@ -295,11 +303,13 @@ class CoTEmitter:
         ).strip()
 
         # CoT type selection:
-        #   • lob_crosscut / hybrid → a-u-G  (geolocated unknown unit)
+        #   • lob_crosscut / hybrid → b-m-p-s-p-loc  (point-of-interest location
+        #     estimate; the crosscut is a *position fix*, not a confirmed unit)
         #   • bearing-only using fallback node position → b-m-p-s-p-loc
-        #   • everything else → cot_type resolved above (a-u-G or b-m-p-s-p-loc)
-        if loc_method == "lob_crosscut":
-            actual_cot_type = "a-u-G"
+        #   • TDOA / RSSI fix → a-u-G (geolocated unknown ground unit)
+        #   • everything else → cot_type resolved above
+        if loc_method in ("lob_crosscut", "lob_tdoa_hybrid"):
+            actual_cot_type = "b-m-p-s-p-loc"
         elif lob_bearing is not None and cot_type == "b-m-p-s-p-loc":
             actual_cot_type = "b-m-p-s-p-loc"
         else:

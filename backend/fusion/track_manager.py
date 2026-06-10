@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Confidence ceiling for an LOB+TDOA blend.  Above 0.85 implies sub-50 m
 # accuracy which no current KrakenSDR+TDOA pipeline can reliably deliver.
-MAX_LOB_TDOA_BLEND_CONF = 0.85
+MAX_LOB_TDOA_HYBRID_CONF = 0.85
 
 # Track ages before state transition
 COAST_AFTER_S = 30.0
@@ -304,7 +304,7 @@ class TrackManager:
                     track.estimated_lon           = round(blend_lon, 7)
                     track.location_confidence     = round(blend_conf, 3)
                     track.location_error_radius_m = round(blend_r, 1)
-                    track.location_method         = "lob_tdoa_blend"
+                    track.location_method         = "lob_tdoa_hybrid"
                     logger.debug(
                         "Track %s LOB+TDOA blend: r_lob=%.0fm r_tdoa=%.0fm → r_blend=%.0fm",
                         track.emitter_id, lob_r, tdoa_r, blend_r)
