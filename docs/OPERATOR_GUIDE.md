@@ -8,6 +8,10 @@ This guide is exhaustive on purpose. The minimum-kit and first-day workflows are
 
 ## Table of contents
 
+0. Initial setup (read this first)
+   - 0A — CoC / aggregation node (RPi or Ubuntu server)
+   - 0B — Cell phone only (Android standalone)
+   - 0.5 — Forward sensor RPi / RPi Zero nodes
 1. What this is, in one paragraph
 2. Two deployment paths (phone-only vs. fleet TOC)
 3. Minimum kit (you need ALL of these)
@@ -37,6 +41,204 @@ This guide is exhaustive on purpose. The minimum-kit and first-day workflows are
 
 ---
 
+## 0. Initial setup (read this first)
+
+There are three things you might be setting up:
+
+| What you're setting up | Section |
+|---|---|
+| A CoC / aggregation node on an RPi or Ubuntu server (Python backend) | **§ 0A** |
+| A standalone cell phone with an SDR (Android app only) | **§ 0B** |
+| A forward sensor RPi / RPi Zero (headless C++ daemon, `predator-rfd`) | **§ 0.5** |
+
+These can all coexist. A typical field mission has one CoC node (§ 0A) on a workstation or Pi 4, several forward sensor Pis (§ 0.5), and the operator's phone (§ 0B).
+
+---
+
+### § 0A — CoC / Aggregation node (RPi or Ubuntu server)
+
+**What this installs:** The Python intelligence backend (`predator-rf.service`), which aggregates events from your C++ sensor nodes via the Kujhad Fleet HTTP API, runs track fusion, the decision engine, AutoTasker, and CoT output. It exposes a REST + SSE API on `:8000` and a dashboard at `http://<ip>:8000/dashboard`.
+
+**Is everything needed pre-installed?** No. You run the install script once and it sets up the Python venv and systemd service. You then edit the env file to add your fleet nodes and bearer token before starting.
+
+#### Step 1 — Run the one-shot installer
+
+On a fresh Raspberry Pi OS, Ubuntu 22.04+, or Debian 12+ box, as root (or with sudo):
+
+```bash
+curl -sSf https://raw.githubusercontent.com/JakeTheSnake0245/Predator-RF/main/deploy/install_rpi.sh | sudo bash
+```
+
+**What the installer does automatically:**
+1. Creates the `predator` system user (no shell, no home directory)
+2. Creates `/opt/predator-rf`, `/etc/predator-rf`, `/var/lib/predator-rf`, `/var/log/predator-rf`
+3. Installs `python3-venv`, `chrony`, `sqlite3`, `git`, `ca-certificates` via apt
+4. Clones the repo into `/opt/predator-rf` (or pulls if already present)
+5. Creates a Python venv at `/opt/predator-rf/.venv` and installs `requirements.txt`
+6. Drops `predator-rf.env.example` into `/etc/predator-rf/predator-rf.env` — **only if the file does not already exist**
+7. Installs and enables the systemd unit at `/etc/systemd/system/predator-rf.service`
+8. Runs the preflight checker and reports GO / NO-GO
+
+**What the installer does NOT do:**
+- It does not start the service if preflight reports NO-GO
+- It does not overwrite an existing `/etc/predator-rf/predator-rf.env`
+- It does not install the C++ `predator-rfd` sensor daemon (that is a separate build — see § 0.5)
+
+#### Step 2 — Configure the env file
+
+```bash
+sudoedit /etc/predator-rf/predator-rf.env
+```
+
+The two required edits before going live:
+
+```bash
+# 1. Add your sensor nodes (format: id@host:port:apikey:hardware)
+#    Port is the Kujhad Device listen port on the C++ sensor (default: 41947).
+#    Always include the port explicitly — omitting it causes the backend to fall
+#    back to 5259, which will not reach a freshly-configured predator-rfd node.
+FLEET_NODES=alpha@192.168.1.10:41947:CHANGE_ME:hackrf,bravo@192.168.1.11:41947:CHANGE_ME:rtlsdr
+
+# 2. Set a bearer token for any LAN-exposed deployment
+API_BEARER_TOKEN=$(openssl rand -hex 32)   # run this to generate; paste the output
+```
+
+Every other variable has a safe default. See § 20.3 for the full env-var reference.
+
+#### Step 3 — Start the service and verify
+
+```bash
+sudo systemctl start predator-rf
+journalctl -u predator-rf -f           # watch for errors in the first 30 s
+curl http://localhost:8000/healthz     # expect: {"status":"ok"}
+```
+
+Open the dashboard in a browser on the LAN:
+
+```
+http://<pi-ip>:8000/dashboard
+```
+
+If you set `API_BEARER_TOKEN`, the bearer-auth middleware gates **all** paths including `/dashboard` — browsers cannot inject custom `Authorization` headers for page navigation. For LAN deployments with a token set, access the dashboard through an nginx/SSH reverse proxy that injects the header, or leave the token empty and rely on network-layer access control (firewall/VLAN). The SSE endpoint (`/api/v1/events/stream`) additionally accepts a `?token=` query param for browser EventSource compatibility, but `/dashboard` does not.
+
+#### Step 4 — Add the Android phone (optional, for fleet view on the phone)
+
+See § 0B and `docs/SIDELOAD_README.md`. Configure the phone's backend URL to `http://<pi-ip>:8000` and paste the `API_BEARER_TOKEN`.
+
+---
+
+### § 0B — Cell phone only (Android standalone)
+
+**What this installs:** The Predator RF APK — a self-contained C++ app that drives a USB SDR from the phone, records hits, runs baseline comparison, and optionally peers with other nodes over Kujhad.
+
+**Is everything needed pre-installed?** Yes. The APK is self-contained. No additional installs on the phone side. You need the APK file, a USB OTG cable, an SDR, and an antenna.
+
+**Required hardware:**
+- Android 10+ phone (Samsung Galaxy S21/S22/S23 confirmed; any Android 10+ device with USB-C OTG works)
+- USB-C OTG cable or adapter
+- A USB SDR (RTL-SDR Blog v4 minimum)
+- An antenna
+
+#### Step 1 — Enable sideloading
+
+1. **Settings → About phone → tap "Build number" 7 times** → "Developer mode is ON"
+2. **Settings → Developer options → enable "Install via USB" and "USB debugging"**
+
+#### Step 2 — Get the APK
+
+The APK is built from the GitHub repo (`assembleDebug` on Windows via Gradle). Your team lead or the repo's CI should supply it. The file is named `app-debug.apk`. Transfer it to the phone via USB cable, Google Drive, or any file transfer method.
+
+For full ADB-push instructions, see `docs/SIDELOAD_README.md`.
+
+#### Step 3 — Install
+
+On the phone: open Files app → Downloads → tap `app-debug.apk` → **Install**. When Android asks about unknown sources, allow for the app that opened the APK.
+
+#### Step 4 — Grant permissions
+
+When the app first launches, grant all three permissions:
+- **Location** ("While using the app") — for GPS-stamped hits and TDOA participation
+- **Storage / Files** — for saving baselines and exporting CSVs
+- **USB device access** — pops up on first SDR plug-in; tap **Always allow for this device**
+
+Skipping any permission leaves the matching feature dead-quiet.
+
+#### Step 5 — Connect the backend (only if using a CoC node)
+
+If you have a Python backend (§ 0A) running on the LAN:
+
+1. In the app: **Settings → Backend URL** → `http://<pi-ip>:8000`
+2. **Settings → Bearer token** → paste the `API_BEARER_TOKEN`
+3. Tap **Test connection** → should green-tick within 2 s
+
+Without a backend the phone runs standalone (hits, baseline, spectrum, local Kujhad fleet).
+
+---
+
+### § 0.5 — Forward sensor RPi / RPi Zero nodes
+
+Forward sensor nodes run the headless C++ daemon **`predator-rfd`** — not the Python backend. `predator-rfd` drives the SDR, decoder modules, and Kujhad Fleet hub directly from C++, with no display. The Python backend on the CoC node polls it via the Kujhad HTTP API.
+
+**Is everything needed pre-installed?** No. You must build the `predator-rfd` binary or obtain a pre-built package. The Python install script (`deploy/install_rpi.sh`) does **not** build or install `predator-rfd`.
+
+#### Hardware each sensor node needs
+
+| Item | Notes |
+|---|---|
+| Raspberry Pi Zero 2W, Pi 4, or Pi 5 | See Pi selection note below |
+| microSD ≥ 64 GB Class A2 | ~1 month of event retention at Tier-MED cadence |
+| USB SDR (RTL-SDR Blog v4 minimum, Airspy or HackRF preferred) | RTL-SDR is the cost-effective default |
+| USB GPS dongle OR GPS HAT with PPS pin | uBlox 7/8 USB for basic; Adafruit Ultimate GPS HAT for TDOA-capable nodes |
+| Power — PoE+ HAT or 5V/4A USB-C supply | Match to your power plan (battery, vehicle, PoE switch) |
+| Antenna — at least the SDR's rubber duck | Elevated discone or dipole dramatically improves range |
+| Network — Ethernet preferred; ZeroTier/Tailscale for off-LAN reach | |
+| Weather-sealed enclosure for outdoor placement | Pelican 1050 or Apache 2800 for drop-sensor use |
+
+**Pi selection:**
+- **Pi Zero 2W** — cheapest, smallest, USB-2 only. Good for RTL-SDR-only drop sensors. Cannot keep up with HackRF wide bandwidth.
+- **Pi 4 4 GB** — mature, plentiful, runs anything. Default for general sensor duty.
+- **Pi 5 4 GB** — best CPU per dollar, USB-3, better thermal margin. Preferred for HackRF nodes, multi-decoder setups, or RELAY duty.
+
+#### Build `predator-rfd` on the sensor node
+
+```bash
+git clone --depth=20 https://github.com/JakeTheSnake0245/Predator-RF.git /opt/predator-rf
+mkdir /opt/predator-rf/build && cd /opt/predator-rf/build
+cmake .. \
+  -DOPT_BACKEND_WEB=ON \
+  -DOPT_BACKEND_GLFW=OFF \
+  -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+sudo make install
+```
+
+`OPT_BACKEND_WEB=ON` and `OPT_BACKEND_GLFW=OFF` **must not both be ON** — they compile different `backend.cpp` translation units; enabling both in the same build fails.
+
+Enable the service:
+
+```bash
+sudo systemctl enable --now predator-rfd
+sudo journalctl -u predator-rfd -f
+```
+
+`predator-rfd` listens on port **5555** by default. Configure in `/etc/predator-rf/config.json`. For LAN-accessible nodes set `"webBindAll": true` and a strong `"kujhadApiKey"`.
+
+The Kujhad Device listener port is configurable. The port you enter in `FLEET_NODES` on the CoC node must match what the sensor is actually listening on — verify with `predator-rfctl port show` on the sensor, or check `config.json`.
+
+#### Add the sensor to the CoC
+
+On the CoC node, edit `/etc/predator-rf/predator-rf.env`:
+
+```bash
+FLEET_NODES=sensor1@192.168.1.20:41947:<api_key>:rtlsdr
+```
+
+Then `sudo systemctl restart predator-rf`. The sensor appears in the dashboard fleet panel within 10 s.
+
+See `docs/linux_web_frontend.md` for the full build reference, `predator-rfctl` CLI usage, and the API surface.
+
+---
+
 ## 1. What this is, in one paragraph
 
 Predator RF is a phone-first software-defined-radio cockpit for a single SIGINT operator. You plug a USB SDR into an Android phone (or a Linux box), point an antenna at the world, and the app shows you what's transmitting in real time — frequency, power, GPS-stamped location, and whether you've seen it before. It records baselines so the next sweep flags only what's *new* in the area, automates band scans with target/exclude lists, links to other phones or Raspberry Pi sensors as a private fleet (Kujhad), geolocates emitters by **time-difference-of-arrival (TDOA)** when you have ≥2 GPS-synchronized nodes, decodes P25 / RTL433 / POCSAG / ADS-B / AIS, and pushes selected hits to ATAK / TAK as Cursor-on-Target chat alerts. The whole system is **RX-only** — no transmit surface anywhere. There are explicit two-key gates on every output (CoT, AutoTasker re-tunes) so an automated assessment cannot bypass operator intent. Built on the SDR++ core. Sideloads as an APK; the Python backend ships as a systemd service.
@@ -54,6 +256,7 @@ A Python backend service (`predator-rf.service`) runs on a Linux operator workst
 - Aggregates events from one or more Kujhad-equipped C++ sensor nodes (phones, RPi-with-SDR, etc.) via the Kujhad HTTP API.
 - Runs the TDOA coordinator, decision engine, AutoTasker, and CoT emitter centrally.
 - Exposes a REST + SSE API on `:8000` (token-protected) for any UI/dashboard or for other Predator-RF backends to chain through (CoC mode — Center of Control).
+- Serves the operator dashboard at `http://<ip>:8000/dashboard`.
 
 The two paths are designed to be **mixed**. A typical mission has one Linux workstation running the backend + ATAK plumbing, three phones in the field with the Android app each sharing their picture into Kujhad, and one or two RPi sensors dropped at fixed points for unattended overwatch. All of that fuses into one operator screen.
 
@@ -220,7 +423,7 @@ Kujhad is the in-band peer protocol. Each Predator RF instance can run as a **De
 
 ### 11.2 The wire protocol (v1)
 
-Tiny HTTP/1.1 + JSON, single API key in the `X-Kujhad-Key` header on every request. Default port **41947** (the C++ side; the Python backend's Kujhad client defaults to port **5259** in the env-var schema — use the actual port the Device is listening on).
+Tiny HTTP/1.1 + JSON, single API key in the `X-Kujhad-Key` header on every request. The C++ Device listener defaults to port **41947**; set it in `FLEET_NODES` on the CoC to whatever port the sensor is actually configured for. (The Python backend's own parser falls back to **5259** if the port field is omitted from a `FLEET_NODES` entry — so always include the port explicitly.)
 
 | Endpoint | Purpose |
 |---|---|
@@ -240,7 +443,7 @@ Every endpoint returns 401 on missing / wrong key, 400 / 404 / 405 on malformed 
 On the device that will publish its picture:
 
 1. **KUJ** tab → **Listen** section.
-2. **Listen port** — leave at default (41947) unless you have a conflict.
+2. **Listen port** — default 41947; note the value for use in `FLEET_NODES` on the CoC. Change only if 41947 is already in use.
 3. **Device name** — short identifier (e.g. `alpha-truck`, `bravo-roof`).
 4. **API key** — leave the auto-generated 32-hex-char key, or paste your own. **Whatever this is, you'll need to enter the same value on every Controller that pairs with this Device.**
 5. **Advertise address** — usually leave blank; the app picks the best interface (ZeroTier > Tailscale > LAN > loopback).
@@ -380,123 +583,94 @@ When you set `RSSI_PROXIMITY_ENABLED=true`, single-node tracks get a coarse posi
 - The radius is clamped to `[RSSI_MIN_RADIUS_M, RSSI_MAX_RADIUS_M]` (default 50 m to 5 km — same scale as a TDOA ellipse).
 - The **circle is centred on the detecting node's GPS position**. There's no bearing information, so the emitter is "somewhere within radius `r` of your phone, in some unknown direction."
 - `location_method = "rssi_proximity"` is set on the track so the UI can render it differently from a TDOA fix (a wide light circle vs. a tight ellipse).
-- `location_confidence` is **hard-capped at 0.20** regardless of signal strength — TX power is unknown, so the system can never be highly confident about distance.
 
-#### What this is good for
+#### Calibrating EIRP and offset
 
-- **Walking-the-perimeter recon.** As you walk closer to a strong source, the estimated range shrinks and the circle visibly contracts on the map. You DF visually by watching the circles update.
-- **Coarse "is it within 100 m or within 5 km" bucketing** when planning where to position fixed sensors.
-- **Giving TAK a non-trivial CE radius** so the marker doesn't pretend to be a sub-metre fix when it isn't.
+The model degrades gracefully — even with the wrong EIRP assumption, the rendered circle still gives you a rough search radius. To calibrate:
 
-#### What this is NOT good for
-
-- **Reporting actual emitter coordinates** to higher echelons. The single-phone CoT beacon should be understood as "operator was here, heard X" — not "emitter at coordinates Y."
-- **Anything where the assumed TX power is unlikely to match.** A 25 W mobile being assumed-as-1 W will read as ~5× too close; a 100 mW IoT being assumed-as-1 W will read as ~3× too far. **If you know the band's typical TX power, set `RSSI_ASSUMED_EIRP_DBM` accordingly per mission.**
-- **Positions in heavy clutter / urban canyon.** Free-space path loss assumes line-of-sight. Real-world buildings, trees, and ground bounce make the actual range estimate optimistic — bump `RSSI_RADIUS_UNCERTAINTY_FACTOR` to 3 or 4 in those environments.
-
-#### Override priority
-
-TDOA always wins. As soon as a second GPS-synced node hears the same emitter and TDOA produces a fix, the track's `location_method` flips to `"tdoa"` and the proximity circle is replaced by the proper ellipse. Operator manual-location overrides (§ 18.3) win over both.
-
-#### What happens if even the detecting node has no GPS
-
-- Track stays without `estimated_lat / estimated_lon`.
-- Fallback CoT beacon, if armed, uses the **most-trustworthy node's last-known position** — marked with a different icon to flag that the location is a fallback.
+1. Set up a known transmitter at a known distance (e.g. a handheld at 100 m).
+2. Note the `power_dbfs` from the HITS tab.
+3. Work backwards: `Pr_dBm = power_dbfs + RSSI_DBFS_TO_DBM_OFFSET`. Compute what EIRP produces that Pr at 100 m with the free-space formula. Set `RSSI_ASSUMED_EIRP_DBM` to that value.
+4. In cluttered environments (urban, forest) set `RSSI_RADIUS_UNCERTAINTY_FACTOR` to 3–4 instead of the default 2.
 
 ---
 
-## 13. Track lifecycle — NEW → TRACKING → STABLE → COASTING → LOST
+## 13. Track lifecycle
 
-Every emitter the system commits to becomes a **track** with a state machine:
+Tracks pass through five states:
 
-| State | Triggered by | Operator meaning |
-|---|---|---|
-| **NEW** | First detection | One sighting, not yet corroborated. Don't act on it alone. |
-| **TRACKING** | ≥3 observations | The system believes this is real. Scoring is live. |
-| **STABLE** | ≥10 observations | The emitter is well-characterised. AutoTasker may auto-task. |
-| **COASTING** | Track aged out of last_seen window but within track_replay_window | "Was here, hasn't been heard in a while, expected to return." |
-| **LOST** | Track aged out beyond replay window | Archived. Removed from the live picture. |
+| State | Meaning | What it takes to enter | What it takes to exit |
+|---|---|---|---|
+| **NEW** | Just created — first sighting | One event | Any update |
+| **TRACKING** | Active accumulation — receiving observations | 3rd corroborating observation (`observation_count >= 3`) | No new events → COASTING; enough history → STABLE |
+| **STABLE** | High confidence, sustained emitter | 10 corroborating observations (25 for mobile tracks) | No events for the coast window → COASTING |
+| **COASTING** | No new events but not yet lost | Automatic after last event + coast window | New event → back to TRACKING; coast timeout → LOST |
+| **LOST** | Gone. | Coast window expires | Never — LOST tracks are archived |
 
-The state is on the HITS row and gates how the rest of the system acts. AutoTasker and CoT escalation are both more conservative on NEW tracks.
+Only TRACKING and STABLE tracks participate in TDOA. COASTING tracks keep their last fix but are no longer updated.
 
 ---
 
 ## 14. Trust model — node trust score, timing trust, sensitivity trust
 
-Every sensor node carries a composite **trust score** in `[0.05, 0.98]`. The score multiplies the weight of that node's observations during fusion, so a flaky cheap node doesn't drag a high-quality fix.
+Every sensor node gets a `SensorNodeTrust` bundle in the Python backend. Three components:
 
-```
-operational    = base_trust × uptime_fraction × (1 - false_positive_rate)
-multi_node     = multi_node_agreement × 0.2
-hardware       = freq_stability × 0.3
-              + sensitivity   × 0.3
-              + timing        × 0.2
-              + 0.2 (constant)
-trust_score    = (operational + multi_node) × hardware
-                 × (0.7 if thermal_throttling else 1.0)
-```
-
-| Component | What raises it | What lowers it |
+| Component | Source | Effect |
 |---|---|---|
-| **base_trust** | Operator manually marks node as trusted | Default 0.6 |
-| **uptime_fraction** | Node reachable continuously | Network drops, restarts |
-| **false_positive_rate** | Few unconfirmed-by-other-nodes hits | High solo-hit rate |
-| **multi_node_agreement** | Hearings corroborated by ≥1 other node | Solo observations |
-| **freq_stability_trust** | GPSDO-disciplined LO (low PPM) | Stock RTL-SDR tuner (50 PPM) |
-| **sensitivity_trust** | Low NF (Airspy R2 at 2.5 dB) | High NF (HackRF at 10 dB) |
-| **timing_stability_trust** | GPSDO + PPS, low offset | NTP only, large offset, stale sync |
-| **thermal_throttling** | Cool device | Hot phone in sun → 0.7× multiplier |
+| **Timing trust** | GPS lock, PPS availability, clock sync age, offset magnitude | Multiplied into TDOA fix confidence |
+| **Sensitivity trust** | Hardware code from `HardwareCapabilities` registry (MDS, NF) | Multiplied into detection confidence for events from this node |
+| **GPS trust** | Lock age vs. `GPS_MAX_AGE_S` | Hard gate — over the limit, node is dropped from TDOA entirely |
 
-The hardware components are derived from the per-SDR capability table (§ 21).
+Trust degrades automatically and recovers when the node condition improves. A node reporting stale GPS is not disconnected from the fleet; it just stops contributing to location fixes until the GPS lock freshens.
 
 ---
 
-## 15. The intelligence layer — anomaly flags → threat level → recommended action
+## 15. The intelligence layer
 
-Every track passes through `DecisionEngine.assess()` which combines anomaly flags + classification confidence + frequency-band context to produce an `AssessmentReport`:
+Six anomaly detectors run on each updated track:
 
-| Threat level | When it fires | Recommended action |
-|---|---|---|
-| **unknown** | No flags AND confidence < 0.3 | `continue_monitoring` |
-| **low** | At least one flag, low severity | `continue_monitoring` |
-| **medium** | One high-severity flag OR ≥2 medium flags | `increase_dwell_time` |
-| **high** | Two high-severity flags OR (one high + confidence ≥ 0.5) | `focus_all_nodes` (auto-tasks every TDOA-capable node to this freq) |
-| **critical** | Any critical-severity flag | `alert_operator_immediately` (NEVER auto-actioned — operator pushes the button) |
+1. **Out-of-baseline** — power above the learned baseline by more than the configured threshold
+2. **Frequency hop** — centre frequency shifted between consecutive events beyond the hop tolerance
+3. **Burst pattern** — inter-event timing inconsistent with licensed duty cycle for that band
+4. **Power spike** — momentary power above the track's own running average by > 12 dB
+5. **New-emitter** — emitter_id not seen in the mission-wide known-good list
+6. **Unexpected band** — frequency inside a band the mission config marks as suppress
 
-Tracks at `high` or `critical` set `escalate_to_atak = true`, which is one of the two gates the CoT emitter checks (§ 16).
+Each detector contributes a flag to the `AnomalyReport`. The `DecisionEngine` folds flags into a threat level (`low` / `elevated` / `high` / `critical`) and a confidence. A recommended action is attached (monitor / collect / focus / escalate) but operator approval is required to execute any escalation.
 
-The frequency-band context labels each track with the regulatory band — Aviation, VHF Public Safety, Marine VHF, UHF Public Safety, ISM 433/915/2.4 GHz, GNSS. The label flows into the assessment summary so the operator sees "Emitter at 162.5500 MHz (Marine VHF)" instead of just the raw frequency.
+`critical` threats are never auto-actioned — the operator pushes the button.
 
 ---
 
 ## 16. ATAK / TAK CoT integration — two-key gate, manual approval queue
 
-### 16.1 The two-key gate
+### 16.1 What goes out
 
-Predator RF starts in **RX-only** posture. Two flags arm CoT:
+One CoT `<event>` per emitter track that crosses the escalation threshold and has operator approval. Type is `a-u-G` (unknown ground unit, when a TDOA fix is available) or `b-m-p-s-p-loc` (no-fix fallback centred on the detecting node). See `docs/ATAK_COT_FORMAT.md` for the full field spec.
 
-1. `cot_enabled` (env var `COT_ENABLED=true`, or the toggle in **SYS → ATAK / CoT**) — operator-level kill switch.
-2. The track's most recent assessment must have `escalate_to_atak = true` (set automatically for `high` or `critical` threat levels).
+### 16.2 The two-key gate
 
-Both must be true for a packet to leave. Even an automated `critical` assessment cannot bypass the operator's `cot_enabled` flag.
+```
+DecisionEngine says "escalate_to_atak=True"
+        ↓
+CoTEmitter queues it as a PENDING approval
+        ↓
+Operator sees it at GET /api/v1/approvals
+        ↓
+Operator POSTs /api/v1/approvals/{id}/approve
+        ↓
+CoT beacon transmits to TAK server
+```
 
-### 16.2 The manual approval queue (third key for the field)
+`COT_REQUIRE_MANUAL_APPROVAL=true` (strongly recommended in the field) makes every escalation wait at the queue. `false` bypasses the queue — automated only, lab use.
 
-In the field, set `COT_REQUIRE_MANUAL_APPROVAL=true` (or the **Require manual approval** toggle in SYS). With this on, `escalate_to_atak` no longer auto-fires. Each escalation enqueues at `GET /api/v1/approvals` (or surfaces as a notification on the operator phone), and the operator has to explicitly **Approve** before the packet goes out. **Reject** drops it; **Expire** happens after 2 hours by default (`COT_APPROVAL_EXPIRY_S`).
+### 16.3 CoT field mapping
 
-This is the two-person-rule equivalent for a solo operator. A single false-positive can spam TOC otherwise.
-
-### 16.3 What goes on the wire
-
-CoT 2.0 XML over UDP, defaults to multicast `239.2.3.1:6969` (the TAK SA feed). For unicast to a TAK Server, override `COT_DEST_HOST` and `COT_DEST_PORT`.
-
-| Field | What's in it |
+| CoT field | Value |
 |---|---|
-| `type` | `a-u-G` (unknown ground unit) when there's a TDOA fix; `b-m-p-s-p-loc` (point of interest) when only a fallback location |
-| `point lat / lon` | The TDOA fix, or the most-trustworthy node's GPS as fallback |
-| `point ce` (circular error) | Scales 50 m (high confidence) → 5 km (zero confidence). TAK renders it as the circle around the marker. |
-| `point hae / le` | 9 999 999 (unknown altitude) — the platform doesn't claim altitude info |
-| `contact callsign` | `<COT_UID_PREFIX>-<emitter_id_first_8_chars>` |
+| `uid` | `<COT_UID_PREFIX>.<emitter_id>` |
+| `lat / lon` | TDOA fix (or detecting node GPS if no fix) |
+| `ce` | `50 + (1 - location_confidence) × 4950` metres |
 | `remarks` | `PREDATOR-RF <THREAT> | <freq> MHz | obs=<n> | conf=<x> | <summary>` |
 | `stale` | Default 5 min after emit (`COT_STALE_S`), then TAK fades the marker |
 | `__group name="Cyan" role="Team Member"` | Renders as a friendly contact, not a hostile |
@@ -505,12 +679,12 @@ Per-emitter rate limit is **5 s** between beacons for the same emitter so a chat
 
 ### 16.4 Test the path before you go live
 
-```
-COT_ENABLED=true COT_DEST_HOST=<your TAK IP> COT_DEST_PORT=4242 \
-  curl -X POST localhost:8000/api/v1/test/cot
+```bash
+curl -H "Authorization: Bearer $API_BEARER_TOKEN" \
+  "http://localhost:8000/api/v1/cot/export" | head -60
 ```
 
-The endpoint emits a synthetic beacon at your own GPS. If a marker appears in TAK within a few seconds you're wired correctly.
+This pull-exports any approved tracks as CoT XML. If you have live tracks with CoT push enabled, a marker should appear in TAK within a few seconds of approval. No test-inject endpoint exists — use a real (or lab) scan to generate a track, approve it, and verify the TAK marker appears.
 
 ---
 
@@ -600,135 +774,156 @@ Bundles a JSONL tarball: every event, every track, every assessment, every appro
 
 ### 20.1 Install (one-time)
 
-On a Linux box (Debian / Ubuntu / Raspberry Pi OS):
+Use the one-shot installer — do not do this manually:
 
+```bash
+curl -sSf https://raw.githubusercontent.com/JakeTheSnake0245/Predator-RF/main/deploy/install_rpi.sh | sudo bash
 ```
-sudo mkdir -p /opt/predator-rf /etc/predator-rf /var/lib/predator-rf/backups
+
+See **§ 0A** for the full walkthrough. The installer handles directory layout, the Python venv at `/opt/predator-rf/.venv`, apt dependencies, systemd wiring, and runs preflight for you.
+
+If the installer is unavailable (e.g. air-gapped), the manual equivalent is:
+
+```bash
 sudo git clone <repo> /opt/predator-rf
-cd /opt/predator-rf
-sudo python3 -m venv venv
-sudo venv/bin/pip install -r requirements.txt
-sudo cp deploy/predator-rf.env.example /etc/predator-rf/predator-rf.env
-sudoedit /etc/predator-rf/predator-rf.env       # see § 20.3
-sudo cp deploy/predator-rf.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now predator-rf
+sudo python3 -m venv /opt/predator-rf/.venv
+sudo -u predator /opt/predator-rf/.venv/bin/pip install -r /opt/predator-rf/requirements.txt
+sudo cp /opt/predator-rf/deploy/predator-rf.env.example /etc/predator-rf/predator-rf.env
+sudoedit /etc/predator-rf/predator-rf.env
+sudo cp /opt/predator-rf/deploy/predator-rf.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now predator-rf
 ```
 
 ### 20.2 Where things live
 
 | Path | What |
 |---|---|
-| `/opt/predator-rf` | Source checkout + Python venv |
+| `/opt/predator-rf` | Source checkout + Python venv (`.venv/`) |
 | `/etc/predator-rf/predator-rf.env` | All env-var config |
 | `/var/lib/predator-rf/mission.db` | SQLite mission ledger |
 | `/var/lib/predator-rf/backups/` | Snapshots from `deploy/backup_mission.sh` |
 | `/etc/systemd/system/predator-rf.service` | systemd unit |
 | `journalctl -u predator-rf -f` | Live log tail |
 
-Backend listens on `:8000`. For TLS, terminate at nginx / Caddy / Traefik in front — the backend itself stays plain HTTP intentionally so it works behind any proxy.
+Backend listens on `:8000`. Dashboard at `http://<ip>:8000/dashboard`. For TLS, terminate at nginx / Caddy / Traefik in front — the backend itself stays plain HTTP intentionally so it works behind any proxy.
 
 ### 20.3 The full env-var reference
 
-Every knob, defaults shown:
+Every knob, defaults shown. The only required edits before going live are `FLEET_NODES` and `API_BEARER_TOKEN`.
 
 ```
 # API
 API_HOST=0.0.0.0
 API_PORT=8000
-API_BEARER_TOKEN=               # empty = open (lab); set for any LAN deploy
+API_BEARER_TOKEN=               # empty = open (lab only); strongly recommended for LAN deploy
+                                # generate: openssl rand -hex 32
+
+# Fleet (REQUIRED — format: id@host:port:apikey:hardware)
+# Port is the Kujhad Device listen port on the C++ sensor (default 41947).
+# Always include the port — omitting it causes the parser to fall back to 5259,
+# which will not reach a freshly-configured predator-rfd node.
+FLEET_NODES=                    # e.g. alpha@192.168.1.10:41947:KEY:hackrf
 
 # Fusion
-TRACK_MAINTENANCE_S=10.0
-TRACK_MERGE_S=30.0
+TRACK_MAINTENANCE_S=10
+TRACK_MERGE_S=30
 MIN_CONFIDENCE=0.3
 
 # Baseline learning
-BASELINE_WINDOW_H=24.0
-BASELINE_PRUNE_H=6.0
-
-# Kujhad fleet (per-node spec: id@host:port:apikey:hardware)
-FLEET_NODES=alpha@192.168.1.10:41947:KEY:hackrf,bravo@192.168.1.11:41947:KEY:rtlsdr
+BASELINE_WINDOW_H=24
+BASELINE_PRUNE_H=6
 
 # TDOA
 TDOA_ENABLED=true
-GPS_MAX_AGE_S=60.0
-TIMING_POLL_INTERVAL_S=30.0
+GPS_MAX_AGE_S=60
+TIMING_POLL_INTERVAL_S=30
 
 # Persistence
 PERSISTENCE_ENABLED=true
 DATA_DIR=/var/lib/predator-rf
 MISSION_DB=mission.db
-TRACK_REPLAY_WINDOW_H=24.0
+TRACK_REPLAY_WINDOW_H=24
 
-# CoT (RX-only by default)
+# CoT (RX-only by default — opt in)
 COT_ENABLED=false
 COT_DEST_HOST=239.2.3.1
 COT_DEST_PORT=6969
 COT_UID_PREFIX=PREDATOR
-COT_STALE_S=300.0
+COT_STALE_S=300
 COT_MULTICAST_TTL=1
-COT_REQUIRE_MANUAL_APPROVAL=false  # SET TRUE IN THE FIELD
-COT_APPROVAL_EXPIRY_S=7200.0
+COT_REQUIRE_MANUAL_APPROVAL=true    # strongly recommended in the field
+COT_APPROVAL_EXPIRY_S=7200
 COT_APPROVAL_MAX_PENDING=200
 
-# AutoTasker (RX-only by default)
+# AutoTasker (RX-only by default — opt in)
 AUTO_TASKER_ENABLED=false
-AUTO_TASKER_MIN_INTERVAL_S=30.0
+AUTO_TASKER_MIN_INTERVAL_S=30
 AUTO_TASKER_GLOBAL_MAX_PER_MIN=30
 
-# RSSI proximity (single-node fallback geolocation; off by default)
-RSSI_PROXIMITY_ENABLED=false
-RSSI_ASSUMED_EIRP_DBM=30.0          # 1 W handheld; bump to 40 for 10 W mobile
-RSSI_DBFS_TO_DBM_OFFSET=-30.0       # SDR-specific; calibrate per node if possible
-RSSI_RADIUS_UNCERTAINTY_FACTOR=2.0  # 3-4 in cluttered environments
-RSSI_MIN_RADIUS_M=50.0
-RSSI_MAX_RADIUS_M=5000.0
-
-# CoC mode (TOC-of-TOCs)
+# CoC mode (TOC-of-TOCs — only enable on the aggregation node)
 COC_MODE_ENABLED=false
 COC_UPSTREAM_URLS=               # CSV: http://stationA:8000,http://stationB:8000
-COC_RECONNECT_DELAY_S=5.0
-COC_DEDUP_INTERVAL_S=15.0
-COC_DEDUP_FREQ_TOL_HZ=5000.0
-COC_DEDUP_LOC_TOL_M=500.0
+COC_RECONNECT_DELAY_S=5
+COC_DEDUP_INTERVAL_S=15
+COC_DEDUP_FREQ_TOL_HZ=5000
+COC_DEDUP_LOC_TOL_M=500
 
 # Observability
 LOG_LEVEL=INFO
-LOG_FORMAT=text                  # 'json' for ingest into Loki/Splunk/journald
+LOG_FORMAT=json                  # 'json' for ingest into Loki/Splunk/journald
 METRICS_ENABLED=true
-SHUTDOWN_DRAIN_TIMEOUT_S=5.0
+SHUTDOWN_DRAIN_TIMEOUT_S=5      # how long SIGTERM waits for in-flight tasks to drain
 ```
 
 ### 20.4 Day-of operations (Linux side)
 
-```
+```bash
 sudo systemctl restart predator-rf            # apply env changes
 sudo systemctl status  predator-rf
 journalctl -u predator-rf -f                  # tail
-curl -s localhost:8000/healthz                # quick health
+curl -s localhost:8000/healthz                # quick health: {"status":"ok"}
 curl -s localhost:8000/metrics                # Prometheus-format
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/nodes   # fleet
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/tracks  # live tracks
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/approvals  # pending
 ```
 
-### 20.5 RPi sensor node
+Dashboard (any browser on the LAN): `http://<pi-ip>:8000/dashboard`
 
-A Raspberry Pi running the Predator RF C++ build (or a slimmed sensor-only variant) acts as a Kujhad **Device**. Drop it at a fixed point with:
-- An SDR (RTL-SDR Blog v4 minimum, Airspy or HackRF preferred for sensitivity)
-- A GPS HAT or USB GPS (Adafruit Ultimate GPS HAT, BU-353N5)
-- Power (PoE injector or 12 V → USB-C PD)
-- Networking (Ethernet preferred; ZeroTier / Tailscale daemon installed for off-LAN reach)
-- An antenna mounted as high as your mast allows
+Ad-hoc dev start (no systemd):
 
-Configure its Kujhad **Listen** address + port + API key. Add it to `FLEET_NODES` on the operator workstation. Done — the operator now sees its picture.
+```bash
+cd /opt/predator-rf
+source .venv/bin/activate
+FLEET_NODES="..." python -m backend.main
+# Dashboard: http://<pi-ip>:8000/dashboard
+```
+
+### 20.5 Forward sensor RPi nodes (`predator-rfd`)
+
+Forward sensor RPis run the headless C++ daemon **`predator-rfd`**, not the Python backend. The distinction matters:
+
+| | Python backend (`predator-rf.service`) | C++ sensor daemon (`predator-rfd`) |
+|---|---|---|
+| **Role** | TOC / aggregation | Forward sensor |
+| **Port** | `:8000` (REST + SSE) | `:5555` (browser UI + WebSocket), configurable (Kujhad Device) |
+| **Dashboard** | `http://<ip>:8000/dashboard` | `http://<ip>:5555` |
+| **Install** | `deploy/install_rpi.sh` | Manual cmake build (see § 0.5) |
+| **Config** | `/etc/predator-rf/predator-rf.env` | `/etc/predator-rf/config.json` |
+| **Control CLI** | `curl` + REST API | `predator-rfctl` Unix socket |
+| **Is it pre-installed?** | Yes, by `install_rpi.sh` | No — must build or obtain binary |
+
+Hardware requirements per sensor node: SDR, GPS dongle or HAT, power, antenna, network. See § 0.5 for the full hardware list and cmake build instructions.
+
+Add a sensor to the CoC fleet by listing it in `FLEET_NODES` using the port the sensor's Kujhad listener is configured on. The Python backend then polls it automatically.
 
 ### 20.6 CoC mode (Center of Control — TOC of TOCs)
 
 Set `COC_MODE_ENABLED=true` + `COC_UPSTREAM_URLS=http://station-alpha:8000,http://station-bravo:8000` and this backend additionally consumes events from those upstream backends' `/api/v1/events/stream` SSE feed. Every aggregated event is tagged with `_upstream` so you know which station originated it, and `CrossStationDedup` coalesces tracks where freq + location agree (default tolerances: ±5 kHz, ±500 m, ±30 s co-occurrence). Two purely-local tracks never get merged here — that's `TrackAssociator`'s job.
 
-### 20.7 RNS Layers (Reticulum transport for CoT)
+Cross-reference: **Runbook § 8** has the field procedure for CoC/TOC setup.
+
+### 20.7 RNS layers (Reticulum transport for CoT)
 
 The RNS layer is a **parallel** transport that pushes the same CoT/XML traffic Predator RF already sends to TAK over the existing UDP/TCP path *and* over Reticulum (RNS) at the same time — RNS handles its own path selection across whatever interfaces you've brought up. This is what gets your CoT to TAK over LoRa, packet radio, I2P, or a long-range mesh when the regular IP transport is unavailable or untrusted.
 
@@ -763,15 +958,13 @@ The panel auto-refreshes at 1 Hz. Each row in the live status table shows the in
 | **`ax25_kiss`** | Amateur AX.25 packet radio (callsign-required) | everything `kiss_tnc` has plus `callsign`, `ssid` (0…15), `axint_port` |
 | **`pipe`** | Wrap an arbitrary external process as an RNS interface (advanced) | `command`; optional `respawn_delay_s` |
 
-**`reliable_cot` defaults by type (spec section C):**
+**`reliable_cot` defaults by type:**
 - **`rnode` → False** (LoRa airtime is precious; Link/Resource overhead defeats the point — packets are sent unconfirmed)
 - **everything else → True** (TCP/UDP/I2P/Auto/Pipe/KISS variants get reliable mode by default — Link/Resource is cheap on those links, so CoT escalations are confirmed)
 
 You can override per-interface in the UI.
 
 #### 20.7.3 Common fields (every interface, regardless of type)
-
-Spec section B fields, applied by `_build_rns_interface` to every iface:
 
 | Field | Default | Purpose |
 |---|---|---|
@@ -852,7 +1045,7 @@ A replication token is a passphrase-encrypted bundle of the daemon's config (and
 
 `peer_allowlist` (a list of identity hashes in the daemon config) restricts which announces the bridge accepts. An announce from an identity not in the allowlist is dropped at the announce handler — that peer's OUT destination is never built, so envelopes are never fanned to it. Leave it empty to accept any peer that announces on `predatorrf.cot.v1` (default — fine for closed deployments). Populate it for higher-trust ops.
 
-The allowlist is **synced from the daemon config to the bridge at startup** (`backend/main.py` line 103). Changes via UI take effect on the next config reload.
+The allowlist is synced from the daemon config to the bridge at startup. Changes via UI take effect on the next config reload.
 
 #### 20.7.8 Status fields (what the panel shows live)
 
@@ -863,10 +1056,10 @@ The allowlist is **synced from the daemon config to the bridge at startup** (`ba
 | `daemon` | `running` / `stub` (the latter when the `rns` Python package isn't importable) |
 | `identity_hash16` | This node's RNS hash (16 hex chars) |
 | `interfaces[]` | Per-iface live: `online`, `rxb` (bytes), `txb`, `bitrate` (current measured), `clients` (remote count), `last_error`, `forced_close`, `timed_out`, `ifac_active` (bool), `ifac_netname` (echoed back when active so the UI can render a tooltip; netkey is **never** echoed in status) |
-
-In the Kujhad live-status table this surfaces as a dedicated **IFAC** column — `[IFAC]` in green when the daemon reports `ifac_active=true`, dash otherwise. Hovering the badge shows the IFAC netname tooltip; the netkey itself is not sent back over the control plane and so is never visible in the UI after the initial save.
 | `cot_bridge` | Stats from the bridge: `published`, `received`, `dropped_dedupe`, `dropped_loop`, `dropped_allowlist`, `dropped_invalid` |
 | `peer_allowlist_size` | Count of allowlisted peers |
+
+In the Kujhad live-status table the `ifac_active` field surfaces as a dedicated **IFAC** column — `[IFAC]` in green when the daemon reports `ifac_active=true`, dash otherwise. Hovering the badge shows the IFAC netname tooltip; the netkey itself is not sent back over the control plane and so is never visible in the UI after the initial save.
 
 #### 20.7.9 Logs
 
@@ -876,10 +1069,18 @@ In the Kujhad live-status table this surfaces as a dedicated **IFAC** column —
 
 | Path | Purpose |
 |---|---|
-| `/var/lib/predator-rf/rns/identity.prv` | RNS identity private key (mode 0600) |
+| `/var/lib/predator-rf/rns/identity.prv` | RNS identity private key (mode 0600) — set `RNS_STATE_DIR=/var/lib/predator-rf/rns` in the service env |
 | `/var/lib/predator-rf/rns/config.json` | Daemon config — `interfaces[]`, `cot_bridge`, `peer_allowlist`, `schema_version` |
 | `/var/lib/predator-rf/rns/control.sock` | Unix control socket (uid-checked) |
 | `/var/lib/predator-rf/rns/logs/` | Rotating daemon logs |
+
+The RNS state directory is controlled by the `RNS_STATE_DIR` env var (read by `backend/config.py`). When running as the `predator` systemd service, add this to `/etc/predator-rf/predator-rf.env` before first start to keep RNS state co-located with the mission DB:
+
+```bash
+RNS_STATE_DIR=/var/lib/predator-rf/rns
+```
+
+When running the RNS daemon **standalone** (`python -m backend.rns`), the env var is instead `PREDATOR_RNS_STATE_DIR`. The two names are not interchangeable — the systemd service goes through `backend/config.py` which reads `RNS_STATE_DIR`.
 
 **Backup the identity file before any major change.** Losing `identity.prv` means losing your node's hash — every peer that allowlisted you needs to re-add the new hash.
 
@@ -935,10 +1136,10 @@ In the Kujhad live-status table this surfaces as a dedicated **IFAC** column —
 
 These drive the trust calculus. Pick your hardware knowing what trust score you'll get.
 
-| SDR | Freq range | Max sample | NF | MDS | TDOA-cap | Timing uncertainty | Price |
+| SDR | Freq range | Max sample | NF | MDS | TDOA-cap | Timing uncertainty | Price (Jun 2026) |
 |---|---|---|---|---|---|---|---|
 | **RTL-SDR Blog v4** | 25 MHz–1.7 GHz | 3.2 MS/s | 6.0 dB | -110 dBm | NO | 1000 ns | $40 |
-| **HackRF One** | 1 MHz–6 GHz | 20 MS/s | 10.0 dB | -100 dBm | YES | 500 ns | $300 |
+| **HackRF One** | 1 MHz–6 GHz | 20 MS/s | 10.0 dB | -100 dBm | YES | 500 ns | $340 |
 | **Airspy R2** | 24 MHz–1.7 GHz | 20 MS/s | 2.5 dB | -125 dBm | YES | 50 ns | $170 |
 | **LimeSDR-USB** | 100 kHz–3.8 GHz | 61.4 MS/s | 3.0 dB | -120 dBm | YES (PPS out) | 100 ns | $600 |
 | **bladeRF 2.0** | 47 MHz–6 GHz | 61.4 MS/s | 4.0 dB | -118 dBm | YES | 80 ns | $480 |
@@ -969,8 +1170,9 @@ Practical guidance:
 - [ ] `/etc/predator-rf/predator-rf.env` reviewed; `FLEET_NODES` matches today's node serials
 - [ ] `API_BEARER_TOKEN` rotated for this mission: `openssl rand -hex 32`
 - [ ] CoT/TAK destination + UID prefix set ONLY if you intend to push to TOC
-- [ ] `COT_REQUIRE_MANUAL_APPROVAL=true` if `COT_ENABLED=true` (two-key gate)
+- [ ] `COT_REQUIRE_MANUAL_APPROVAL=true` if `COT_ENABLED=true` (two-key gate — required in the field)
 - [ ] `AUTO_TASKER_ENABLED` matches your ROE — leave OFF unless you're authorized to re-tune nodes
+- [ ] `AUTO_TASKER_GLOBAL_MAX_PER_MIN` sized for your fleet (default 30 = ~6 nodes worth of churn)
 
 ### On-site, before fleet power-on
 
@@ -985,10 +1187,11 @@ Practical guidance:
 2. Operator workstation: `sudo systemctl start predator-rf`
 3. `python deploy/preflight.py` → must report **GO**
 4. `journalctl -u predator-rf -f` → no `ERROR` lines in the first 30 s
-5. `curl http://localhost:8000/healthz` → `"status":"ok"`
+5. `curl http://localhost:8000/healthz` → `{"status":"ok"}`
 6. `curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/nodes` → every expected node listed, `gps_synchronized=true` on TDOA-capable ones
 7. `curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8000/api/v1/missions -d '{"name":"<callsign-YYYYMMDD>"}'`
 8. On the operator phone: SPEC → ▶ Start. Verify waterfall + GPS green + KUJ green + CoT (if armed) green.
+9. Open dashboard: `http://<pi-ip>:8000/dashboard` — verify fleet panel shows all nodes, tracks panel is live.
 
 ### In-mission checks (every 30 minutes)
 
@@ -1022,8 +1225,9 @@ Practical guidance:
 | Kujhad peer red / disconnected | Network unreachable, port blocked, API keys differ | Ping the peer from a terminal app; verify keys character-for-character |
 | Kujhad TLS handshake fails | Wrong fingerprint pinned, or cert was regenerated | Re-pin the new fingerprint (verify out-of-band first) |
 | Kujhad peer green but no events | Peer is in Manual mission mode | Switch peer to Scan or Classify |
-| ATAK marker never appears | Wrong server IP/port, or filtering by UID prefix on TAK server | Check TAK server logs; test with `curl -X POST /api/v1/test/cot` |
+| ATAK marker never appears | Wrong server IP/port, or filtering by UID prefix on TAK server | Check TAK server logs; verify push config with `curl localhost:8000/healthz`; pull-export a track with `GET /api/v1/cot/export` to confirm the backend has approved tracks |
 | ATAK markers stop coming | Approval queue is on and the operator hasn't approved | Check `GET /api/v1/approvals`; approve or disable manual approval |
+| Dashboard at `:8000/dashboard` not loading | Backend not running, or bearer token required | `curl localhost:8000/healthz`; if backend is up but 401, `/dashboard` requires the `Authorization: Bearer` header — use an nginx/SSH proxy or disable the token for local-only access |
 | Phone hot, framerate drops | Thermal throttling | Get out of sun; reduce sample rate (SPEC → source settings); trust score drops 30% while throttled |
 | App crashes on startup after install | APK was sideloaded over a different signing key | Uninstall completely (Settings → Apps → Predator RF → Uninstall), reinstall |
 | TDOA fix never appears on map | < 2 GPS-synced nodes hearing the same emission within 5 s | Check `/api/v1/nodes` — at least 2 must show `gps_synchronized=true` and `gps_age_s < 60` |
@@ -1032,20 +1236,28 @@ Practical guidance:
 | AutoTasker not retuning | `AUTO_TASKER_ENABLED=false`, OR the global-budget brake is firing | Check env, then `/metrics` for `predator_autotasker_*` counters |
 | AutoTasker retuning the wrong nodes | DecisionEngine recommends only TDOA-capable nodes for `high` threats | This is by design; mark known-good non-TDOA nodes as friendly to suppress |
 | Backend won't start: `ERROR: address in use` | Another process owns :8000 | `lsof -i :8000`; kill or change `API_PORT` |
+| Backend won't start: bad `FLEET_NODES` parse | Malformed entry in `FLEET_NODES` | `journalctl -u predator-rf -n 50`; correct the format (`id@host:port:key:hw`) |
+| All nodes show low confidence | Time sync drift | `chronyc tracking`; restart chrony; confirm GPS-disciplined source if no WAN |
+| One node drops out of TDOA | `gps_age_s` exceeded `GPS_MAX_AGE_S` | Reposition antenna; node still feeds events, just no location contribution |
+| Stuck approvals piling up | Operator was busy | Bulk reject false positives via `POST /api/v1/approvals/{id}/reject` |
 | Mission ledger growing huge | No prune | `deploy/backup_mission.sh` to archive; truncate per your retention policy |
-| 401 on every API call | `API_BEARER_TOKEN` set but no header sent | Add `-H "Authorization: Bearer $TOKEN"` |
+| 401 on every API call | `API_BEARER_TOKEN` set but no header sent | Add `-H "Authorization: Bearer $TOKEN"` to every curl |
+| `predator-rfd` sensor node not appearing in fleet | `FLEET_NODES` port does not match sensor's Kujhad listen port | Run `predator-rfctl port show` on the sensor to find the configured port |
+| `predator-rfd` build fails: both backends | `OPT_BACKEND_WEB=ON` and `OPT_BACKEND_GLFW=ON` simultaneously | Set `OPT_BACKEND_GLFW=OFF` — only one backend TU can be compiled at a time |
+| CoT multicast not reaching ATAK on phone hotspot | Multicast packets dropped by mobile hotspot NAT | Use HTTP-pull mode: `GET /api/v1/cot/export` and ATAK's local file-import instead |
+| SSE stream silent | Token wrong, or backend crashed | `journalctl -u predator-rf -n 50`; verify `API_BEARER_TOKEN` |
 
 ---
 
 ## 24. Bill of materials — pick your tier
 
-Prices USD, May 2026, ballpark.
+Prices USD, June 2026, ballpark.
 
 ### Tier 0 — Bare minimum (~$48)
 - Android phone you already own — $0
 - RTL-SDR Blog v4 — $40
 - USB-C OTG adapter — $8
-- Rubber-duck antenna (included) — $0
+- Rubber-duck antenna (included with RTL-SDR) — $0
 
 What you can do: live spectrum, hits, baseline, scans up to 1.7 GHz on a single phone. No HF, no fleet, no TDOA.
 
@@ -1063,7 +1275,7 @@ What you can do: above plus HF (HackRF), all-day battery, fast GPS, ATAK-ready.
 - Tier 1 kit (HackRF flavor) — $540
 - Raspberry Pi 5 8 GB + case + cooler + PSU — $130
 - 256 GB A2 microSD — $25
-- Second RTL-SDR Blog v4 (for the Pi) — $40
+- Second RTL-SDR Blog v4 (for the Pi sensor) — $40
 - GPS HAT (Adafruit Ultimate GPS HAT) — $45
 - Linux laptop you already own OR add $500 for one
 - Outdoor antenna mount + 25 ft LMR-400 + N-to-SMA pigtails — $80
@@ -1075,8 +1287,8 @@ What you can do: drop-and-walk sensor node, distributed collection, mission ledg
 
 ### Tier 3 — Small team / multi-node fleet ($5,000–$10,000+)
 - Tier 2 kit — $1,400
-- 3 more RPi sensor nodes (~$500 each) — $1,500
-- At least one **Airspy R2 + GPSDO** for high-trust TDOA — $200
+- 3 more RPi sensor nodes (~$500 each including SDR + GPS + enclosure) — $1,500
+- At least one **Airspy R2 + GPSDO** for high-trust TDOA — $200 + $250
 - Cellular hotspot + data plan — $300
 - OR mesh radio link (goTenna Pro X2 / RAJANT) — $500–$5,000
 - Commercial directional antennas (Yagi for DF, dipoles per band) — $400
@@ -1085,6 +1297,11 @@ What you can do: drop-and-walk sensor node, distributed collection, mission ledg
 - Operator laptop (rugged ThinkPad / Dell) — $500–$2,000
 
 What you can do: full-perimeter overwatch from one operator screen, real TDOA fixes (multiple GPSDO-disciplined nodes, tight ellipses), ATAK to higher-echelon TOC, ledger across the fleet, real DF capability.
+
+**Pi selection note (for Tier 2+):**
+- **Pi Zero 2W** — $15, USB-2 only, RTL-SDR drop sensors only. Cheapest unattended node. Cannot sustain HackRF bandwidth.
+- **Pi 4 4 GB** — $55, mature, any SDR up to HackRF at moderate bandwidth. Default general sensor.
+- **Pi 5 4 GB** — $80, USB-3, best thermal margin. Use for HackRF nodes, multi-decoder loads, or the CoC aggregation role.
 
 ---
 
@@ -1108,6 +1325,9 @@ What you can do: full-perimeter overwatch from one operator screen, real TDOA fi
 | **NF** | Noise Figure — front-end noise contribution in dB; lower is better |
 | **OTG** | USB On-The-Go — host-mode USB on the phone so it can power and command the SDR |
 | **PPS** | Pulse-Per-Second — the 1 Hz timing pulse from a GPSDO that disciplines the SDR clock |
+| **predator-rfd** | Headless C++ sensor daemon (forward sensor nodes). Port 5555 (browser); Kujhad listen port is configurable. |
+| **predator-rfctl** | CLI tool that talks to `predator-rfd` over its Unix control socket |
+| **predator-rf.service** | systemd unit for the Python intelligence backend (CoC/aggregation node). Port 8000. |
 | **ROE** | Rules of Engagement |
 | **SAF** | Storage Access Framework — Android's file picker; how the app does Import/Export |
 | **TAK** | Team Awareness Kit — the situational-awareness platform family (ATAK Android, WinTAK Windows, iTAK iOS) |
@@ -1131,10 +1351,23 @@ ADD KUJHAD PEER        KUJ → Add Peer → Name/Host/Port/Key → Add
 PUBLISH ON KUJHAD      KUJ → Listen → port/name/key → toggle Listen
 ENABLE ATAK            SYS → ATAK/CoT → server IP+port → Enable CoT
                        (also: COT_REQUIRE_MANUAL_APPROVAL=true in field)
-APPROVE A COT          GET /api/v1/approvals → POST /id/approve
-START MISSION          MIS → Start mission → name (or POST /api/v1/missions)
-END MISSION            MIS → End mission (or POST /api/v1/missions/end)
-EXPORT AAR             GET /api/v1/missions/<id>/export
+APPROVE A COT          GET /api/v1/approvals → POST /<id>/approve
+START MISSION          MIS → Start mission → name (or POST localhost:8000/api/v1/missions)
+END MISSION            MIS → End mission (or POST localhost:8000/api/v1/missions/end)
+EXPORT AAR             GET localhost:8000/api/v1/missions/<id>/export
+
+DASHBOARD              http://<pi-ip>:8000/dashboard
+BACKEND HEALTH         curl localhost:8000/healthz
+FLEET STATUS           curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/nodes
+LIVE TRACKS            curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/tracks
+PENDING APPROVALS      curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/approvals
+LIVE LOGS              journalctl -u predator-rf -f
+RESTART BACKEND        sudo systemctl restart predator-rf
+BACKUP DB              deploy/backup_mission.sh
+
+SENSOR NODE LOGS       journalctl -u predator-rfd -f           (on the sensor Pi)
+SENSOR STATUS          predator-rfctl status                   (on the sensor Pi)
+SENSOR TUNE            predator-rfctl tune 433.92e6            (on the sensor Pi)
 
 THERMAL ORANGE         reduce sample rate, get out of sun
 GPS RED                step outside, wait 60s
@@ -1142,13 +1375,10 @@ KUJHAD RED             check network, ping peer, verify API key
 TDOA NO FIX            need ≥2 GPS-synced nodes hearing same emission < 5s apart
 HUGE ELLIPSE           low confidence — add more nodes / better timing hardware
 
-BACKEND HEALTH         curl localhost:8000/healthz
-FLEET STATUS           curl -H "Authorization: Bearer $TOKEN" .../api/v1/nodes
-LIVE TRACKS            curl -H "Authorization: Bearer $TOKEN" .../api/v1/tracks
-PENDING APPROVALS      curl -H "Authorization: Bearer $TOKEN" .../api/v1/approvals
-LIVE LOGS              journalctl -u predator-rf -f
-RESTART BACKEND        sudo systemctl restart predator-rf
-BACKUP DB              deploy/backup_mission.sh
+INSTALL (CoC/RPi)      curl -sSf <repo>/deploy/install_rpi.sh | sudo bash
+CONFIG FILE            /etc/predator-rf/predator-rf.env
+BEARER TOKEN           openssl rand -hex 32  → paste into API_BEARER_TOKEN
+SENSOR BUILD FLAGS     cmake -DOPT_BACKEND_WEB=ON -DOPT_BACKEND_GLFW=OFF
 ```
 
 ---
