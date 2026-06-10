@@ -6,9 +6,11 @@ from typing import Dict, List, Optional, Callable
 from backend.models.rf_event import RFEvent
 from backend.models.emitter_track import EmitterTrack, TrackState
 from backend.models.sensor_node import SensorNodeTrust
+from backend.models.lob_measurement import LOBMeasurement
 from backend.fusion.track_associator import HardwareAwareAssociator
 from backend.fusion.confidence_engine import ConfidenceEngine
 from backend.fusion.proximity_estimator import ProximityEstimator
+from backend.fusion.lob_triangulator import LOBTriangulator
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +26,16 @@ class TrackManager:
     Ingests RFEvents, associates them, creates/updates/retires tracks.
     """
 
+    # Maximum LOBMeasurement history entries kept per track.  Older
+    # entries are trimmed on each ingest_lob() call.  20 measurements
+    # is enough for multi-node re-triangulation without blowing memory
+    # on long-running missions.
+    LOB_HISTORY_MAX = 20
+
     def __init__(self,
                  proximity_estimator: Optional[ProximityEstimator] = None,
-                 custody_elector=None):
+                 custody_elector=None,
+                 lob_triangulator: Optional[LOBTriangulator] = None):
         self.tracks: Dict[str, EmitterTrack] = {}
         self.sensor_nodes: Dict[str, SensorNodeTrust] = {}
         self._associator = HardwareAwareAssociator()
@@ -43,6 +52,11 @@ class TrackManager:
         # backend.coordination into the fusion-layer imports — the
         # elector is duck-typed via its `forget` method.
         self._custody_elector = custody_elector
+        # LOBTriangulator — stateless; shared across all tracks.
+        # None = KrakenSDR not configured (ingest_lob is a no-op).
+        self._lob_triangulator: LOBTriangulator = (
+            lob_triangulator if lob_triangulator is not None else LOBTriangulator()
+        )
         self._on_new_track: Optional[Callable[[EmitterTrack], None]] = None
         self._on_update: Optional[Callable[[EmitterTrack], None]] = None
         self._archived: Dict[str, EmitterTrack] = {}
@@ -132,6 +146,94 @@ class TrackManager:
 
         return track
 
+    # ── LOB ingestion ─────────────────────────────────────────────────────────
+
+    def ingest_lob(self, measurement: LOBMeasurement) -> Optional[EmitterTrack]:
+        """
+        Ingest one KrakenSDR LOB measurement.
+
+        Associates the measurement with an existing track by frequency, or
+        creates a new one.  Updates the track's LOB bearing fields and, when
+        ≥2 nodes have contributed measurements with a sufficient crossing
+        angle, updates the crosscut geolocation.
+
+        Returns the affected track, or None if the measurement is invalid.
+        """
+        if not measurement.frequency_hz or not measurement.node_id:
+            return None
+
+        # Find the best frequency-match track.
+        candidates = self.tracks_near_frequency(
+            measurement.frequency_hz, tolerance_hz=25_000.0)
+
+        if candidates:
+            # Pick the most recently updated candidate.
+            track = max(candidates, key=lambda t: t.last_seen_ns)
+        else:
+            # No existing track — create one with minimal info.
+            track = EmitterTrack(
+                primary_frequency=measurement.frequency_hz,
+                first_seen_ns=measurement.timestamp_ns,
+                last_seen_ns=measurement.timestamp_ns,
+                observation_count=1,
+            )
+            if measurement.node_id not in track.detecting_nodes:
+                track.detecting_nodes.append(measurement.node_id)
+            self.tracks[track.emitter_id] = track
+            self._associator.index_track(track)
+            if self._on_new_track:
+                self._on_new_track(track)
+
+        # Update the most-recent-bearing fields using this measurement.
+        if (track.lob_bearing_deg is None or
+                measurement.confidence >= track.lob_confidence):
+            track.lob_bearing_deg = measurement.bearing_deg
+            track.lob_bearing_uncert_deg = measurement.bearing_uncert_deg
+            track.lob_confidence = measurement.confidence
+            # Cache node position for map wedge anchor.
+            track._lob_node_lat = measurement.node_lat
+            track._lob_node_lon = measurement.node_lon
+
+        if measurement.node_id not in track.lob_node_ids:
+            track.lob_node_ids.append(measurement.node_id)
+        if measurement.node_id not in track.detecting_nodes:
+            track.detecting_nodes.append(measurement.node_id)
+
+        # Append to bounded per-track history.
+        track.lob_measurement_history.append(measurement)
+        if len(track.lob_measurement_history) > self.LOB_HISTORY_MAX:
+            track.lob_measurement_history = (
+                track.lob_measurement_history[-self.LOB_HISTORY_MAX:])
+
+        track.last_seen_ns = measurement.timestamp_ns
+
+        # Attempt triangulation.
+        fix = self._lob_triangulator.triangulate(track.lob_measurement_history)
+        if fix is not None:
+            track.lob_crosscut_lat       = fix.estimated_lat
+            track.lob_crosscut_lon       = fix.estimated_lon
+            track.lob_crosscut_radius_m  = fix.error_radius_m
+            track.lob_crosscut_confidence = fix.location_confidence
+
+            # Promote LOB crosscut to the primary location only when:
+            #   a) No TDOA fix exists yet (TDOA always wins once produced), OR
+            #   b) The LOB crosscut has higher confidence (rare, but possible
+            #      when a 5-node Kraken array outperforms a 2-node TDOA fix).
+            if (track.location_method is None or
+                    track.location_method in ("rssi_proximity", "lob_crosscut") or
+                    (track.location_method == "lob_crosscut" and
+                     fix.location_confidence > track.location_confidence)):
+                track.estimated_lat = fix.estimated_lat
+                track.estimated_lon = fix.estimated_lon
+                track.location_confidence = fix.location_confidence
+                track.location_method = fix.location_method
+                track.location_error_radius_m = fix.error_radius_m
+
+        if self._on_update:
+            self._on_update(track)
+
+        return track
+
     # ── Lifecycle maintenance ─────────────────────────────────────────────────
 
     async def maintenance_loop(self, interval_s: float = 10.0):
@@ -169,6 +271,12 @@ class TrackManager:
                 except Exception:
                     logger.exception(
                         "custody_elector.forget(%s) raised — ignored", tid)
+            # LOBTriangulator.forget() is a no-op (stateless) but called
+            # for API parity so callers don't need to know the distinction.
+            try:
+                self._lob_triangulator.forget(tid)
+            except Exception:
+                pass
             logger.debug("Track ARCHIVED: %s", tid)
 
     # ── Merge duplicate tracks ────────────────────────────────────────────────

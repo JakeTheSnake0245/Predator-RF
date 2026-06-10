@@ -28,6 +28,13 @@ ETC_DIR="/etc/predator-rf"
 DATA_DIR="/var/lib/predator-rf"
 LOG_DIR="/var/log/predator-rf"
 SVC_USER="predator"
+KRAKEN=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --kraken) KRAKEN=1 ;;
+  esac
+done
 
 if [[ $EUID -ne 0 ]]; then
   echo "must run as root (sudo)" >&2
@@ -48,6 +55,16 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
   python3 python3-venv python3-pip git chrony sqlite3 ca-certificates
 
+# KrakenSDR optional: numpy/scipy for N-LOB weighted least-squares.
+# The Python backend always installs them if requirements.txt lists them;
+# this block adds them explicitly when --kraken is passed as a safety net
+# for minimal deployments that skip requirements.txt.
+if [[ "$KRAKEN" -eq 1 ]]; then
+  echo "[3/8+] KrakenSDR opt-in: ensuring numpy + scipy in venv"
+  # venv may not exist yet; deferred pip install happens after step 5.
+  echo "  → will install numpy scipy after venv creation (step 5)"
+fi
+
 echo "[4/8] fetching source"
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   sudo -u "${SVC_USER}" git -C "${INSTALL_DIR}" pull --ff-only
@@ -63,6 +80,11 @@ sudo -u "${SVC_USER}" python3 -m venv "${INSTALL_DIR}/.venv"
 if [[ -f "${INSTALL_DIR}/requirements.txt" ]]; then
   sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/pip" install -q -r \
     "${INSTALL_DIR}/requirements.txt"
+fi
+
+if [[ "$KRAKEN" -eq 1 ]]; then
+  echo "[5+/8] KrakenSDR: installing numpy + scipy"
+  sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/pip" install -q numpy scipy
 fi
 
 echo "[6/8] env file"

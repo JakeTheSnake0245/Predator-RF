@@ -45,6 +45,8 @@ option(OPT_BUILD_KG_SSTV_DECODER "Build the KG SSTV (KG-STV) decoder module (no 
 option(OPT_BUILD_M17_DECODER "Build the M17 decoder module (Dependencies: codec2)" OFF)
 option(OPT_BUILD_RTL433_DECODER "Build the native rtl_433 ISM decoder module (vendored, no external deps)" OFF)
 option(OPT_BUILD_DSDFME_DECODER "Build the native DSD-FME P25/DMR decoder module with mbelib voice (vendored, no external deps)" OFF)
+option(OPT_BUILD_KRAKENSDR_LOB_DECODER "Build the KrakenSDR LOB decoder module (WebSocket bridge to krakensdr_doa, no external deps)" OFF)
+option(OPT_BUILD_KRAKENSDR_SOURCE "Build the KrakenSDR Source stub module (informational panel, no external deps)" OFF)
 option(OPT_BUILD_METEOR_DEMODULATOR "Build the meteor demodulator module (no dependencies required)" ON)
 option(OPT_BUILD_RADIO "Main audio modulation decoder (AM, FM, SSB, etc...)" ON)
 option(OPT_BUILD_WEATHER_SAT_DECODER "Build the HRPT decoder module (no dependencies required)" OFF)
@@ -278,6 +280,14 @@ endif (OPT_BUILD_RTL433_DECODER)
 if (OPT_BUILD_DSDFME_DECODER)
 add_subdirectory("decoder_modules/dsdfme_decoder")
 endif (OPT_BUILD_DSDFME_DECODER)
+
+if (OPT_BUILD_KRAKENSDR_LOB_DECODER)
+add_subdirectory("decoder_modules/kraken_lob_decoder")
+endif (OPT_BUILD_KRAKENSDR_LOB_DECODER)
+
+if (OPT_BUILD_KRAKENSDR_SOURCE)
+add_subdirectory("source_modules/krakensdr_source")
+endif (OPT_BUILD_KRAKENSDR_SOURCE)
 
 if (OPT_BUILD_METEOR_DEMODULATOR)
 add_subdirectory("decoder_modules/meteor_demodulator")

@@ -72,6 +72,41 @@ class EmitterTrack:
     tdoa_ellipse_b_m: Optional[float] = None    # semi-minor axis (metres)
     tdoa_ellipse_theta_deg: Optional[float] = None  # rotation, 0 = east-aligned
 
+    # ── KrakenSDR LOB bearing fields ─────────────────────────────────────
+    # Populated by TrackManager.ingest_lob() when one or more KrakenSDR
+    # nodes provide direction-finding data for this emitter.
+    #
+    # `lob_bearing_deg` / `lob_bearing_uncert_deg`:
+    #   Most recent bearing from the primary (highest-confidence) node.
+    #   Displayed as the bearing wedge on the map when only one node is
+    #   available (no crosscut possible yet).
+    #
+    # `lob_crosscut_*`:
+    #   Populated by LOBTriangulator when ≥2 nodes produce intersecting
+    #   bearing lines with a crossing angle ≥ MIN_CROSS_DEG.  When set,
+    #   `estimated_lat` / `estimated_lon` / `location_error_radius_m` are
+    #   also updated so the track appears on the main emitter dot layer at
+    #   the crosscut point.  `location_method` is set to "lob_crosscut"
+    #   or "lob_tdoa_hybrid" (when a TDOA fix and a LOB fix are blended).
+    #
+    # `lob_measurement_history`:
+    #   Bounded list (max 20) of raw LOBMeasurement .to_dict() snapshots
+    #   kept for re-triangulation when a new node joins mid-track.  Not
+    #   serialised in to_dict() to keep the wire payload lean.
+
+    lob_bearing_deg: Optional[float] = None
+    lob_bearing_uncert_deg: Optional[float] = None
+    lob_confidence: float = 0.0
+    lob_node_ids: List[str] = field(default_factory=list)
+
+    lob_crosscut_lat: Optional[float] = None
+    lob_crosscut_lon: Optional[float] = None
+    lob_crosscut_radius_m: Optional[float] = None
+    lob_crosscut_confidence: float = 0.0
+
+    # Internal history used by LOBTriangulator — NOT in to_dict() wire payload.
+    lob_measurement_history: List[tuple] = field(default_factory=list)
+
     # Provenance: which cluster originated this track. None = local
     # fleet; otherwise the CoC peer URL (set on first ingest of a
     # remote-origin event). Used by CrossStationDedup to coalesce the
@@ -162,9 +197,18 @@ class EmitterTrack:
             "tdoa_ellipse_theta_deg": self.tdoa_ellipse_theta_deg,
             "upstream_source": self.upstream_source,
             "motion_state": self.motion_state,
-            # Don't ship the full history dict in the wire payload —
-            # operators see motion_state, the history is for the
-            # gate's internal use. If a future UI wants to render
-            # the trail we can add a `location_history` key here
-            # (gated by an opt-in config) at that time.
+            # LOB bearing + crosscut fields (null when no KrakenSDR data)
+            "lob_bearing_deg": self.lob_bearing_deg,
+            "lob_bearing_uncert_deg": self.lob_bearing_uncert_deg,
+            "lob_confidence": self.lob_confidence,
+            "lob_node_ids": self.lob_node_ids,
+            "lob_crosscut_lat": self.lob_crosscut_lat,
+            "lob_crosscut_lon": self.lob_crosscut_lon,
+            "lob_crosscut_radius_m": self.lob_crosscut_radius_m,
+            "lob_crosscut_confidence": self.lob_crosscut_confidence,
+            # node_lat / node_lon are kept for the map bearing wedge — they
+            # tell the client where to anchor the LOB fan.  Taken from the
+            # most recent measurement's node position.
+            "lob_node_lat": getattr(self, "_lob_node_lat", None),
+            "lob_node_lon": getattr(self, "_lob_node_lon", None),
         }

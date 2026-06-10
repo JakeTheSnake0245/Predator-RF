@@ -816,4 +816,422 @@ protected:
     }
 };
 
+// ── KrakenSDR LOB WebSocket ingester ─────────────────────────────────────────
+//
+// Connects to krakensdr_doa's WebSocket feed (default ws://host:8082/ws) and
+// converts each "doa_result" JSON message into a DecoderIngestEvent with
+// decoder="KRAKEN_LOB".  No external WebSocket library is required — the
+// handshake and frame parser are implemented inline with POSIX sockets /
+// Winsock2 (the same platform layer used by LineIngester above).
+//
+// Wire format expected from krakensdr_doa:
+//   {"type":"doa_result","freq_hz":433920000,"bearing_deg":127.5,
+//    "bearing_std_deg":5.2,"confidence":0.83,"power_dbfs":-42.1,
+//    "snr_db":12.3,"gps_lat":37.4,"gps_lon":-122.1,"heading_deg":0.0,
+//    "timestamp_unix":1718035200.123,"node_id":"kraken-0"}
+//
+// Messages with any other "type" value are silently dropped so the ingester
+// survives krakensdr_doa status / config broadcasts on the same feed.
+//
+// Suppression rules (enqueue only if ALL pass):
+//   - type == "doa_result"
+//   - bearing_deg present and in [0, 360)
+//   - gps_lat and gps_lon present and non-zero
+//   - confidence clamped to [0, 1]
+//
+// Thread safety: same model as LineIngester — one worker thread writes the
+// queue; the UI / bridge thread drains via drain().
+//
+// Unit-test surface: testParseLine(line) bypasses the socket and directly
+// exercises the JSON-to-event logic so tests don't need a live network.
+
+class KrakenWsIngester {
+public:
+    explicit KrakenWsIngester(std::string nodeIdOverride = "kraken-0")
+        : nodeId_(std::move(nodeIdOverride)) {}
+
+    ~KrakenWsIngester() { stop(); }
+
+    KrakenWsIngester(const KrakenWsIngester&) = delete;
+    KrakenWsIngester& operator=(const KrakenWsIngester&) = delete;
+
+    void setNodeId(const std::string& id) { nodeId_ = id; }
+
+    // (Re)start the background WebSocket client thread.
+    void start(const std::string& host, int port, const std::string& path = "/ws") {
+        stop();
+        host_    = host;
+        port_    = port;
+        path_    = path;
+        stopFlag_  = false;
+        running_   = true;
+        eventsReceived_ = 0;
+        worker_  = std::thread([this]() { workerLoop(); });
+    }
+
+    void stop() {
+        stopFlag_ = true;
+        running_  = false;
+        if (worker_.joinable()) worker_.join();
+        connected_ = false;
+        setStatus("Stopped");
+    }
+
+    bool isRunning()   const { return running_.load(); }
+    bool isConnected() const { return connected_.load(); }
+    int  eventsReceived() const { return eventsReceived_.load(); }
+
+    std::string status() const {
+        std::lock_guard<std::mutex> lk(statusMtx_);
+        return statusMsg_;
+    }
+
+    std::vector<DecoderIngestEvent> drain(size_t maxItems = 64) {
+        std::vector<DecoderIngestEvent> out;
+        std::lock_guard<std::mutex> lk(queueMtx_);
+        while (!queue_.empty() && out.size() < maxItems) {
+            out.push_back(std::move(queue_.front()));
+            queue_.pop();
+        }
+        return out;
+    }
+
+    // ── Unit-test surface ────────────────────────────────────────────────
+    // Call this directly without a socket to test the parse logic.
+    void testParseLine(const std::string& line) { parseDOAMessage(line); }
+
+private:
+    // ── JSON → event ─────────────────────────────────────────────────────
+
+    void parseDOAMessage(const std::string& text) {
+        if (text.empty() || text.find_first_not_of(" \t\r\n") == std::string::npos)
+            return;
+
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(text);
+        } catch (...) {
+            return;
+        }
+
+        // Only handle DOA result messages.
+        if (!j.contains("type") || j["type"].get<std::string>() != "doa_result")
+            return;
+
+        // Mandatory fields.
+        if (!j.contains("bearing_deg") || !j.contains("gps_lat") || !j.contains("gps_lon"))
+            return;
+
+        double bearing_deg = j["bearing_deg"].get<double>();
+        double gps_lat     = j["gps_lat"].get<double>();
+        double gps_lon     = j["gps_lon"].get<double>();
+
+        // Reject unphysical bearing (negative means the krakensdr_doa
+        // process hasn't locked yet or is reporting an error sentinel).
+        if (bearing_deg < 0.0 || bearing_deg >= 360.0)
+            return;
+
+        // Reject zero-position nodes (GPS not available).
+        if (gps_lat == 0.0 && gps_lon == 0.0)
+            return;
+
+        // Clamp confidence to [0, 1].
+        double confidence = j.value("confidence", 0.5);
+        if (confidence < 0.0) confidence = 0.0;
+        if (confidence > 1.0) confidence = 1.0;
+
+        double freq_hz     = j.value("freq_hz",       0.0);
+        double power_dbfs  = j.value("power_dbfs",    0.0);
+        double snr_db      = j.value("snr_db",        0.0);
+        double bearing_std = j.value("bearing_std_deg", 10.0);
+        double heading_deg = j.value("heading_deg",   0.0);
+        double ts_unix     = j.value("timestamp_unix", 0.0);
+
+        // Node ID: prefer JSON field, fall back to config override.
+        std::string nid = j.value("node_id", std::string(""));
+        if (nid.empty()) nid = nodeId_;
+
+        // Build the normalised event.  LOB-specific fields go into raw so
+        // the Python bridge can call backend.fusion.lob_triangulator.
+        DecoderIngestEvent ev;
+        ev.decoder     = "KRAKEN_LOB";
+        ev.protocol    = "DOA";
+        ev.networkId   = nid;
+        ev.frequencyHz = freq_hz;
+        ev.strengthDb  = static_cast<float>(power_dbfs);
+
+        nlohmann::json raw;
+        raw["bearing_deg"]     = bearing_deg;
+        raw["bearing_std_deg"] = bearing_std;
+        raw["confidence"]      = confidence;
+        raw["power_dbfs"]      = power_dbfs;
+        raw["snr_db"]          = snr_db;
+        raw["gps_lat"]         = gps_lat;
+        raw["gps_lon"]         = gps_lon;
+        raw["heading_deg"]     = heading_deg;
+        raw["freq_hz"]         = freq_hz;
+        raw["timestamp_unix"]  = ts_unix;
+        raw["node_id"]         = nid;
+        ev.raw = std::move(raw);
+
+        enqueue(std::move(ev));
+    }
+
+    // ── Queue helpers ────────────────────────────────────────────────────
+
+    void enqueue(DecoderIngestEvent&& ev) {
+        std::lock_guard<std::mutex> lk(queueMtx_);
+        while (queue_.size() > 1000) queue_.pop();
+        queue_.push(std::move(ev));
+        eventsReceived_++;
+    }
+
+    void setStatus(const std::string& s) {
+        std::lock_guard<std::mutex> lk(statusMtx_);
+        statusMsg_ = s;
+    }
+
+    // ── WebSocket worker ─────────────────────────────────────────────────
+
+    void workerLoop() {
+        int backoffMs = 1000;
+        while (!stopFlag_.load()) {
+            setStatus("Connecting to " + host_ + ":" + std::to_string(port_));
+
+            predator_socket_t sock = openTcpSocket();
+            if (sock == PREDATOR_INVALID_SOCK) {
+                setStatus("Socket create failed");
+                sleepMs(backoffMs);
+                backoffMs = std::min(backoffMs * 2, 30000);
+                continue;
+            }
+
+            if (!tcpConnect(sock)) {
+                PREDATOR_CLOSESOCK(sock);
+                setStatus("TCP connect failed – retrying");
+                sleepMs(backoffMs);
+                backoffMs = std::min(backoffMs * 2, 30000);
+                continue;
+            }
+
+            if (!wsHandshake(sock)) {
+                PREDATOR_CLOSESOCK(sock);
+                setStatus("WebSocket handshake failed – retrying");
+                sleepMs(backoffMs);
+                backoffMs = std::min(backoffMs * 2, 30000);
+                continue;
+            }
+
+            connected_ = true;
+            backoffMs  = 1000;
+            setStatus("Connected");
+
+            // Receive WebSocket frames until disconnected or stopped.
+            while (!stopFlag_.load()) {
+                std::string payload;
+                if (!wsReadTextFrame(sock, payload)) break;
+                parseDOAMessage(payload);
+            }
+
+            connected_ = false;
+            PREDATOR_CLOSESOCK(sock);
+
+            if (!stopFlag_.load()) {
+                setStatus("Disconnected – retrying");
+                sleepMs(backoffMs);
+                backoffMs = std::min(backoffMs * 2, 30000);
+            }
+        }
+        setStatus("Stopped");
+    }
+
+    // ── TCP helpers ──────────────────────────────────────────────────────
+
+    static predator_socket_t openTcpSocket() {
+        return ::socket(AF_INET, SOCK_STREAM, 0);
+    }
+
+    bool tcpConnect(predator_socket_t sock) {
+        struct addrinfo hints{}, *res = nullptr;
+        hints.ai_family   = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        std::string portStr = std::to_string(port_);
+        if (::getaddrinfo(host_.c_str(), portStr.c_str(), &hints, &res) != 0 || !res)
+            return false;
+        // Non-blocking connect so stopFlag is polled during the SYN wait.
+        bool ok = false;
+#ifndef _WIN32
+        int fl = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, fl | O_NONBLOCK);
+#else
+        u_long m = 1; ioctlsocket(sock, FIONBIO, &m);
+#endif
+        int rc = ::connect(sock, res->ai_addr, (socklen_t)res->ai_addrlen);
+        if (rc == 0) {
+            ok = true;
+        } else {
+            int err = PREDATOR_LAST_ERR;
+            if (PREDATOR_CONNECT_INPROGRESS(err)) {
+                for (int waited = 0; waited < 10000 && !stopFlag_.load(); waited += 200) {
+                    fd_set wset; FD_ZERO(&wset); FD_SET(sock, &wset);
+                    timeval tv{0, 200000};
+                    if (::select((int)sock + 1, nullptr, &wset, nullptr, &tv) > 0) {
+                        int soerr = 0; socklen_t soerrLen = sizeof(soerr);
+                        ::getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&soerr, &soerrLen);
+                        if (soerr == 0) { ok = true; break; }
+                        break;
+                    }
+                }
+            }
+        }
+        // Back to blocking
+#ifndef _WIN32
+        fcntl(sock, F_SETFL, fl & ~O_NONBLOCK);
+#else
+        m = 0; ioctlsocket(sock, FIONBIO, &m);
+#endif
+        freeaddrinfo(res);
+        return ok;
+    }
+
+    // ── WebSocket handshake (RFC 6455 §4.1 client opening) ───────────────
+
+    bool wsHandshake(predator_socket_t sock) {
+        // Set recv timeout = 5 s for the handshake phase.
+#ifndef _WIN32
+        timeval tv{5, 0};
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#else
+        DWORD tvMs = 5000;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tvMs, sizeof(tvMs));
+#endif
+        // Build upgrade request.  The Sec-WebSocket-Key value doesn't need to
+        // be cryptographically random for a client that trusts the server.
+        const char* wsKey = "x3JJHMbDL1EzLkh9GBhXDw==";
+        std::string req =
+            "GET " + path_ + " HTTP/1.1\r\n"
+            "Host: " + host_ + ":" + std::to_string(port_) + "\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Key: " + wsKey + "\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "\r\n";
+        if (::send(sock, req.c_str(), (int)req.size(), 0) != (int)req.size())
+            return false;
+
+        // Read until \r\n\r\n.
+        std::string resp;
+        char ch;
+        while (resp.size() < 4096) {
+            if (::recv(sock, &ch, 1, 0) <= 0) return false;
+            resp += ch;
+            if (resp.size() >= 4 && resp.substr(resp.size() - 4) == "\r\n\r\n")
+                break;
+        }
+        // Must be HTTP 101.
+        if (resp.find("101") == std::string::npos) return false;
+
+        // Restore blocking recv with a 30-second data timeout.
+#ifndef _WIN32
+        tv.tv_sec = 30; tv.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#else
+        tvMs = 30000;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tvMs, sizeof(tvMs));
+#endif
+        return true;
+    }
+
+    // ── WebSocket frame reader (RFC 6455 §5.2) ───────────────────────────
+    // Server-to-client frames are never masked.  We only handle text (0x1)
+    // and continuation (0x0) frames; pings / close frames end the loop.
+
+    bool wsRecvExact(predator_socket_t sock, void* buf, size_t n) {
+        auto* p = static_cast<char*>(buf);
+        size_t got = 0;
+        while (got < n) {
+            int r = ::recv(sock, p + got, (int)(n - got), 0);
+            if (r <= 0) return false;
+            got += (size_t)r;
+        }
+        return true;
+    }
+
+    bool wsReadTextFrame(predator_socket_t sock, std::string& payload) {
+        payload.clear();
+        bool first = true;
+        while (true) {
+            uint8_t hdr[2];
+            if (!wsRecvExact(sock, hdr, 2)) return false;
+
+            bool fin      = (hdr[0] & 0x80) != 0;
+            uint8_t opcode = hdr[0] & 0x0F;
+            bool masked   = (hdr[1] & 0x80) != 0;
+            uint64_t plen = hdr[1] & 0x7F;
+
+            if (plen == 126) {
+                uint8_t ext[2]; if (!wsRecvExact(sock, ext, 2)) return false;
+                plen = ((uint64_t)ext[0] << 8) | ext[1];
+            } else if (plen == 127) {
+                uint8_t ext[8]; if (!wsRecvExact(sock, ext, 8)) return false;
+                plen = 0;
+                for (int i = 0; i < 8; ++i) plen = (plen << 8) | ext[i];
+            }
+
+            // Sanity: 16 MB limit per frame.
+            if (plen > 16 * 1024 * 1024) return false;
+
+            uint8_t mask[4] = {};
+            if (masked) { if (!wsRecvExact(sock, mask, 4)) return false; }
+
+            std::string chunk(plen, '\0');
+            if (plen > 0 && !wsRecvExact(sock, &chunk[0], plen)) return false;
+            if (masked) for (size_t i = 0; i < plen; ++i) chunk[i] ^= mask[i & 3];
+
+            if (first) {
+                if (opcode == 0x08) return false;  // close frame — reconnect
+                if (opcode == 0x09) {               // ping — send pong
+                    uint8_t pong[2] = {0x8A, 0x00};
+                    ::send(sock, (char*)pong, 2, 0);
+                    continue;
+                }
+                if (opcode == 0x0A) continue;       // pong — ignore
+                if (opcode != 0x01 && opcode != 0x00) continue; // not text
+                first = false;
+            }
+
+            payload += chunk;
+            if (fin) return true;
+        }
+    }
+
+    // ── Sleep helper ─────────────────────────────────────────────────────
+
+    void sleepMs(int ms) {
+        for (int waited = 0; waited < ms && !stopFlag_.load(); waited += 100) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
+    // ── State ─────────────────────────────────────────────────────────────
+
+    std::string host_ = "127.0.0.1";
+    int         port_ = 8082;
+    std::string path_ = "/ws";
+    std::string nodeId_;
+
+    std::atomic<bool> stopFlag_{true};
+    std::atomic<bool> running_{false};
+    std::atomic<bool> connected_{false};
+    std::atomic<int>  eventsReceived_{0};
+
+    std::thread worker_;
+
+    mutable std::mutex queueMtx_;
+    std::queue<DecoderIngestEvent> queue_;
+
+    mutable std::mutex statusMtx_;
+    std::string statusMsg_ = "Idle";
+};
+
 } // namespace predator

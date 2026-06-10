@@ -296,6 +296,24 @@
         </div>
 
         <div class="ctrl-section">
+            <div class="ctrl-section-title">DF / LOB</div>
+            <div class="layer-row">
+                <span class="layer-label">LOB Wedges</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-lob-wedges" checked onchange="toggleLOBLayers(this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
+            <div class="layer-row">
+                <span class="layer-label">LOB Crosscut</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-lob-crosscut" checked onchange="toggleLOBCrosscut(this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="ctrl-section">
             <div class="ctrl-section-title">3D</div>
             <div class="layer-row">
                 <span class="layer-label">Elevation</span>
@@ -639,6 +657,89 @@
             return coords;
         }
 
+        /* ── KrakenSDR LOB GeoJSON helpers ── */
+
+        // Bearing wedge polygon: a fan from node position, ±halfAngle,
+        // to rangeM.  Returns a [lon, lat] coordinate ring (closed).
+        function lobWedgeRing(nodeLat, nodeLon, bearingDeg, halfAngleDeg, rangeM, pts) {
+            pts = pts || 24;
+            const earthR = 6371000;
+            const coords = [[nodeLon, nodeLat]];   // apex at node
+            const startDeg = bearingDeg - halfAngleDeg;
+            const endDeg   = bearingDeg + halfAngleDeg;
+            for (let i = 0; i <= pts; i++) {
+                const angleDeg = startDeg + (endDeg - startDeg) * (i / pts);
+                const angleRad = angleDeg * Math.PI / 180;
+                const ex = rangeM * Math.sin(angleRad);      // east
+                const ny = rangeM * Math.cos(angleRad);      // north
+                const dLat = (ny / earthR) * (180 / Math.PI);
+                const dLon = (ex / earthR) * (180 / Math.PI) / Math.cos(nodeLat * Math.PI / 180);
+                coords.push([nodeLon + dLon, nodeLat + dLat]);
+            }
+            coords.push([nodeLon, nodeLat]);   // close polygon
+            return coords;
+        }
+
+        function tracksToLOBWedgeGeoJSON(tracks) {
+            const features = [];
+            for (const t of tracks) {
+                if (t.lob_bearing_deg == null) continue;
+                const nLat = t.lob_node_lat;
+                const nLon = t.lob_node_lon;
+                if (!nLat || !nLon) continue;
+                const halfAngle = Math.max(2, (t.lob_bearing_uncert_deg || 10) * 1.0);
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        emitter_id:  t.emitter_id,
+                        threat_level: t.threat_level || 'unknown',
+                        bearing_deg: t.lob_bearing_deg,
+                        confidence:  t.lob_confidence || 0,
+                    },
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [lobWedgeRing(nLat, nLon, t.lob_bearing_deg, halfAngle, 25000)]
+                    }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        function tracksToLOBCrosscut(tracks) {
+            const features = [];
+            for (const t of tracks) {
+                if (t.lob_crosscut_lat == null || t.lob_crosscut_lon == null) continue;
+                const r = t.lob_crosscut_radius_m || 300;
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        emitter_id:  t.emitter_id,
+                        threat_level: t.threat_level || 'unknown',
+                        confidence:  t.lob_crosscut_confidence || 0,
+                    },
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [ellipseRing(t.lob_crosscut_lat, t.lob_crosscut_lon, r, r, 0)]
+                    }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        function toggleLOBLayers(visible) {
+            if (!styleReady) return;
+            ['_lob_wedge_fill', '_lob_wedge_stroke'].forEach(id => {
+                try { map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none'); } catch(e) {}
+            });
+        }
+
+        function toggleLOBCrosscut(visible) {
+            if (!styleReady) return;
+            ['_lob_crosscut_fill', '_lob_crosscut_ring'].forEach(id => {
+                try { map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none'); } catch(e) {}
+            });
+        }
+
         function tracksToEllipseGeoJSON(tracks) {
             const features = [];
             for (const t of tracks) {
@@ -692,6 +793,8 @@
         function addEmitterLayers() {
             map.addSource('_tdoa_ellipses', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
             map.addSource('_prox_circles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addSource('_lob_wedges',   { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addSource('_lob_crosscut', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
             map.addSource('_emitter_dots', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
             map.addLayer({ id: '_tdoa_fill', source: '_tdoa_ellipses', type: 'fill',
@@ -707,6 +810,25 @@
             map.addLayer({ id: '_prox_ring', source: '_prox_circles', type: 'line',
                 paint: { 'line-color': '#d8c96a', 'line-width': 1, 'line-opacity': 0.5,
                     'line-dasharray': [4, 3] } });
+
+            // LOB bearing wedges — semi-transparent fan from array to 25 km
+            map.addLayer({ id: '_lob_wedge_fill', source: '_lob_wedges', type: 'fill',
+                paint: { 'fill-color': ['match', ['get', 'threat_level'],
+                    'critical', '#ff3b3b', 'high', '#ff8c00', 'medium', '#d8c96a', 'low', '#83d099', '#7a9e7e'],
+                    'fill-opacity': 0.10 } });
+            map.addLayer({ id: '_lob_wedge_stroke', source: '_lob_wedges', type: 'line',
+                paint: { 'line-color': ['match', ['get', 'threat_level'],
+                    'critical', '#ff3b3b', 'high', '#ff8c00', 'medium', '#d8c96a', 'low', '#83d099', '#7a9e7e'],
+                    'line-width': 1.0, 'line-opacity': 0.55,
+                    'line-dasharray': [6, 3] } });
+
+            // LOB crosscut circles — magenta to distinguish from TDOA (cyan) + RSSI (yellow)
+            map.addLayer({ id: '_lob_crosscut_fill', source: '_lob_crosscut', type: 'fill',
+                paint: { 'fill-color': '#e040fb', 'fill-opacity': 0.12 } });
+            map.addLayer({ id: '_lob_crosscut_ring', source: '_lob_crosscut', type: 'line',
+                paint: { 'line-color': '#e040fb', 'line-width': 1.5, 'line-opacity': 0.75,
+                    'line-dasharray': [4, 2] } });
+
             map.addLayer({ id: '_emitter_dots_layer', source: '_emitter_dots', type: 'circle',
                 paint: { 'circle-radius': 6,
                     'circle-color': ['match', ['get', 'threat_level'],
@@ -818,6 +940,8 @@
                 try {
                     map.getSource('_tdoa_ellipses').setData(tracksToEllipseGeoJSON(tracks));
                     map.getSource('_prox_circles').setData(tracksToProximityGeoJSON(tracks));
+                    map.getSource('_lob_wedges').setData(tracksToLOBWedgeGeoJSON(tracks));
+                    map.getSource('_lob_crosscut').setData(tracksToLOBCrosscut(tracks));
                     map.getSource('_emitter_dots').setData(trackDotGeoJSON(tracks));
                 } catch(e) {}
             }

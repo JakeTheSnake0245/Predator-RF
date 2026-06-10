@@ -26,6 +26,11 @@ _Populate as you build_
 - `core/src/predator/decoder_ingest.h`: Header-only receive-only decoder ingestion base class.
 - `decoder_modules/rtl433_decoder/`: Native rtl_433 ISM decoder module.
 - `core/src/gui/style.cpp`: Contains `applyTouchFriendlyTweaks()` for Android UI adjustments. Base font glyph range adds Misc-Symbols (U+2600..U+26FF) for the gear icon (U+2699) used by the Hits page per-marker action sheet.
+- `decoder_modules/kraken_lob_decoder/`: KrakenSDR LOB decoder module — WebSocket bridge to krakensdr_doa. See `docs/krakensdr.md`.
+- `source_modules/krakensdr_source/`: KrakenSDR source informational panel module.
+- `backend/models/lob_measurement.py`: LOBMeasurement dataclass — one bearing observation from one KrakenSDR node.
+- `backend/fusion/lob_triangulator.py`: LOBTriangulator — stateless 2-node closed-form + N-node WLS (numpy) solver. 15° crossing-angle veto, 0.70 confidence ceiling.
+- `docs/krakensdr.md`: KrakenSDR hardware setup, build flags, Python API, map visualization, CoT export, unit tests, and footguns.
 - `docs/android_build.md`: End-to-end APK build guide.
 - `docs/android_gotchas.md`: All deeply Android-specific gotchas (manifest IME mode, soft-keyboard EditText capture, popup sizing, warm-restart SIGABRT, DSD-FME freeze fixes, USB receiver leak, NDK `long long` vs `int64_t`). Read this before touching `MainActivity.kt`, `backend.cpp`, `AndroidManifest.xml`, or any native decoder module.
 - `android/sdr-kit/arm64-v8a/`: Prebuilt native SDR libraries for Android.
@@ -75,6 +80,13 @@ _Populate as you build_
 
 ## Gotchas
 
+### KrakenSDR LOB (#8)
+- **Heading correction is the caller's responsibility.** `LOBMeasurement.bearing_deg` must be true-north. For vehicle-mounted arrays, add `heading_deg` to the raw DOA bearing (mod 360) *before* constructing the measurement. Predator RF does NOT apply this correction internally.
+- **Crossing-angle veto.** 2-node triangulation is rejected when `|sin(b1−b2)| < sin(15°)`. The operator should wait for a better-separated pair or a third node rather than forcing a fix.
+- **numpy is optional but required for N-LOB WLS.** Without `numpy`, `LOBTriangulator` falls back to the 2-LOB closed-form solver. Install `numpy scipy` into the backend venv for 3+-node least-squares.
+- **Android KrakenSDR is WebSocket only.** No direct USB access from Android. The KrakenSDR array must run `krakensdr_doa` on a companion RPi reachable over Wi-Fi/LAN.
+- See `docs/krakensdr.md` for full details and all five footguns.
+
 ### Cross-cutting
 - The Replit environment only serves an informational landing page and interactive UI mockup (`server.py`). It does **not** run the Android build, the Python backend, or `predator-rfd`.
 - `X-Kujhad-Key` header is required for authentication on all `/v1/*` Kujhad API calls.
@@ -113,6 +125,7 @@ short list of what's covered there:
 ## Pointers
 
 - [SDR++ GitHub](https://github.com/AlexandreRouma/SDRPlusPlus)
+- `docs/krakensdr.md`
 - `docs/linux_web_frontend.md`
 - `docs/tdoa_controller.md`
 - `docs/predator_hold.md`

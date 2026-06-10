@@ -9,9 +9,16 @@
 # Requirements (auto-checked below): bash, curl, git, python3, cmake,
 # python3-mako (for volk header generation only).
 #
-# Usage:  bash scripts/fetch-sdr-kit.sh
+# Usage:
+#   bash scripts/fetch-sdr-kit.sh            # standard SDR kit only
+#   bash scripts/fetch-sdr-kit.sh --kraken   # also copy krakensdr_doa headers
 
 set -euo pipefail
+
+KRAKEN=0
+for arg in "$@"; do
+  case "$arg" in --kraken) KRAKEN=1 ;; esac
+done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KIT="$REPO_ROOT/android/sdr-kit/arm64-v8a"
@@ -126,6 +133,53 @@ cp libxml2/include/libxml/*.h                                        "$KIT/inclu
 cp volk/include/volk/*.h volk/include/volk/*.hh                      "$KIT/include/volk/" 2>/dev/null || true
 cp volk/build/include/volk/*.h                                       "$KIT/include/volk/"
 cp volk/build/lib/volk_machines.h                                    "$KIT/include/volk/" 2>/dev/null || true
+
+############################################################
+# 5) Optional: KrakenSDR companion headers (--kraken flag)
+############################################################
+if [[ "$KRAKEN" -eq 1 ]]; then
+echo
+echo "==> KrakenSDR opt-in: installing krakensdr_doa headers"
+mkdir -p "$KIT/include/krakensdr"
+
+# krakensdr_doa doesn't ship a C header — the integration is pure WebSocket
+# JSON.  We create a minimal documentation header so the C++ module can
+# #include it for the canonical field names and range constants.
+cat > "$KIT/include/krakensdr/krakensdr_doa_protocol.h" <<'KRAKENHDR'
+/*
+ * krakensdr_doa wire protocol — Predator RF reference header.
+ *
+ * krakensdr_doa streams JSON text frames over WebSocket (default port 8082).
+ * This header documents the field names and value ranges; the actual parser
+ * lives in core/src/predator/decoder_ingest.h (KrakenWsIngester).
+ *
+ *  Message type: "doa_result"
+ *  ─────────────────────────
+ *  "freq_hz"          double  Centre frequency (Hz)
+ *  "bearing_deg"      double  True bearing, [0, 360)
+ *  "bearing_std_deg"  double  1-sigma bearing uncertainty (degrees)
+ *  "confidence"       double  DOA confidence, [0, 1]
+ *  "power_dbfs"       double  Received power (dBFS)
+ *  "snr_db"           double  Signal-to-noise ratio (dB)
+ *  "gps_lat"          double  Node WGS-84 latitude
+ *  "gps_lon"          double  Node WGS-84 longitude
+ *  "heading_deg"      double  Platform heading (0 = stationary / north)
+ *  "timestamp_unix"   double  UNIX timestamp (seconds, fractional)
+ *  "node_id"          string  Device identifier (e.g. "kraken-0")
+ *
+ *  Other message types ("status", "config", etc.) are silently ignored.
+ */
+#pragma once
+
+#define KRAKEN_DOA_DEFAULT_PORT   8082
+#define KRAKEN_DOA_DEFAULT_PATH   "/ws"
+#define KRAKEN_DAQ_DEFAULT_PORT   5000
+#define KRAKEN_MIN_CROSSING_DEG   15.0   /* degenerate geometry veto */
+#define KRAKEN_MAX_LOB_RANGE_M    50000  /* bearing wedge drawn to this range */
+KRAKENHDR
+
+echo "  → wrote $KIT/include/krakensdr/krakensdr_doa_protocol.h"
+fi
 
 echo
 echo "==> Done."

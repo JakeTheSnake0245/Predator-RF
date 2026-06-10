@@ -81,6 +81,69 @@ def build_cot_xml(*,
     return "".join(parts).encode("utf-8")
 
 
+def build_cot_xml_lob(*,
+                      uid: str,
+                      lat: float,
+                      lon: float,
+                      cot_type: str = "a-u-G",
+                      callsign: str = "EMITTER",
+                      ce_meters: float = 9_999_999.0,
+                      hae_meters: float = 9_999_999.0,
+                      le_meters: float = 9_999_999.0,
+                      stale_seconds: float = 300.0,
+                      remarks: str = "",
+                      how: str = "m-g",
+                      lob_bearing_deg: Optional[float] = None,
+                      lob_fov_deg: float = 20.0,
+                      lob_node_count: int = 0) -> bytes:
+    """
+    Like build_cot_xml but injects a <sensor> detail element when bearing
+    data is available.  The <sensor> element is recognised by ATAK/WinTAK
+    and renders a bearing spoke / field-of-view wedge overlay on the map.
+
+    `lob_fov_deg` is the total bearing uncertainty cone width (2× the
+    1-sigma value), clamped to [1, 90] degrees.
+
+    When `lob_bearing_deg` is None the output is identical to build_cot_xml.
+    """
+    now = datetime.now(timezone.utc)
+    stale = now + timedelta(seconds=max(1.0, stale_seconds))
+
+    sensor_el = ""
+    if lob_bearing_deg is not None:
+        fov = max(1.0, min(90.0, float(lob_fov_deg)))
+        sensor_el = (
+            f'<sensor bearing="{lob_bearing_deg:.2f}" '
+            f'fov="{fov:.1f}" '
+            f'range="25000" '
+            f'type="LOB" '
+            f'model="KrakenSDR" '
+            f'nodes="{lob_node_count}"/>'
+        )
+
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<event version="2.0"'
+        f' uid="{_xmlesc(uid)}"'
+        f' type="{_xmlesc(cot_type)}"'
+        f' time="{_iso(now)}"'
+        f' start="{_iso(now)}"'
+        f' stale="{_iso(stale)}"'
+        f' how="{_xmlesc(how)}">',
+        f'<point lat="{lat:.7f}" lon="{lon:.7f}"'
+        f' hae="{hae_meters:.1f}" ce="{ce_meters:.1f}" le="{le_meters:.1f}"/>',
+        '<detail>',
+        f'<contact callsign="{_xmlesc(callsign)}"/>',
+        f'<remarks>{_xmlesc(remarks)}</remarks>',
+        '<__group name="Cyan" role="Team Member"/>',
+        '<precisionlocation altsrc="???" geopointsrc="GPS"/>',
+        sensor_el,
+        '</detail>',
+        '</event>',
+    ]
+    return "".join(parts).encode("utf-8")
+
+
 # ── UDP transport ────────────────────────────────────────────────────────
 
 class CoTEmitter:
@@ -199,22 +262,50 @@ class CoTEmitter:
         freq_mhz = float(track_dict.get("primary_frequency") or 0.0) / 1e6
         threat = assessment_dict.get("threat_level", "unknown").upper()
         callsign = f"{self.uid_prefix}-{emitter_id[:8]}"
+
+        loc_method = track_dict.get("location_method") or ""
+        lob_tag = ""
+        if loc_method in ("lob_crosscut", "lob_tdoa_hybrid"):
+            lob_tag = f" | LOB-XCUT"
+        elif track_dict.get("lob_bearing_deg") is not None:
+            lob_tag = f" | LOB {track_dict['lob_bearing_deg']:.1f}°"
+
         remarks = (
             f"PREDATOR-RF {threat} | "
             f"{freq_mhz:.4f} MHz | "
             f"obs={track_dict.get('observation_count', 0)} | "
-            f"conf={track_dict.get('confidence', 0):.2f} | "
+            f"conf={track_dict.get('confidence', 0):.2f}"
+            f"{lob_tag} | "
             f"{assessment_dict.get('summary', '')}"
         ).strip()
 
-        xml = build_cot_xml(
+        # LOB-only track (no TDOA fix, only a bearing): use
+        # b-m-p-s-p-loc for "sensor point of interest" and inject
+        # a <sensor> element with the bearing so ATAK renders the
+        # bearing spoke.  When a crosscut is available we keep
+        # a-u-G (standard geolocated unit).
+        lob_bearing = track_dict.get("lob_bearing_deg")
+        lob_uncert  = track_dict.get("lob_bearing_uncert_deg") or 10.0
+        lob_nodes   = track_dict.get("lob_node_ids") or []
+
+        if loc_method == "lob_crosscut":
+            actual_cot_type = "a-u-G"
+        elif lob_bearing is not None and cot_type == "b-m-p-s-p-loc":
+            actual_cot_type = "b-m-p-s-p-loc"
+        else:
+            actual_cot_type = cot_type
+
+        xml = build_cot_xml_lob(
             uid=f"{self.uid_prefix}.{emitter_id}",
             lat=lat, lon=lon,
-            cot_type=cot_type,
+            cot_type=actual_cot_type,
             callsign=callsign,
             ce_meters=ce,
             stale_seconds=self.stale_seconds,
             remarks=remarks,
+            lob_bearing_deg=lob_bearing,
+            lob_fov_deg=lob_uncert * 2.0,
+            lob_node_count=len(lob_nodes),
         )
 
         try:

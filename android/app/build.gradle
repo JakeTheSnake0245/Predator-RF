@@ -98,6 +98,8 @@ android {
                         "m17_decoder",
                         "rtl433_decoder",
                         "dsdfme_decoder",
+                        "kraken_lob_decoder",
+                        "krakensdr_source",
                         "meteor_demodulator",
                         "radio",
                         "frequency_manager",
