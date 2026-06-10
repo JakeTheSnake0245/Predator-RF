@@ -14,13 +14,32 @@ echo Architecture: amd64 >> sdrpp_debian_amd64/DEBIAN/control
 echo Description: Predator RF — solo SIGINT sensing platform >> sdrpp_debian_amd64/DEBIAN/control
 echo Depends: $2 >> sdrpp_debian_amd64/DEBIAN/control
 
-# Post-install: enable systemd service if available
+# Post-install: create system user and enable systemd service
 cat > sdrpp_debian_amd64/DEBIAN/postinst << 'EOF'
 #!/bin/sh
 set -e
+
+# Create the predator system user/group if they don't already exist.
+# The service runs as this user for privilege isolation.
+if ! getent group predator >/dev/null 2>&1; then
+    groupadd --system predator
+fi
+if ! getent passwd predator >/dev/null 2>&1; then
+    useradd --system \
+            --gid predator \
+            --no-create-home \
+            --shell /usr/sbin/nologin \
+            --home /var/lib/predator-rf \
+            --comment "Predator RF daemon" \
+            predator
+fi
+
+# Ensure the data and log directories are owned by the service user
+chown -R predator:predator /var/lib/predator-rf /var/log/predator-rf || true
+
 if [ "$1" = "configure" ] && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
-    echo "Run: systemctl enable --now predator-rfd"
+    echo "predator-rfd installed. Enable with: systemctl enable --now predator-rfd"
 fi
 EOF
 chmod 755 sdrpp_debian_amd64/DEBIAN/postinst

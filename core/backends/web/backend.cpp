@@ -408,10 +408,29 @@ static void ctrlSocketLoop() {
                 } else {
                     resp["ok"] = false; resp["error"] = "unknown query action";
                 }
+            } else if(cls == "peer") {
+                // Peer management requires Kujhad fleet config changes not yet
+                // wired; return an honest error rather than silently succeeding.
+                resp["ok"]    = false;
+                resp["error"] = "peer add/remove not yet implemented via rfctl — "
+                                "edit kujhadPeers in config.json and restart";
+            } else if(cls == "key" && action == "regenerate") {
+                // Key regeneration requires config write + server hot-reload;
+                // deferred — return an honest error.
+                resp["ok"]    = false;
+                resp["error"] = "key regenerate not yet implemented — "
+                                "set kujhadApiKey in config.json and restart";
+            } else if(cls == "source") {
+                // source start/stop needs sigpath::sourceManager wire-up
+                // (follow-up task); return an honest error for now.
+                resp["ok"]    = false;
+                resp["error"] = "source start/stop not yet wired to sigpath; "
+                                "start/stop the daemon process instead";
             } else {
                 enqueueCmd(cls, action,
                            cmd.value("args", nlohmann::json::object()), "rfctl");
-                resp["ok"] = true;
+                resp["ok"]     = true;
+                resp["status"] = "queued";
             }
             auto s = resp.dump(); ::send(c, s.c_str(), (int)s.size(), 0);
         }
