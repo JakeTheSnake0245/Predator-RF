@@ -5,22 +5,21 @@
 `predator-rfd` is the headless Linux daemon mode for Predator RF. It runs the
 full C++ SDR engine (signal path, decoder modules, Kujhad fleet hub) without
 requiring a display. Operator access is through a browser pointed at
-`http://<host>:5555` (configurable) or via the `predator-rfctl` CLI tool.
+`http://localhost:5555` (configurable) or via the `predator-rfctl` CLI tool.
 
-The browser UI (`preview.html` / `web/`) is the same file served by the
-Python intelligence backend. Both present identical API endpoints so the
-frontend works against either process without modification — this is the
-Android↔Linux parity contract described in `replit.md`.
+The browser UI (`preview.html` / `web/index.html`) is the same file served by
+the Python intelligence backend. Both expose identical API endpoints under
+`/api/v1/*` so the frontend works against either process without modification —
+this is the Android↔Linux parity contract described in `replit.md`.
 
 ```
-┌─────────────────────────────────────────────────┐
-│  Browser  ──HTTP──►  predator-rfd:5555           │
-│             ──WS──►  /ws  (spectrum stream)      │
-│             ──SSE──► /events/stream              │
-├─────────────────────────────────────────────────┤
-│  predator-rfctl  ──Unix──►  /run/predator-rfd/   │
-│                             control.sock         │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Browser  ──HTTP──►  predator-rfd:5555                       │
+│             ──WS──►  /ws  (spectrum stream)                  │
+│             ──SSE──► /api/v1/events/stream                   │
+├─────────────────────────────────────────────────────────────┤
+│  predator-rfctl  ──Unix──►  /run/predator-rfd/control.sock  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Build
@@ -35,11 +34,14 @@ make -j$(nproc)
 sudo make install
 ```
 
+`OPT_BACKEND_WEB=ON` and `OPT_BACKEND_GLFW=OFF` must not be combined (they
+compile different `backend.cpp` TUs into `sdrpp_core`).
+
 The web asset directory defaults to `${CMAKE_INSTALL_PREFIX}/share/predator-rf/web`.
 Override at runtime with `PREDATOR_WEB_ROOT=/path/to/web`.
 
-To build the CLI tool (always built; does not require the web backend):
 ```bash
+# CLI tool only (built automatically alongside the daemon)
 cmake .. -DOPT_BACKEND_WEB=ON
 make predator-rfctl
 ```
@@ -57,59 +59,93 @@ Installed at: `/lib/systemd/system/predator-rfd.service`
 Configuration is read from `/etc/predator-rf/config.json` (same format as the
 GLFW desktop build). Overrides via environment:
 
-| Variable              | Default                              | Description            |
-|-----------------------|--------------------------------------|------------------------|
-| `PREDATOR_WEB_ROOT`   | `/usr/share/predator-rf/web`         | Static asset directory |
-| `PREDATOR_CTRL_SOCK`  | `/run/predator-rfd/control.sock`     | rfctl Unix socket      |
+| Variable              | Default                              | Description              |
+|-----------------------|--------------------------------------|--------------------------|
+| `PREDATOR_WEB_ROOT`   | `/usr/share/predator-rf/web`         | Static asset directory   |
+| `PREDATOR_CTRL_SOCK`  | `/run/predator-rfd/control.sock`     | rfctl Unix socket path   |
 
-Add port and root to `/etc/predator-rf/predator-rf.env`:
-```
-PREDATOR_WEB_ROOT=/usr/share/predator-rf/web
-```
+Relevant `config.json` keys:
 
-Or via `config.json`:
 ```json
 {
-  "webBackendPort": 5555,
-  "webRoot": "/usr/share/predator-rf/web"
+  "webBackendPort":  5555,
+  "webRoot":         "/usr/share/predator-rf/web",
+  "kujhadApiKey":    "<32-char-hex>",
+  "webBindAll":      false
 }
 ```
 
+- **`webBindAll`** — defaults to `false` (loopback only, `127.0.0.1`). Set to
+  `true` only when the operator explicitly needs the dashboard reachable from
+  other hosts on the LAN. Must be paired with a strong `kujhadApiKey`.
+
+## Authentication
+
+All `/api/v1/*`, `/v1/*`, and `/ws` endpoints (except `/api/v1/identify`)
+require the `X-Kujhad-Key` header or `Authorization: Bearer <key>` with the
+value matching `kujhadApiKey` in config. Static files (the dashboard itself)
+are exempt.
+
+```bash
+# With key
+curl -H "X-Kujhad-Key: <your-key>" http://localhost:5555/api/v1/status
+
+# No key (only works when kujhadApiKey is empty — loopback dev mode)
+curl http://localhost:5555/api/v1/status
+```
+
+If no key is configured the server logs a warning and accepts all connections.
+This is safe only because the default bind address is loopback.
+
 ## Browser UI
 
-Open `http://<host>:5555` in any modern browser.  
-On the same machine: `http://localhost:5555`
+Open `http://localhost:5555` in any modern browser.
 
-The dashboard auto-detects whether a live backend is reachable. When
-reachable it tears down the mock data ticker and switches to the live
-`/tracks/`, `/nodes/`, `/events/stream` feeds.
+When `kujhadApiKey` is set, the dashboard sends `X-Kujhad-Key` in every API
+request header. The browser will be prompted or the operator must supply the
+key via the `?backend=http://localhost:5555` URL parameter alongside the
+frontend auth mechanism.
+
+The dashboard auto-detects whether a live backend is reachable. When reachable
+it tears down the mock data ticker and switches to live feeds.
 
 ### Live endpoints (browser-facing)
 
-| Method | Path               | Description                                      |
-|--------|--------------------|--------------------------------------------------|
-| GET    | `/`                | Dashboard HTML (served from `PREDATOR_WEB_ROOT`) |
-| GET    | `/tracks/`         | Active emitter tracks (JSON array)               |
-| GET    | `/nodes/`          | Kujhad fleet nodes (JSON array)                  |
-| GET    | `/events/stream`   | SSE event stream (`text/event-stream`)           |
-| WS     | `/ws`              | WebSocket spectrum stream (JSON frames)          |
-| GET    | `/api/spectrum`    | Snapshot FFT bins (`?bins=256`)                  |
-| GET    | `/api/events`      | Paginated event log (`?since=N`)                 |
-| POST   | `/api/command`     | Issue typed command (`{class,action,args}`)      |
-| GET    | `/api/identify`    | Device identity                                  |
-| GET    | `/v1/*`            | Kujhad fleet v1 aliases                          |
+All endpoints are available at both the short path and the `/api/v1/` prefix.
+The dashboard calls the `/api/v1/` form; `curl` can use either.
+
+| Method | Path                         | Description                                          |
+|--------|------------------------------|------------------------------------------------------|
+| GET    | `/`                          | Dashboard HTML (from `PREDATOR_WEB_ROOT`)            |
+| GET    | `/api/v1/identify`           | Device identity (public — no auth required)          |
+| GET    | `/api/v1/status`             | Daemon status (SDR state, scan, mission mode)        |
+| GET    | `/api/v1/state`              | Combined nodes + tracks + status snapshot            |
+| GET    | `/api/v1/nodes/`             | Kujhad fleet nodes (JSON array)                      |
+| GET    | `/api/v1/tracks/`            | Active emitter tracks (JSON array)                   |
+| GET    | `/api/v1/events/stream`      | SSE live event stream (`text/event-stream`)          |
+| GET    | `/api/v1/events`             | Paginated event log (`?since=N`)                     |
+| GET    | `/api/v1/spectrum`           | Snapshot FFT bins (`?bins=256`)                      |
+| POST   | `/api/v1/command`            | Typed command (`{class, action, args}`)              |
+| GET    | `/api/v1/key`                | Key config status (length only — never returns key)  |
+| GET    | `/api/v1/port`               | Current web port                                     |
+| GET    | `/api/v1/role`               | Current node role (device / controller)              |
+| GET    | `/api/v1/peers/`             | Fleet peer list (alias for nodes)                    |
+| WS     | `/ws`                        | WebSocket spectrum stream (JSON frames)              |
+
+`tx.*` class commands are rejected at the POST `/api/v1/command` endpoint —
+same policy as Kujhad HTTP and the RNS commanding wrapper.
 
 ### WebSocket spectrum frame
 
 ```json
 {
-  "type": "spectrum",
-  "serial": 12345,
-  "center": 433920000.0,
+  "type":      "spectrum",
+  "serial":    12345,
+  "center":    433920000.0,
   "bandwidth": 2400000.0,
-  "fft_min": -120.0,
-  "fft_max": 0.0,
-  "bins": [/* 256 float values, normalised 0–1 from fft_min to fft_max */]
+  "fft_min":   -120.0,
+  "fft_max":   0.0,
+  "bins": [/* 256 floats, resampled from raw FFT */]
 }
 ```
 
@@ -122,46 +158,108 @@ reachable it tears down the mock data ticker and switches to the live
 ## predator-rfctl CLI
 
 ```
+predator-rfctl status
 predator-rfctl identify
-predator-rfctl state
 predator-rfctl tune 433.92e6
-predator-rfctl scan start
-predator-rfctl scan stop
-predator-rfctl mission set-mode classify
-predator-rfctl events --since 100
+predator-rfctl scan start|stop|pause
+predator-rfctl mission set-mode manual|classify|scan|quickscan
+predator-rfctl role show
+predator-rfctl role set device|controller
+predator-rfctl key show
+predator-rfctl key regenerate
+predator-rfctl port show
+predator-rfctl peer list
+predator-rfctl peer add <name> <host> <port> <key>
+predator-rfctl peer remove <name>
+predator-rfctl events [--since N]
+predator-rfctl start
+predator-rfctl stop
 predator-rfctl raw '{"class":"tune","action":"set","args":{"freq":433920000}}'
 ```
 
-Override socket: `predator-rfctl --sock /tmp/my.sock identify`  
-Override via env: `PREDATOR_CTRL_SOCK=/tmp/my.sock predator-rfctl state`
+Override socket path:
+```bash
+predator-rfctl --sock /tmp/my.sock status
+PREDATOR_CTRL_SOCK=/tmp/my.sock predator-rfctl status
+```
 
 ### TX commands
 
 `tx.*` class commands are hard-rejected at the control socket — same policy as
 the Kujhad HTTP server and the RNS commanding wrapper.
 
-## Android↔Linux parity
+### Command dispatch model
+
+Commands sent via `predator-rfctl` or `POST /api/v1/command` are enqueued in a
+thread-safe queue and drained by the `renderLoop()` main thread every 50 ms.
+This keeps all signal-path mutations on the main thread. Currently wired:
+
+| class / action          | Effect                                           |
+|-------------------------|--------------------------------------------------|
+| `tune / set`            | Calls `sigpath::sourceManager.setFrequency()`   |
+| `scan / start`          | Sets scan-running flag, status → "running"       |
+| `scan / stop`           | Sets scan-running flag false, status → "idle"    |
+| `scan / pause`          | Sets status → "paused"                          |
+| `mission / set-mode`    | Updates mission mode integer                    |
+| `role / set`            | Updates role string                             |
+| Everything else         | Logged; emits `command_applied` event with `applied:false` |
+
+Full signal-path wire-up (spectrum push, track/node snapshots) is the subject
+of the follow-up task (see `docs/linux_web_frontend.md` wire-up section below).
+
+## Live-data wire-up (follow-up task)
+
+The hooks are defined in `core/src/backend.h` and implemented in
+`core/backends/web/backend.cpp`. No-op stubs exist in the GLFW and Android
+backends so the call sites compile unconditionally.
+
+Add these calls in `core/src/gui/main_window.cpp`:
+
+```cpp
+#include <backend.h>
+
+// --- In the FFT releaseFFTBuffer path (same spot as kujhadSpectrumRaw capture):
+backend::webBackendPushSpectrumSnapshot(
+    fftBins.data(), (int)fftBins.size(),
+    centerFreq, bandwidth, fftMin, fftMax);
+
+// --- In the Kujhad snapshot refresh tick (once per render tick):
+backend::webBackendUpdateNodes(kujhadNodesJson);
+backend::webBackendUpdateTracks(kujhadTracksJson);
+backend::webBackendUpdateStatus(
+    sigpath::sourceManager.isRunning(),
+    sigpath::sourceManager.getFrequency(),
+    sigpath::vfoManager.getBandwidth(""),
+    sigpath::sourceManager.getSelectedSourceName(),
+    missionMode, scanRunning, scanStatus);
+
+// --- When appending to predatorEvents:
+nlohmann::json ev; ev["type"]="hit"; /* populate */ ;
+backend::webBackendPushEvent(ev);
+```
+
+## Android↔Linux parity contract
 
 The browser dashboard (`preview.html`) is the canonical cross-platform UI. It
-must compile and run against both:
+must work against both:
 
-1. **Python intelligence backend** (`backend/main.py`, FastAPI) on port 8073
-2. **C++ web backend** (`predator-rfd`, this module) on port 5555
+1. **Python intelligence backend** (`backend/main.py`, FastAPI, port 8073)
+2. **C++ web backend** (`predator-rfd`, this module, port 5555)
 
-Both expose identical endpoints: `GET /tracks/`, `GET /nodes/`, `GET /events/stream`.
+Both expose identical endpoints under `/api/v1/*`:
+`GET /api/v1/tracks/`, `GET /api/v1/nodes/`, `GET /api/v1/events/stream`.
 
-Any change to the dashboard that requires a new endpoint must add it to **both**
-backends before merging. The Python side lives in `backend/main.py`; the C++
-side lives in `core/backends/web/backend.cpp`.
+Any change to the dashboard that adds a new endpoint must add it to **both**
+backends before merging. Python side: `backend/main.py`; C++ side:
+`core/backends/web/backend.cpp`.
 
-Spectrum data (FFT bins + waterfall) is C++ only — the Python backend does not
-have direct SDR access. That tab degrades gracefully to a placeholder when
-hitting the Python backend.
+Spectrum data (FFT bins + waterfall) is C++ only — the Python backend has no
+direct SDR access. That tab degrades gracefully to a placeholder when hitting
+the Python backend.
 
 ## Debian package
 
-The `make_debian_package.sh` script produces `predator-rf_<ver>_amd64.deb` that
-installs:
+The `make_debian_package.sh` script produces `predator-rf_<ver>_amd64.deb`:
 
 - `/usr/bin/predator-rfd` — headless daemon
 - `/usr/bin/predator-rfctl` — CLI tool

@@ -194,6 +194,7 @@ inline std::map<std::string,std::string> pwsParseQuery(const std::string& q) {
 inline bool pwsReadRequest(pws_sock_t sock, PwsRequest& req) {
     std::string raw;
     char buf[4096];
+    // Read until end of headers
     while(true){
         int n=(int)::recv(sock,buf,sizeof(buf)-1,0);
         if(n<=0) return false;
@@ -201,7 +202,12 @@ inline bool pwsReadRequest(pws_sock_t sock, PwsRequest& req) {
         if(raw.find("\r\n\r\n")!=std::string::npos) break;
         if(raw.size()>131072) return false;
     }
-    std::istringstream ss(raw);
+    // Split headers and any bytes already read past \r\n\r\n
+    auto splitAt = raw.find("\r\n\r\n");
+    std::string headerPart = raw.substr(0, splitAt);
+    std::string bodyAlready = raw.substr(splitAt + 4);
+
+    std::istringstream ss(headerPart);
     std::string line;
     std::getline(ss,line);
     if(!line.empty()&&line.back()=='\r') line.pop_back();
@@ -216,7 +222,25 @@ inline bool pwsReadRequest(pws_sock_t sock, PwsRequest& req) {
         if(c!=std::string::npos){
             std::string k=line.substr(0,c),v=line.substr(c+2);
             std::transform(k.begin(),k.end(),k.begin(),::tolower);
+            // Trim leading whitespace from value
+            while(!v.empty()&&(v.front()==' '||v.front()=='\t')) v.erase(v.begin());
             req.headers[k]=v;
+        }
+    }
+    // Read body if Content-Length is present
+    size_t contentLen = 0;
+    auto clIt = req.headers.find("content-length");
+    if(clIt != req.headers.end()) {
+        try { contentLen = (size_t)std::stoull(clIt->second); } catch(...) {}
+    }
+    if(contentLen > 0 && contentLen <= 1048576) {
+        req.body = bodyAlready;
+        while(req.body.size() < contentLen) {
+            int need = (int)(contentLen - req.body.size());
+            if(need > (int)sizeof(buf)-1) need = (int)sizeof(buf)-1;
+            int n = (int)::recv(sock, buf, need, 0);
+            if(n <= 0) break;
+            req.body.append(buf, n);
         }
     }
     return true;
@@ -299,6 +323,17 @@ public:
 
     void setStaticRoot(const std::string& dir) { staticRoot_ = dir; }
 
+    // Set the API key required on all non-static, non-identify requests.
+    // Empty string = no auth (dev/loopback-only mode).
+    void setApiKey(const std::string& key) {
+        std::lock_guard<std::mutex> lk(apiKeyMtx_);
+        apiKey_ = key;
+    }
+
+    // When true, bind to all interfaces (0.0.0.0); otherwise loopback only.
+    // Loopback is the safe default — operator explicitly opts in to exposure.
+    void setBindAll(bool v) { bindAll_ = v; }
+
     bool start(int port) {
         port_ = port;
         listenSock_ = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -307,7 +342,7 @@ public:
         ::setsockopt(listenSock_, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
         sockaddr_in addr{};
         addr.sin_family=AF_INET;
-        addr.sin_addr.s_addr=htonl(INADDR_ANY);
+        addr.sin_addr.s_addr = htonl(bindAll_ ? INADDR_ANY : INADDR_LOOPBACK);
         addr.sin_port=htons((uint16_t)port);
         if(::bind(listenSock_,(sockaddr*)&addr,sizeof(addr))!=0){PWS_CLOSESOCK(listenSock_);return false;}
         if(::listen(listenSock_,32)!=0){PWS_CLOSESOCK(listenSock_);return false;}
@@ -359,9 +394,52 @@ private:
         }
     }
 
+    // Paths that don't require auth (public / identification)
+    static bool isPublicPath(const std::string& path) {
+        return path == "/" || path == "/index.html" ||
+               path == "/api/v1/identify" || path == "/v1/identify" ||
+               path == "/api/identify";
+    }
+
+    // Returns true if the request carries a valid API key when one is configured.
+    bool checkAuth(const PwsRequest& req) const {
+        std::lock_guard<std::mutex> lk(apiKeyMtx_);
+        if(apiKey_.empty()) return true; // no auth configured
+        // Check X-Kujhad-Key header (primary, matches Kujhad fleet protocol)
+        auto it = req.headers.find("x-kujhad-key");
+        if(it != req.headers.end() && it->second == apiKey_) return true;
+        // Check Authorization: Bearer <key>
+        auto auth = req.headers.find("authorization");
+        if(auth != req.headers.end()) {
+            const std::string& v = auth->second;
+            if(v.size() > 7 && v.substr(0,7) == "Bearer " && v.substr(7) == apiKey_) return true;
+        }
+        // Check ?key= query param (last resort, only for browser GET requests)
+        return false;
+    }
+
     void handleConn(pws_sock_t sock) {
         PwsRequest req;
         if(!pwsReadRequest(sock, req)) { PWS_CLOSESOCK(sock); return; }
+
+        // Handle OPTIONS preflight BEFORE auth — browsers send it without creds.
+        if(req.method == "OPTIONS") {
+            pwsHttpReply(sock, 204, "text/plain", "",
+                         "Access-Control-Allow-Methods: GET,POST,OPTIONS\r\n"
+                         "Access-Control-Allow-Headers: X-Kujhad-Key,Authorization,Content-Type\r\n");
+            PWS_CLOSESOCK(sock);
+            return;
+        }
+
+        // Auth gate: static files and public identify are exempt; everything else needs a key
+        if(!isPublicPath(req.path) && !isStaticPath(req.path)) {
+            if(!checkAuth(req)) {
+                pwsHttpReply(sock, 401, "application/json",
+                             "{\"error\":\"X-Kujhad-Key required\"}");
+                PWS_CLOSESOCK(sock);
+                return;
+            }
+        }
 
         bool isWsUpgrade = false;
         auto upg = req.headers.find("upgrade");
@@ -463,12 +541,23 @@ private:
         PWS_CLOSESOCK(sock);
     }
 
+    bool isStaticPath(const std::string& path) const {
+        if(staticRoot_.empty()) return false;
+        // Paths that don't start with /api/ or /v1/ are assumed to be static
+        return path.rfind("/api/",0) != 0 && path.rfind("/v1/",0) != 0 &&
+               path.rfind("/ws",0) != 0;
+    }
+
     std::vector<Route>   routes_;
     std::string          staticRoot_;
     pws_sock_t           listenSock_ = PWS_INVALID_SOCK;
     std::atomic<bool>    running_{false};
     std::thread          acceptThread_;
     int                  port_ = 5555;
+    bool                 bindAll_ = false;
+
+    mutable std::mutex   apiKeyMtx_;
+    std::string          apiKey_;
 
     std::mutex           wsMtx_;
     std::set<pws_sock_t> wsClients_;
