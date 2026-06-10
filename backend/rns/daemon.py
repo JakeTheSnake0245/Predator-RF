@@ -303,6 +303,10 @@ class RNSDaemon:
                         f"peer announce ignored (not in allowlist): {h16}")
                     return
                 if h16 in daemon._peers:
+                    # Update last-heard on every re-announce so the operator
+                    # dashboard can display a live "last heard" age rather
+                    # than only the first-seen time.
+                    daemon._peers[h16]["last_heard"] = time.time()
                     return
                 try:
                     out = RNS.Destination(
@@ -337,12 +341,14 @@ class RNSDaemon:
                     daemon._log.write(
                         "WARN",
                         f"could not build cmd.v1 OUT dest for {h16}: {exc}")
+                _now = time.time()
                 daemon._peers[h16] = {
                     "identity": announced_identity,
                     "destination": out,
                     "cmd_destination": cmd_out,
                     "iface_id": iface_id,
-                    "first_seen": time.time(),
+                    "first_seen": _now,
+                    "last_heard": _now,
                 }
                 daemon._log.write("INFO",
                                   f"learned peer {h16} via iface={iface_id}")
@@ -852,6 +858,26 @@ class RNSDaemon:
                 "cot_bridge": cot_stats,
                 "config_path": self.config_path,
             }
+
+    def peers_snapshot(self) -> List[Dict[str, Any]]:
+        """Return a safe, serialisable snapshot of all known peers.
+
+        Uses ``list(self._peers.items())`` to capture a consistent view of
+        the dict under CPython's GIL without blocking the announce handler
+        for longer than necessary.  Only serialisable scalar fields are
+        included — RNS Identity / Destination objects are intentionally
+        omitted so callers never hold a reference to live RNS state.
+        """
+        snapshot = list(self._peers.items())   # atomic CPython dict snapshot
+        result = []
+        for h16, meta in snapshot:
+            result.append({
+                "hash16":        h16,
+                "iface_id":      meta.get("iface_id"),
+                "first_seen_ms": int(meta.get("first_seen", 0) * 1000),
+                "last_heard_ms": int(meta.get("last_heard", 0) * 1000),
+            })
+        return result
 
     def list_interfaces(self) -> List[Dict[str, Any]]:
         with self._lock:

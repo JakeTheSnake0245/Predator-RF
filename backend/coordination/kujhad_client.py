@@ -278,6 +278,10 @@ class KujhadClient:
 
         if isinstance(last_id, int) and last_id > self._last_event_id:
             self._last_event_id = last_id
+        # Stamp last-contact time so the dashboard can show a live
+        # last-seen age. Done even when events list is empty — a 200
+        # response with no new events still means the node is reachable.
+        self.node.last_contact_ns = time.time_ns()
 
     async def _poll_gps(self):
         """Update node GPS location from /v1/gps (per-node fallback)."""

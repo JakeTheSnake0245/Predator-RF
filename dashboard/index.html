@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Predator RF — CoC Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/style.css" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- ── Top bar ── -->
+    <header class="topbar">
+      <span class="brand">PREDATOR RF <span class="brand-sub">CoC</span></span>
+      <span id="pill-sse" class="pill" title="SSE event stream">SSE</span>
+      <span id="pill-nodes" class="pill" title="Connected fleet nodes">0 NODES</span>
+      <span id="pill-tracks" class="pill" title="Active emitter tracks">0 TRACKS</span>
+      <span id="pill-approvals" class="pill" title="Pending CoT approvals">0 PENDING</span>
+      <span class="spacer"></span>
+      <span id="clock" class="clock"></span>
+    </header>
+
+    <!-- ── Main content — always-on responsive grid ── -->
+    <main class="dashboard-grid">
+
+      <!-- Fleet panel -->
+      <section class="dash-panel" id="panel-fleet">
+        <div class="panel-head">
+          <h2>Fleet Nodes</h2>
+          <span class="subtitle" id="fleet-subtitle">—</span>
+          <span class="spacer"></span>
+          <span class="poll-badge" id="fleet-age"></span>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table class="data-table" id="fleet-table">
+              <thead>
+                <tr>
+                  <th>Hostname</th>
+                  <th>Node ID</th>
+                  <th>Hardware</th>
+                  <th>GPS Quality</th>
+                  <th>Trust</th>
+                  <th>Last Contact</th>
+                  <th>TDOA</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="fleet-tbody">
+                <tr class="empty-row"><td colspan="7">No nodes registered</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tracks panel -->
+      <section class="dash-panel" id="panel-tracks">
+        <div class="panel-head">
+          <h2>Emitter Tracks</h2>
+          <span class="spacer"></span>
+          <label class="filter-label">State
+            <select id="filter-state">
+              <option value="">All</option>
+              <option value="new">NEW</option>
+              <option value="tracking">TRACKING</option>
+              <option value="stable">STABLE</option>
+              <option value="coasting">COASTING</option>
+              <option value="lost">LOST</option>
+            </select>
+          </label>
+          <label class="filter-label">Min conf
+            <input id="filter-conf" type="number" min="0" max="1" step="0.05" value="0" />
+          </label>
+          <span class="poll-badge" id="tracks-age"></span>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table class="data-table" id="tracks-table">
+              <thead>
+                <tr>
+                  <th>State</th>
+                  <th>Frequency</th>
+                  <th>Power</th>
+                  <th>Confidence</th>
+                  <th>Threat</th>
+                  <th>Location</th>
+                  <th>Nodes</th>
+                  <th>Obs</th>
+                </tr>
+              </thead>
+              <tbody id="tracks-tbody">
+                <tr class="empty-row"><td colspan="8">No tracks — waiting for SSE…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Approvals panel -->
+      <section class="dash-panel" id="panel-approvals">
+        <div class="panel-head">
+          <h2>CoT Approval Queue</h2>
+          <span class="subtitle" id="approvals-subtitle">—</span>
+          <span class="spacer"></span>
+          <span class="poll-badge" id="approvals-age"></span>
+        </div>
+        <div class="panel-body" id="approvals-body">
+          <div class="empty-card">No pending approvals</div>
+        </div>
+      </section>
+
+      <!-- Map panel -->
+      <section class="dash-panel" id="panel-map">
+        <div class="panel-head">
+          <h2>Operator Map</h2>
+          <span class="subtitle">Live emitter markers — driven by track SSE feed</span>
+        </div>
+        <div class="map-container">
+          <iframe id="map-iframe" src="/maps/index.html" title="Operator Map" allowfullscreen></iframe>
+        </div>
+      </section>
+
+      <!-- RNS panel -->
+      <section class="dash-panel" id="panel-rns">
+        <div class="panel-head">
+          <h2>RNS Transport</h2>
+          <span class="spacer"></span>
+          <span class="poll-badge" id="rns-age"></span>
+        </div>
+        <div class="panel-body">
+          <div class="rns-grid">
+
+            <div class="rns-card" id="rns-identity-card">
+              <div class="card-title">Node Identity</div>
+              <div class="kv-row"><span class="kv-k">Daemon</span><span class="kv-v" id="rns-daemon">—</span></div>
+              <div class="kv-row"><span class="kv-k">Hash-16</span><span class="kv-v mono" id="rns-hash">—</span></div>
+              <div class="kv-row"><span class="kv-k">RNS lib</span><span class="kv-v" id="rns-lib">—</span></div>
+              <div class="kv-row"><span class="kv-k">CoT published</span><span class="kv-v" id="rns-cot-pub">—</span></div>
+              <div class="kv-row"><span class="kv-k">CoT received</span><span class="kv-v" id="rns-cot-rx">—</span></div>
+            </div>
+
+            <div class="rns-card" id="rns-ifaces-card">
+              <div class="card-title">Interfaces</div>
+              <div id="rns-ifaces-list"><span class="dim">—</span></div>
+            </div>
+
+            <div class="rns-card" id="rns-peers-card" style="grid-column:1/-1">
+              <div class="card-title">Known Peers</div>
+              <div id="rns-peers-list"><span class="dim">No peers seen yet</span></div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ── Status bar ── -->
+    <footer class="statusbar">
+      <span class="sb-item"><span class="sb-k">Backend</span> <span id="sb-backend" class="sb-v">—</span></span>
+      <span class="sb-item"><span class="sb-k">Events recv</span> <span id="sb-events" class="sb-v">0</span></span>
+      <span class="sb-item"><span class="sb-k">Last event</span> <span id="sb-last-event" class="sb-v">—</span></span>
+      <span class="spacer"></span>
+      <span class="safety">RX ONLY</span>
+    </footer>
+
+  </div>
+
+  <!-- Track detail modal -->
+  <div id="track-modal" class="modal-overlay" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <span class="modal-title" id="modal-title">Track Detail</span>
+        <button class="modal-close" id="modal-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>

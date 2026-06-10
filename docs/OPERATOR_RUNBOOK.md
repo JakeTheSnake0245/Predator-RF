@@ -31,6 +31,35 @@ you need TLS (the backend itself is plain HTTP — TLS termination is
 intentionally out of scope so the same binary works behind nginx,
 Caddy, Traefik, or nothing).
 
+### CoC Web Dashboard
+
+Navigate to `http://<pi-ip>:8000/dashboard` in any browser on the
+LAN to open the Chain-of-Command operator dashboard. No login
+required on a trusted LAN (add `API_BEARER_TOKEN` in the env file
+to gate it behind a bearer token).
+
+The dashboard is served directly from the Python backend — no
+separate Node.js or web server process is needed. It auto-opens a
+live SSE connection to `/api/v1/events/stream` for real-time track
+updates and polls the fleet, approvals, and RNS status endpoints.
+
+| Panel | Data source | Refresh |
+|---|---|---|
+| Fleet Nodes | `GET /api/v1/nodes/` | Every 10 s |
+| Emitter Tracks | `GET /api/v1/events/stream` (SSE) + `/api/v1/tracks/` | Real-time |
+| Approvals | `GET /api/v1/approvals` | Every 5 s |
+| Map | `root/res/maps/index.html` iframe + postMessage | Real-time |
+| RNS Status | `GET /api/v1/rns/status` | Every 8 s |
+
+**Quick one-command Pi startup (development / ad-hoc):**
+
+```bash
+cd /opt/predator-rf
+source .venv/bin/activate
+FLEET_NODES="..." python -m backend.main
+# Dashboard: http://<pi-ip>:8000/dashboard
+```
+
 ## 2. The two-key TX gate (CoT and AutoTasker)
 
 Predator-RF starts in **RX-only** posture. Two flags arm the only

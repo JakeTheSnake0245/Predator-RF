@@ -146,6 +146,11 @@ class SensorNodeTrust:
     observations_corroborated: int = 0
     observations_flagged_anomalous: int = 0
 
+    # Last successful contact with this node (UNIX ns). Updated by
+    # KujhadClient._poll_events() each time the Kujhad event endpoint
+    # returns 200 so the operator dashboard can show a live last-seen age.
+    last_contact_ns: int = 0
+
     # Hardware capabilities object (populated in __post_init__)
     hardware_capabilities: object = field(default=None, repr=False)
 
@@ -274,8 +279,11 @@ class SensorNodeTrust:
             "kujhad_port": self.kujhad_port,
             "location_gps": self.location_gps,
             "gps_synchronized": self.gps_synchronized,
+            "timing_pps_lock": self.timing_pps_lock,
+            "timing_source": self.timing_source,
             "trust_score": self.compute_trust_score(),
             "can_do_tdoa": self.can_do_tdoa,
             "thermal_throttling_active": self.thermal_throttling_active,
             "total_observations": self.total_observations,
+            "last_contact_ns": self.last_contact_ns or None,
         }

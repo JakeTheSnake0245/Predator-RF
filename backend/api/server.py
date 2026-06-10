@@ -5,9 +5,15 @@ overrides, and observability over HTTP/JSON.
 """
 
 import logging
+import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Project root — two levels up from this file (backend/api/server.py).
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 
 
 def create_app(track_manager=None, fleet_manager=None,
@@ -145,5 +151,60 @@ def create_app(track_manager=None, fleet_manager=None,
                 if backend is not None and hasattr(backend, "missions")
                 else None,
         }
+
+    # ── RNS read-only status (dashboard use only) ──────────────────────
+    # This is intentionally a narrow read-only GET — it exposes interface
+    # health, the local node hash, and CoT bridge counters, but NOT the
+    # control-plane commands (add/remove/restart interface, export/import
+    # identity). The full RNS control-plane router (rns.py) remains
+    # deliberately unmounted per the threat model in task #27.
+    @app.get("/api/v1/rns/status", tags=["rns"])
+    async def rns_status():
+        if rns_daemon is None:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=503,
+                detail="RNS daemon not configured (set RNS_ENABLED=1 and restart)")
+        payload = rns_daemon.status()
+        # Augment with known peer list via the daemon's safe snapshot method.
+        # peers_snapshot() returns only serialisable scalar fields (no RNS
+        # Identity/Destination objects) and captures the dict atomically so
+        # concurrent announce-handler writes don't cause runtime errors.
+        payload["peers"] = rns_daemon.peers_snapshot()
+        return payload
+
+    # ── Dashboard static files ──────────────────────────────────────────
+    # Served at /dashboard/* so a Pi running `python -m backend.main`
+    # automatically serves the operator CoC dashboard in any browser.
+    # The MapLibre map is served at /maps/* (iframe source inside the
+    # dashboard).  Both paths are mounted AFTER all API routes so that
+    # /api/v1/* never gets shadowed by a static file.
+    try:
+        from fastapi.staticfiles import StaticFiles
+        from fastapi.responses import RedirectResponse
+
+        _dashboard_dir = os.path.join(_PROJECT_ROOT, "dashboard")
+        _maps_dir      = os.path.join(_PROJECT_ROOT, "root", "res", "maps")
+
+        if os.path.isdir(_dashboard_dir):
+            app.mount("/dashboard", StaticFiles(directory=_dashboard_dir,
+                                                html=True), name="dashboard")
+            logger.info("CoC dashboard mounted at /dashboard (dir=%s)",
+                        _dashboard_dir)
+        else:
+            logger.warning("Dashboard dir not found at %s — "
+                           "/dashboard will 404", _dashboard_dir)
+
+        if os.path.isdir(_maps_dir):
+            app.mount("/maps", StaticFiles(directory=_maps_dir,
+                                           html=True), name="maps")
+            logger.info("MapLibre viewer mounted at /maps (dir=%s)", _maps_dir)
+        else:
+            logger.warning("Maps dir not found at %s — "
+                           "/maps will 404", _maps_dir)
+
+    except ImportError:
+        logger.warning("StaticFiles unavailable — dashboard not served. "
+                       "Run: pip install aiofiles")
 
     return app

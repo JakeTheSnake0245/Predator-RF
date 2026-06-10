@@ -663,6 +663,55 @@
             addPositionLayer();
             add3DBuildingLayer();
             addEmitterLayers();
+            // Notify the parent CoC dashboard that the map is ready
+            // so it can flush queued track-update messages.
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({ type: 'predator-map-ready' }, '*');
+            }
+        });
+
+        /* ── Dashboard postMessage bridge ── */
+        // Receives track updates from the parent CoC dashboard and forwards
+        // them into the existing PredatorRFMap.updateTracks() API so the
+        // same GeoJSON pipeline renders emitter markers on the map.
+        //
+        // Supported message types:
+        //   predator-tracks-bulk  { tracks: [...] }  — full batch update
+        //   predator-track-update { ... }             — single event (node
+        //       location, used to build a minimal track entry per emitter)
+        //
+        // After map load we notify the parent with predator-map-ready so
+        // the dashboard can flush its queued updates immediately.
+        const _emitterCache = {};   // emitter_key → track-like dict
+
+        window.addEventListener('message', function(ev) {
+            if (!styleReady) return;
+            const msg = ev.data;
+            if (!msg || typeof msg !== 'object') return;
+
+            if (msg.type === 'predator-tracks-bulk' && Array.isArray(msg.tracks)) {
+                window.PredatorRFMap.updateTracks(msg.tracks);
+                return;
+            }
+
+            if (msg.type === 'predator-track-update') {
+                // Single event from raw SSE: build/update a minimal track
+                // entry so emitter_dots layer gets a dot at node position.
+                if (!msg.lat && !msg.lon) return;
+                const key = (msg.node_id || '') + ':' + Math.round((msg.frequency || 0) / 25000) * 25000;
+                const existing = _emitterCache[key] || {};
+                _emitterCache[key] = Object.assign(existing, {
+                    emitter_id:       key,
+                    primary_frequency: msg.frequency,
+                    estimated_lat:    msg.lat,
+                    estimated_lon:    msg.lon,
+                    threat_level:     msg.threat_level || 'unknown',
+                    location_method:  'rssi_proximity',
+                    location_error_radius_m: 500,
+                });
+                window.PredatorRFMap.updateTracks(Object.values(_emitterCache));
+                return;
+            }
         });
 
         /* ── Android bridge ── */
