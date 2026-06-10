@@ -83,6 +83,7 @@ _Populate as you build_
 ### KrakenSDR LOB (#8)
 - **Heading correction is the caller's responsibility.** `LOBMeasurement.bearing_deg` must be true-north. For vehicle-mounted arrays, add `heading_deg` to the raw DOA bearing (mod 360) *before* constructing the measurement. Predator RF does NOT apply this correction internally.
 - **Crossing-angle veto.** 2-node triangulation is rejected when `|sin(b1−b2)| < sin(15°)`. The operator should wait for a better-separated pair or a third node rather than forcing a fix.
+- **KrakenSDR modules are ON by default.** Use `--no-kraken` with `build_linux.sh` or `-DOPT_BUILD_KRAKENSDR_LOB_DECODER=OFF` in CMake to exclude them. Android always includes the modules (enabled at runtime).
 - **numpy is optional but required for N-LOB WLS.** Without `numpy`, `LOBTriangulator` falls back to the 2-LOB closed-form solver. Install `numpy scipy` into the backend venv for 3+-node least-squares.
 - **Android KrakenSDR is WebSocket only.** No direct USB access from Android. The KrakenSDR array must run `krakensdr_doa` on a companion RPi reachable over Wi-Fi/LAN.
 - See `docs/krakensdr.md` for full details and all five footguns.

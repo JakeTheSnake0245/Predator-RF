@@ -7,7 +7,8 @@
         ↓ WebSocket ws://host:port/ws  (JSON text frames)
         KrakenWsIngester (background thread in decoder_ingest.h)
         ↓ DecoderIngestEvent { decoder="KRAKEN_LOB", raw={…} }
-        Predator bridge → backend/fusion/lob_triangulator.py
+        predator::registerNativeDecoder drain-path
+        ↓ main_window per-frame bridge → Python backend ingest_lob()
 
     Wire format (krakensdr_doa default output):
     {
@@ -101,16 +102,28 @@ public:
 
         ingester_ = std::make_unique<predator::KrakenWsIngester>();
 
+        // Register with the Predator native decoder registry.
+        // main_window's per-frame tick calls the drain lambda to harvest
+        // pending LOB events and route them to the Python backend via the
+        // standard DecoderIngestEvent bridge path (identical to DSDFME).
+        predator::registerNativeDecoder(this, "KRAKEN_LOB",
+            [this](std::size_t maxItems) -> std::vector<predator::DecoderIngestEvent> {
+                return ingester_->drain(maxItems);
+            });
+
         if (enabled_) {
             startIngester();
         }
 
         gui::menu.registerEntry(name_, drawMenuStatic, this, this);
+        flog::info("[KrakenLOB] module instance '{}' constructed", name_);
     }
 
     ~KrakenLobDecoderModule() override {
         gui::menu.removeEntry(name_);
         ingester_->stop();
+        predator::unregisterNativeDecoder(this);
+        flog::info("[KrakenLOB] module instance '{}' destructed", name_);
     }
 
     void postInit() override {}
@@ -128,13 +141,6 @@ public:
     }
 
     bool isEnabled() override { return enabled_; }
-
-    // ── Per-frame drain ──────────────────────────────────────────────────
-    // Called by the Predator bridge's main-loop tick to harvest pending
-    // LOB events and route them to the Python backend.
-    std::vector<predator::DecoderIngestEvent> drainEvents() {
-        return ingester_->drain(64);
-    }
 
 private:
     // ── GUI ──────────────────────────────────────────────────────────────
@@ -232,10 +238,23 @@ private:
 
 // ── SDRPP module entry points ─────────────────────────────────────────────────
 
-SDRPP_MOD_EXPORT ModuleManager::Instance* createInstance(std::string name) {
+MOD_EXPORT void _INIT_() {
+    config.setPath(core::args["root"].s() + "/kraken_lob_decoder_config.json");
+    config.load(DEFAULT_CONFIG);
+    config.enableAutoSave();
+    flog::info("[KrakenLOB] module loaded");
+}
+
+MOD_EXPORT ModuleManager::Instance* _CREATE_INSTANCE_(std::string name) {
     return new KrakenLobDecoderModule(std::move(name));
 }
 
-SDRPP_MOD_EXPORT void deleteInstance(ModuleManager::Instance* instance) {
-    delete static_cast<KrakenLobDecoderModule*>(instance);
+MOD_EXPORT void _DELETE_INSTANCE_(ModuleManager::Instance* inst) {
+    delete inst;
+}
+
+MOD_EXPORT void _END_() {
+    config.disableAutoSave();
+    config.save();
+    flog::info("[KrakenLOB] module unloaded");
 }

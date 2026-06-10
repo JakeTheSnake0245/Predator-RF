@@ -254,21 +254,36 @@ class CoTEmitter:
             lat, lon = fallback_location
             cot_type = "b-m-p-s-p-loc"
 
-        # CE (circular error) ~ 50m at high TDOA confidence, scaling up
-        # linearly down to 5km at zero confidence
+        loc_method = track_dict.get("location_method") or ""
+        lob_bearing = track_dict.get("lob_bearing_deg")
+        lob_uncert  = track_dict.get("lob_bearing_uncert_deg") or 10.0
+        lob_nodes   = track_dict.get("lob_node_ids") or []
+
+        # CE (circular error):
+        #   • TDOA / RSSI fix present:    50 m at full confidence → 5 km at zero
+        #   • LOB crosscut fix:           set from crosscut radius (min 200 m)
+        #   • Bearing-only (no fix):      9999 — TAK convention for "bearing line only"
         loc_conf = float(track_dict.get("location_confidence") or 0.0)
-        ce = 50.0 + (1.0 - max(0.0, min(1.0, loc_conf))) * 4_950.0
+        if loc_method in ("tdoa", "rssi_proximity", "lob_tdoa_hybrid"):
+            ce = 50.0 + (1.0 - max(0.0, min(1.0, loc_conf))) * 4_950.0
+        elif loc_method == "lob_crosscut":
+            ce = max(200.0, float(track_dict.get("lob_crosscut_radius_m") or 500.0))
+        else:
+            # Bearing-only: no geolocation.  CE=9999 is the TAK spec value
+            # for "position unknown / bearing line only".  The marker is
+            # placed at the array (node) position.
+            ce = 9999.0
 
         freq_mhz = float(track_dict.get("primary_frequency") or 0.0) / 1e6
         threat = assessment_dict.get("threat_level", "unknown").upper()
         callsign = f"{self.uid_prefix}-{emitter_id[:8]}"
 
-        loc_method = track_dict.get("location_method") or ""
         lob_tag = ""
         if loc_method in ("lob_crosscut", "lob_tdoa_hybrid"):
-            lob_tag = f" | LOB-XCUT"
-        elif track_dict.get("lob_bearing_deg") is not None:
-            lob_tag = f" | LOB {track_dict['lob_bearing_deg']:.1f}°"
+            lob_tag = " | LOB-XCUT"
+        elif lob_bearing is not None:
+            nodes_str = ",".join(lob_nodes[:3]) if lob_nodes else "?"
+            lob_tag = f" | LOB {lob_bearing:.1f}° ±{lob_uncert:.1f}° [{nodes_str}]"
 
         remarks = (
             f"PREDATOR-RF {threat} | "
@@ -279,15 +294,10 @@ class CoTEmitter:
             f"{assessment_dict.get('summary', '')}"
         ).strip()
 
-        # LOB-only track (no TDOA fix, only a bearing): use
-        # b-m-p-s-p-loc for "sensor point of interest" and inject
-        # a <sensor> element with the bearing so ATAK renders the
-        # bearing spoke.  When a crosscut is available we keep
-        # a-u-G (standard geolocated unit).
-        lob_bearing = track_dict.get("lob_bearing_deg")
-        lob_uncert  = track_dict.get("lob_bearing_uncert_deg") or 10.0
-        lob_nodes   = track_dict.get("lob_node_ids") or []
-
+        # CoT type selection:
+        #   • lob_crosscut / hybrid → a-u-G  (geolocated unknown unit)
+        #   • bearing-only using fallback node position → b-m-p-s-p-loc
+        #   • everything else → cot_type resolved above (a-u-G or b-m-p-s-p-loc)
         if loc_method == "lob_crosscut":
             actual_cot_type = "a-u-G"
         elif lob_bearing is not None and cot_type == "b-m-p-s-p-loc":

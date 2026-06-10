@@ -1433,8 +1433,30 @@
         renderNetwork(tracks);
         renderKujhad(nodes);
         renderSystem(sysStats);
+        updateDFBanner(tracks);
       } catch (e) {
         console.warn('[predator-live] poll failed:', e);
+      }
+    }
+
+    function updateDFBanner(tracks) {
+      const banner = document.querySelector('.df-banner');
+      if (!banner) return;
+      const lobTracks = tracks.filter(t => t.lob_bearing_deg != null);
+      const xcuts = lobTracks.filter(t => t.lob_crosscut_lat != null);
+      if (lobTracks.length === 0) {
+        banner.textContent = 'DF · UNAVAILABLE (no array)';
+        banner.style.borderColor = '#6a4a1a';
+        banner.style.color = 'var(--warn)';
+      } else if (xcuts.length > 0) {
+        banner.textContent = `DF · ACTIVE · ${xcuts.length} XCUT · ${lobTracks.length} LOB`;
+        banner.style.borderColor = '#2a6a2a';
+        banner.style.color = '#4cde7a';
+      } else {
+        const nodeIds = [...new Set(lobTracks.flatMap(t => t.lob_node_ids || []))];
+        banner.textContent = `DF · ${lobTracks.length} LOB · ${nodeIds.length} node${nodeIds.length !== 1 ? 's' : ''} · no xcut`;
+        banner.style.borderColor = '#4a6a1a';
+        banner.style.color = '#c8de4a';
       }
     }
 

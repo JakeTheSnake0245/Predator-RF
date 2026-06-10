@@ -92,17 +92,20 @@ IQ is not accessible to SDR++.
 
 ### Linux (`build_linux.sh`)
 
+KrakenSDR modules are **ON by default**.  Pass `--no-kraken` to exclude them:
+
 ```bash
-./build_linux.sh --kraken
+./build_linux.sh              # includes KrakenSDR (default)
+./build_linux.sh --no-kraken  # excludes KrakenSDR modules
 ```
 
-This sets:
+This controls:
 ```
--DOPT_BUILD_KRAKENSDR_LOB_DECODER=ON
--DOPT_BUILD_KRAKENSDR_SOURCE=ON
+-DOPT_BUILD_KRAKENSDR_LOB_DECODER=ON   (default)
+-DOPT_BUILD_KRAKENSDR_SOURCE=ON        (default)
 ```
 
-Both options default to `OFF` to keep the standard build lean.
+Both CMake options also default to `ON` in `CMakeLists.txt`.
 
 ### Android (`android/app/build.gradle`)
 
@@ -116,10 +119,16 @@ modules are enabled at runtime via Module Manager.
 sudo bash deploy/install_rpi.sh --kraken
 ```
 
-`--kraken` installs `numpy` and `scipy` into the backend venv so the
-N-LOB weighted least-squares path in `LOBTriangulator` is available.
+`--kraken` additionally:
+- Installs `numpy` and `scipy` for the N-LOB weighted least-squares path.
+- Installs `rtl-sdr`, `libatlas-base-dev`, and `usbutils` via apt.
+- Writes `/etc/udev/rules.d/99-krakensdr.rules` granting USB access.
+- Adds the service user to the `plugdev` group.
+- Writes `/etc/krakensdr/predator.env` with integration hints.
+
 Without `--kraken` the triangulator falls back to the closed-form 2-node
-solver (which requires only the Python standard library).
+solver (Python stdlib only).  `krakensdr_doa` itself must be installed
+separately — see https://github.com/krakenrf/krakensdr_doa.
 
 ## Python Backend
 

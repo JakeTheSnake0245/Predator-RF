@@ -85,6 +85,44 @@ fi
 if [[ "$KRAKEN" -eq 1 ]]; then
   echo "[5+/8] KrakenSDR: installing numpy + scipy"
   sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/pip" install -q numpy scipy
+
+  echo "[5+/8] KrakenSDR: installing krakensdr_doa dependencies"
+  apt-get install -y --no-install-recommends \
+    python3-dev libatlas-base-dev usbutils \
+    rtl-sdr 2>/dev/null || true
+
+  echo "[5+/8] KrakenSDR: writing udev rule for KrakenSDR USB interface"
+  cat > /etc/udev/rules.d/99-krakensdr.rules <<'UDEV'
+# KrakenSDR — 5-element coherent SDR (RTL2832U-based)
+# Grant the 'predator' service user RW access to the USB device.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", \
+    MODE="0664", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", \
+    MODE="0664", GROUP="plugdev", TAG+="uaccess"
+UDEV
+  udevadm control --reload-rules 2>/dev/null || true
+  usermod -aG plugdev "${SVC_USER}" 2>/dev/null || true
+
+  # krakensdr_doa systemd drop-in config location.
+  # Operators must install krakensdr_doa separately per the KrakenSDR
+  # documentation (https://github.com/krakenrf/krakensdr_doa).
+  # We write a stub environment file pointing at the Predator backend
+  # WebSocket consumer so the operator only needs to set the correct
+  # DAQ IP in krakensdr_doa's settings.
+  mkdir -p /etc/krakensdr
+  if [[ ! -f /etc/krakensdr/predator.env ]]; then
+    cat > /etc/krakensdr/predator.env <<'KENV'
+# KrakenSDR → Predator RF integration environment hints.
+# These values are informational; configure krakensdr_doa independently.
+PREDATOR_LOB_WS_PORT=8082
+PREDATOR_LOB_WS_PATH=/ws
+# Set KRAKEN_DOA_HOST to the IP of the machine running krakensdr_doa,
+# then configure kraken_lob_decoder in SDRPP Module Manager with this address.
+KRAKEN_DOA_HOST=127.0.0.1
+KENV
+    echo "  → wrote /etc/krakensdr/predator.env (review and adjust)"
+  fi
+  echo "[5+/8] KrakenSDR setup complete — install krakensdr_doa separately"
 fi
 
 echo "[6/8] env file"

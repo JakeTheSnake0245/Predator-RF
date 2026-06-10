@@ -15,17 +15,18 @@ INSTALL_DIR="$SCRIPT_DIR/install_linux"
 MINIMAL=0
 DEPS_ONLY=0
 CLEAN=0
-KRAKEN=0
+KRAKEN=1
 
 for arg in "$@"; do
     case "$arg" in
-        --minimal)   MINIMAL=1 ;;
-        --deps-only) DEPS_ONLY=1 ;;
-        --clean)     CLEAN=1 ;;
-        --kraken)    KRAKEN=1 ;;
+        --minimal)    MINIMAL=1 ;;
+        --deps-only)  DEPS_ONLY=1 ;;
+        --clean)      CLEAN=1 ;;
+        --kraken)     KRAKEN=1 ;;
+        --no-kraken)  KRAKEN=0 ;;
         -h|--help)
-            echo "Usage: $0 [--minimal] [--deps-only] [--clean] [--kraken]"
-            echo "  --kraken   Enable KrakenSDR LOB decoder + source stub modules"
+            echo "Usage: $0 [--minimal] [--deps-only] [--clean] [--no-kraken]"
+            echo "  --no-kraken  Exclude KrakenSDR LOB decoder + source modules from build"
             exit 0 ;;
     esac
 done
@@ -44,7 +45,7 @@ echo "==> Predator-SDR Linux Build"
 echo "    Distro  : $DISTRO_ID $DISTRO_VERSION"
 echo "    Build   : $BUILD_DIR"
 echo "    Minimal : $MINIMAL"
-echo "    KrakenSDR: $KRAKEN"
+echo "    KrakenSDR: $([ "$KRAKEN" -eq 1 ] && echo ON || echo OFF)"
 echo ""
 
 # ── Install dependencies ─────────────────────────────────────────────────────
@@ -147,9 +148,9 @@ CMAKE_OPTS=(
     -DOPT_BUILD_METEOR_DEMODULATOR=ON
     -DOPT_BUILD_DSDFME_DECODER=ON
     -DOPT_BUILD_RTL433_DECODER=ON
-    # KrakenSDR LOB decoder (off by default; enable with --kraken)
-    -DOPT_BUILD_KRAKENSDR_LOB_DECODER=$([ "$KRAKEN" -eq 1 ] && echo ON || echo OFF)
-    -DOPT_BUILD_KRAKENSDR_SOURCE=$([ "$KRAKEN" -eq 1 ] && echo ON || echo OFF)
+    # KrakenSDR LOB decoder (ON by default; disable with --no-kraken if not needed)
+    -DOPT_BUILD_KRAKENSDR_LOB_DECODER=$([ "$KRAKEN" -eq 0 ] && echo OFF || echo ON)
+    -DOPT_BUILD_KRAKENSDR_SOURCE=$([ "$KRAKEN" -eq 0 ] && echo OFF || echo ON)
     # Misc modules
     -DOPT_BUILD_FREQUENCY_MANAGER=ON
     -DOPT_BUILD_RECORDER=ON
