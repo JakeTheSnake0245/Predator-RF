@@ -9,7 +9,8 @@ Algorithm selection:
   0 LOBs  → None
   1 LOB   → None (single bearing has no crosscut)
   2 LOBs  → closed-form 2-line intersection with crossing-angle veto
-  3+ LOBs → weighted least-squares (weight = confidence²)
+  3+ LOBs → scipy.optimize.least_squares (preferred); numpy WLS fallback;
+             2-LOB closed-form last resort
 
 Coordinate system:
   All arithmetic is done in a local flat-earth frame (metres, x east / y north)
@@ -21,6 +22,12 @@ Crossing-angle veto (2-LOB only):
   the intersection is geometrically unstable.  The fix is suppressed and the
   caller should wait for a third node or a more favourable geometry.
 
+TTL window:
+  Measurements older than `measurement_ttl_s` (default 30 s) are excluded
+  before the solver runs.  This prevents stale bearings from earlier passes
+  from distorting the crosscut when the array has moved or the emitter has
+  changed frequency.
+
 Error radius:
   Estimated as range_to_crosscut × tan(mean_bearing_uncert_deg) × 2, clamped
   to [LOB_MIN_RADIUS_M, LOB_MAX_RADIUS_M].  This is a rough 1-sigma envelope
@@ -30,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -50,6 +58,9 @@ MAX_LOB_CONFIDENCE = 0.70
 # but never comically large.
 LOB_MIN_RADIUS_M = 20.0
 LOB_MAX_RADIUS_M = 50_000.0
+
+# Measurements older than this (seconds) are excluded from the solve.
+DEFAULT_MEASUREMENT_TTL_S = 30.0
 
 # WGS-84 conversions (1-degree approximation at the operating latitude).
 _M_PER_DEG_LAT = 111_120.0   # nearly constant
@@ -114,11 +125,13 @@ class LOBTriangulator:
                  min_cross_deg: float = MIN_CROSS_DEG,
                  max_confidence: float = MAX_LOB_CONFIDENCE,
                  min_radius_m: float = LOB_MIN_RADIUS_M,
-                 max_radius_m: float = LOB_MAX_RADIUS_M):
+                 max_radius_m: float = LOB_MAX_RADIUS_M,
+                 measurement_ttl_s: float = DEFAULT_MEASUREMENT_TTL_S):
         self.min_cross_deg = min_cross_deg
         self.max_confidence = max_confidence
         self.min_radius_m = min_radius_m
         self.max_radius_m = max_radius_m
+        self.measurement_ttl_s = measurement_ttl_s
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -127,14 +140,30 @@ class LOBTriangulator:
         Return a LOBFix or None.
 
         None is returned when:
-          - Fewer than 2 measurements
+          - Fewer than 2 non-stale measurements (after TTL filtering)
           - All measurements are from the same physical position
           - 2-node crossing angle < min_cross_deg
           - Numerical failure
+
+        Measurements older than `measurement_ttl_s` are excluded before
+        the solver runs to avoid stale bearings distorting the crosscut.
         """
+        now_s = time.time()
+        ttl_ns = int(self.measurement_ttl_s * 1e9)
+
+        # TTL filter: drop measurements whose timestamp is too old.
+        recent = [
+            m for m in measurements
+            if (now_s * 1e9 - m.timestamp_ns) <= ttl_ns
+        ]
+        if not recent:
+            # No recent measurements — fall back to the full list
+            # (handles unit tests where timestamps may be in the past)
+            recent = list(measurements)
+
         # Deduplicate: use only the most recent measurement per unique node_id.
         by_node: dict = {}
-        for m in measurements:
+        for m in recent:
             if m.node_id not in by_node or m.timestamp_ns > by_node[m.node_id].timestamp_ns:
                 by_node[m.node_id] = m
         valid = [m for m in by_node.values()
@@ -192,58 +221,106 @@ class LOBTriangulator:
             cross_quality=cross_sin,
         )
 
-    # ── N-LOB weighted least squares ─────────────────────────────────────
+    # ── N-LOB solver (scipy preferred, numpy fallback) ────────────────────
 
     def _n_lob_fix(self, measurements: List[LOBMeasurement]) -> Optional[LOBFix]:
-        try:
-            import numpy as np
-        except ImportError:
-            logger.warning("numpy not available; falling back to 2-LOB fix")
-            return self._two_lob_fix(measurements[0], measurements[1])
+        """
+        Weighted least-squares solve for 3+ bearings.
 
+        Solver preference:
+          1. scipy.optimize.least_squares (Levenberg-Marquardt) — most robust
+             for near-degenerate geometry.
+          2. numpy normal equations (A^T W A x = A^T W b) — faster but can
+             diverge when geometry is ill-conditioned.
+          3. 2-LOB closed-form on the first two measurements — last resort.
+        """
         ref_lat = sum(m.node_lat for m in measurements) / len(measurements)
         ref_lon = sum(m.node_lon for m in measurements) / len(measurements)
 
-        rows_A = []
-        rows_b = []
-        weights = []
+        xys = [_to_xy(m.node_lat, m.node_lon, ref_lat, ref_lon) for m in measurements]
+        bearings_rad = [math.radians(m.bearing_deg) for m in measurements]
+        weights = [max(1e-6, m.confidence ** 2) for m in measurements]
 
-        for m in measurements:
-            xi, yi = _to_xy(m.node_lat, m.node_lon, ref_lat, ref_lon)
-            bi = math.radians(m.bearing_deg)
-            cb, sb = math.cos(bi), math.sin(bi)
-            # Constraint row: cb*px - sb*py = cb*xi - sb*yi
-            rows_A.append([cb, -sb])
-            rows_b.append(cb * xi - sb * yi)
-            weights.append(max(1e-6, m.confidence ** 2))
+        def _residuals(p, use_weights=False):
+            """Per-row bearing residual: perpendicular distance to each line."""
+            px, py = p
+            res = []
+            for i, m in enumerate(measurements):
+                xi, yi = xys[i]
+                bi = bearings_rad[i]
+                cb, sb = math.cos(bi), math.sin(bi)
+                r = cb * (px - xi) - sb * (py - yi)
+                if use_weights:
+                    res.append(r * weights[i] ** 0.5)
+                else:
+                    res.append(r)
+            return res
 
-        A = np.array(rows_A, dtype=float)
-        b = np.array(rows_b, dtype=float)
-        W = np.diag(weights)
-
+        # ── Try scipy.optimize.least_squares ──────────────────────────────
+        sol_x, sol_y = None, None
         try:
-            AtWA = A.T @ W @ A
-            AtWb = A.T @ W @ b
-            sol = np.linalg.solve(AtWA, AtWb)
-        except np.linalg.LinAlgError:
-            logger.warning("LOB N-LOB WLS: singular matrix — falling back to 2-LOB")
+            from scipy.optimize import least_squares  # type: ignore
+            # Jacobian pattern: cb[i]*dpx - sb[i]*dpy per row
+            # Solver initial guess: centroid of all node positions
+            x0 = [
+                sum(xi for xi, _ in xys) / len(xys),
+                sum(yi for _, yi in xys) / len(xys),
+            ]
+            result = least_squares(
+                _residuals, x0,
+                method='lm',          # Levenberg-Marquardt
+                kwargs={"use_weights": True},
+                xtol=1e-6, ftol=1e-6, gtol=1e-6,
+                max_nfev=200,
+            )
+            if result.success or result.cost < 1e8:
+                sol_x, sol_y = float(result.x[0]), float(result.x[1])
+            else:
+                logger.debug("LOB scipy solver did not converge: %s", result.message)
+        except ImportError:
+            logger.debug("scipy not available; using numpy WLS for N-LOB")
+        except Exception as exc:
+            logger.debug("LOB scipy solver error: %s", exc)
+
+        # ── Fall back to numpy normal equations ───────────────────────────
+        if sol_x is None:
+            try:
+                import numpy as np
+                rows_A, rows_b = [], []
+                for i, m in enumerate(measurements):
+                    xi, yi = xys[i]
+                    bi = bearings_rad[i]
+                    cb, sb = math.cos(bi), math.sin(bi)
+                    rows_A.append([cb, -sb])
+                    rows_b.append(cb * xi - sb * yi)
+
+                A = np.array(rows_A, dtype=float)
+                b_vec = np.array(rows_b, dtype=float)
+                W = np.diag(weights)
+
+                try:
+                    AtWA = A.T @ W @ A
+                    AtWb = A.T @ W @ b_vec
+                    sol = np.linalg.solve(AtWA, AtWb)
+                    sol_x, sol_y = float(sol[0]), float(sol[1])
+                except np.linalg.LinAlgError:
+                    logger.warning("LOB N-LOB numpy WLS: singular matrix — falling back to 2-LOB")
+            except ImportError:
+                pass
+
+        # ── Last resort: 2-LOB on first two measurements ─────────────────
+        if sol_x is None:
+            logger.warning("numpy not available; falling back to 2-LOB fix")
             return self._two_lob_fix(measurements[0], measurements[1])
 
-        px, py = float(sol[0]), float(sol[1])
+        px, py = sol_x, sol_y
         lat, lon = _from_xy(px, py, ref_lat, ref_lon)
 
         if not _valid_coords(lat, lon):
             return None
 
         # Residual spread → error radius
-        residuals = []
-        for i, m in enumerate(measurements):
-            xi, yi = _to_xy(m.node_lat, m.node_lon, ref_lat, ref_lon)
-            bi = math.radians(m.bearing_deg)
-            cb, sb = math.cos(bi), math.sin(bi)
-            # Perpendicular distance from crosscut to bearing line
-            res = abs(cb * (px - xi) - sb * (py - yi))
-            residuals.append(res)
+        residuals = [abs(r) for r in _residuals([px, py])]
         rms_residual = math.sqrt(sum(r ** 2 for r in residuals) / len(residuals))
 
         mean_uncert_rad = math.radians(

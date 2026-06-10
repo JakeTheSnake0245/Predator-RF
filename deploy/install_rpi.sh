@@ -103,26 +103,74 @@ UDEV
   udevadm control --reload-rules 2>/dev/null || true
   usermod -aG plugdev "${SVC_USER}" 2>/dev/null || true
 
-  # krakensdr_doa systemd drop-in config location.
-  # Operators must install krakensdr_doa separately per the KrakenSDR
-  # documentation (https://github.com/krakenrf/krakensdr_doa).
-  # We write a stub environment file pointing at the Predator backend
-  # WebSocket consumer so the operator only needs to set the correct
-  # DAQ IP in krakensdr_doa's settings.
+  # ── krakensdr_doa: clone + pip-install + systemd unit ─────────────────
+  KRAKEN_DOA_DIR="/opt/krakensdr_doa"
+  KRAKEN_DOA_REPO="https://github.com/krakenrf/krakensdr_doa.git"
+
+  if [[ -d "${KRAKEN_DOA_DIR}/.git" ]]; then
+    echo "  → krakensdr_doa already cloned — pulling latest"
+    git -C "${KRAKEN_DOA_DIR}" pull --ff-only 2>/dev/null || true
+  else
+    echo "  → cloning krakensdr_doa into ${KRAKEN_DOA_DIR}"
+    apt-get install -y --no-install-recommends git 2>/dev/null || true
+    git clone --depth 1 "${KRAKEN_DOA_REPO}" "${KRAKEN_DOA_DIR}"
+  fi
+
+  if [[ -f "${KRAKEN_DOA_DIR}/requirements.txt" ]]; then
+    echo "  → installing krakensdr_doa Python requirements"
+    pip3 install -q --break-system-packages \
+      -r "${KRAKEN_DOA_DIR}/requirements.txt" 2>/dev/null || \
+    pip3 install -q -r "${KRAKEN_DOA_DIR}/requirements.txt"
+  fi
+
+  # ── /etc/krakensdr/predator.env ───────────────────────────────────────
   mkdir -p /etc/krakensdr
   if [[ ! -f /etc/krakensdr/predator.env ]]; then
     cat > /etc/krakensdr/predator.env <<'KENV'
-# KrakenSDR → Predator RF integration environment hints.
-# These values are informational; configure krakensdr_doa independently.
+# KrakenSDR → Predator RF integration environment.
+# Adjust KRAKEN_DOA_HOST/PORT to match your krakensdr_doa instance.
 PREDATOR_LOB_WS_PORT=8082
 PREDATOR_LOB_WS_PATH=/ws
-# Set KRAKEN_DOA_HOST to the IP of the machine running krakensdr_doa,
-# then configure kraken_lob_decoder in SDRPP Module Manager with this address.
 KRAKEN_DOA_HOST=127.0.0.1
+KRAKEN_DOA_DOA_PORT=8081
 KENV
     echo "  → wrote /etc/krakensdr/predator.env (review and adjust)"
   fi
-  echo "[5+/8] KrakenSDR setup complete — install krakensdr_doa separately"
+
+  # ── krakensdr-doa.service systemd unit ────────────────────────────────
+  # Runs krakensdr_doa's web server so Predator RF can connect to it via
+  # WebSocket.  The unit uses the environment file above so operators only
+  # need to edit one file.  Enabled but not started — the operator must
+  # confirm hardware is connected before first start.
+  if [[ ! -f /etc/systemd/system/krakensdr-doa.service ]]; then
+    cat > /etc/systemd/system/krakensdr-doa.service <<'SVCEOF'
+[Unit]
+Description=KrakenSDR DOA engine
+Documentation=https://github.com/krakenrf/krakensdr_doa
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/krakensdr_doa
+EnvironmentFile=-/etc/krakensdr/predator.env
+ExecStart=/usr/bin/python3 /opt/krakensdr_doa/_UI/kraken_web_interface.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+    echo "  → wrote krakensdr-doa.service (start with: systemctl start krakensdr-doa)"
+  fi
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable krakensdr-doa.service 2>/dev/null || true
+
+  echo "[5+/8] KrakenSDR setup complete"
+  echo "  → krakensdr_doa at ${KRAKEN_DOA_DIR}"
+  echo "  → edit /etc/krakensdr/predator.env then: systemctl start krakensdr-doa"
 fi
 
 echo "[6/8] env file"

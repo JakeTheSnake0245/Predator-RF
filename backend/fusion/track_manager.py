@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import time
 from typing import Dict, List, Optional, Callable
 
@@ -11,8 +12,17 @@ from backend.fusion.track_associator import HardwareAwareAssociator
 from backend.fusion.confidence_engine import ConfidenceEngine
 from backend.fusion.proximity_estimator import ProximityEstimator
 from backend.fusion.lob_triangulator import LOBTriangulator
+try:
+    from backend.fusion.stationarity_gate import FixCandidate, HistoryPoint, StationarityGate as _StationarityGate
+    _HAS_STATIONARITY_GATE = True
+except ImportError:
+    _HAS_STATIONARITY_GATE = False
 
 logger = logging.getLogger(__name__)
+
+# Confidence ceiling for an LOB+TDOA blend.  Above 0.85 implies sub-50 m
+# accuracy which no current KrakenSDR+TDOA pipeline can reliably deliver.
+MAX_LOB_TDOA_BLEND_CONF = 0.85
 
 # Track ages before state transition
 COAST_AFTER_S = 30.0
@@ -35,7 +45,8 @@ class TrackManager:
     def __init__(self,
                  proximity_estimator: Optional[ProximityEstimator] = None,
                  custody_elector=None,
-                 lob_triangulator: Optional[LOBTriangulator] = None):
+                 lob_triangulator: Optional[LOBTriangulator] = None,
+                 stationarity_gate=None):
         self.tracks: Dict[str, EmitterTrack] = {}
         self.sensor_nodes: Dict[str, SensorNodeTrust] = {}
         self._associator = HardwareAwareAssociator()
@@ -57,6 +68,15 @@ class TrackManager:
         self._lob_triangulator: LOBTriangulator = (
             lob_triangulator if lob_triangulator is not None else LOBTriangulator()
         )
+        # Optional StationarityGate — when provided, LOB crosscut fixes are
+        # sanity-checked before being promoted to the primary track location.
+        # The gate is shared across all tracks (stateless scoring fn);
+        # the per-track history list is stored on the track itself.
+        # Typed loosely so that the fusion-layer import doesn't hard-fail
+        # when stationarity_gate.py is unavailable.
+        self._lob_stationarity_gate = None
+        if stationarity_gate is not None:
+            self._lob_stationarity_gate = stationarity_gate
         self._on_new_track: Optional[Callable[[EmitterTrack], None]] = None
         self._on_update: Optional[Callable[[EmitterTrack], None]] = None
         self._archived: Dict[str, EmitterTrack] = {}
@@ -207,7 +227,8 @@ class TrackManager:
 
         track.last_seen_ns = measurement.timestamp_ns
 
-        # Attempt triangulation.
+        # Attempt triangulation using only recent measurements (TTL filtering
+        # is now handled inside LOBTriangulator.triangulate()).
         fix = self._lob_triangulator.triangulate(track.lob_measurement_history)
         if fix is not None:
             track.lob_crosscut_lat       = fix.estimated_lat
@@ -215,19 +236,107 @@ class TrackManager:
             track.lob_crosscut_radius_m  = fix.error_radius_m
             track.lob_crosscut_confidence = fix.location_confidence
 
-            # Promote LOB crosscut to the primary location only when:
-            #   a) No TDOA fix exists yet (TDOA always wins once produced), OR
-            #   b) The LOB crosscut has higher confidence (rare, but possible
-            #      when a 5-node Kraken array outperforms a 2-node TDOA fix).
-            if (track.location_method is None or
-                    track.location_method in ("rssi_proximity", "lob_crosscut") or
-                    (track.location_method == "lob_crosscut" and
-                     fix.location_confidence > track.location_confidence)):
-                track.estimated_lat = fix.estimated_lat
-                track.estimated_lon = fix.estimated_lon
-                track.location_confidence = fix.location_confidence
-                track.location_method = fix.location_method
-                track.location_error_radius_m = fix.error_radius_m
+            # ── Stationarity gate for LOB crosscut fix ────────────────────
+            # When a gate is configured, sanity-check the LOB crosscut against
+            # the track's accepted location history before promoting it.
+            gate_accepted = True
+            if self._lob_stationarity_gate is not None and _HAS_STATIONARITY_GATE:
+                try:
+                    candidate = FixCandidate(
+                        lat=fix.estimated_lat,
+                        lon=fix.estimated_lon,
+                        ellipse_a_m=fix.error_radius_m,
+                        timestamp_ns=measurement.timestamp_ns,
+                    )
+                    verdict = self._lob_stationarity_gate.evaluate(
+                        candidate,
+                        getattr(track, "location_history", []),
+                    )
+                    if not verdict.accepted:
+                        logger.info(
+                            "Track %s LOB crosscut rejected by stationarity gate: %s",
+                            track.emitter_id, verdict.reason)
+                        gate_accepted = False
+                    else:
+                        # Append accepted fix to the track's location history.
+                        hp = HistoryPoint(
+                            lat=fix.estimated_lat,
+                            lon=fix.estimated_lon,
+                            timestamp_ns=measurement.timestamp_ns,
+                            ellipse_a_m=fix.error_radius_m,
+                        )
+                        if not hasattr(track, "location_history"):
+                            track.location_history = []
+                        track.location_history.append(hp)
+                        history_max = getattr(
+                            self._lob_stationarity_gate, "history_max", 20)
+                        if len(track.location_history) > history_max:
+                            track.location_history = (
+                                track.location_history[-history_max:])
+                except Exception as exc:
+                    logger.debug("LOB stationarity gate error — fix accepted: %s", exc)
+
+            if gate_accepted:
+                # ── LOB+TDOA hybrid merge ─────────────────────────────────
+                # When a TDOA fix already exists, blend LOB crosscut and TDOA
+                # using inverse-variance weighting (w = 1/r²).  This raises
+                # effective position accuracy when both sources agree, and
+                # downweights either source in proportion to its error radius.
+                if (track.location_method == "tdoa" and
+                        track.estimated_lat is not None and
+                        track.estimated_lon is not None and
+                        track.location_error_radius_m and
+                        track.location_error_radius_m > 0):
+                    tdoa_r = track.location_error_radius_m
+                    lob_r  = fix.error_radius_m
+                    w_tdoa = 1.0 / (tdoa_r ** 2)
+                    w_lob  = 1.0 / (lob_r ** 2)
+                    w_sum  = w_tdoa + w_lob
+                    blend_lat  = (w_tdoa * track.estimated_lat  + w_lob * fix.estimated_lat)  / w_sum
+                    blend_lon  = (w_tdoa * track.estimated_lon  + w_lob * fix.estimated_lon)  / w_sum
+                    blend_r    = math.sqrt(1.0 / w_sum)
+                    blend_conf = min(
+                        MAX_LOB_TDOA_BLEND_CONF,
+                        (w_tdoa * track.location_confidence + w_lob * fix.location_confidence)
+                        / w_sum,
+                    )
+                    track.estimated_lat           = round(blend_lat, 7)
+                    track.estimated_lon           = round(blend_lon, 7)
+                    track.location_confidence     = round(blend_conf, 3)
+                    track.location_error_radius_m = round(blend_r, 1)
+                    track.location_method         = "lob_tdoa_blend"
+                    logger.debug(
+                        "Track %s LOB+TDOA blend: r_lob=%.0fm r_tdoa=%.0fm → r_blend=%.0fm",
+                        track.emitter_id, lob_r, tdoa_r, blend_r)
+
+                # ── Promote LOB crosscut to primary location ──────────────
+                # Only when the current primary fix is weaker:
+                #   a) No fix yet (location_method is None)
+                #   b) Current fix is an RSSI proximity estimate (weakest)
+                #   c) Current fix is also an LOB crosscut AND the new one
+                #      has higher confidence (improvement only — never
+                #      overwrite a better LOB with a worse one)
+                elif (track.location_method is None or
+                        track.location_method == "rssi_proximity" or
+                        (track.location_method == "lob_crosscut" and
+                         fix.location_confidence > (track.location_confidence or 0.0))):
+                    track.estimated_lat           = fix.estimated_lat
+                    track.estimated_lon           = fix.estimated_lon
+                    track.location_confidence     = fix.location_confidence
+                    track.location_method         = fix.location_method
+                    track.location_error_radius_m = fix.error_radius_m
+
+        # ── Custody election hook ─────────────────────────────────────────
+        # Notify the custody elector that this track has been updated by a
+        # LOB measurement so it can re-score sensor assignment if needed.
+        # The elector is duck-typed — no direct import dependency.
+        if self._custody_elector is not None:
+            try:
+                assess_fn = getattr(self._custody_elector, "assess", None)
+                if callable(assess_fn):
+                    assess_fn(track, list(self.sensor_nodes.values()))
+            except Exception as exc:
+                logger.debug("LOB custody assess error — ignored: %s", exc)
 
         if self._on_update:
             self._on_update(track)

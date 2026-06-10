@@ -664,6 +664,27 @@ void webBackendUpdateNodes(const nlohmann::json& nodes) {
     gStateNodes = nodes;
 }
 
+// webBackendUpdateTracks — replace the cached track list served at GET /tracks/.
+//
+// `tracks` is a JSON array of track objects.  Each element must include the
+// full Python-parity schema (EmitterTrack.to_dict()), which includes the
+// following LOB / KrakenSDR fields (null when no KrakenSDR data has arrived):
+//
+//   "lob_bearing_deg"          float | null   most-confident bearing (true-N)
+//   "lob_bearing_uncert_deg"   float | null   1-sigma uncertainty in degrees
+//   "lob_confidence"           float | null   0–1 bearing confidence
+//   "lob_node_ids"             array<string>  contributing KrakenSDR node IDs
+//   "_lob_node_lat"            float | null   anchor lat for map wedge
+//   "_lob_node_lon"            float | null   anchor lon for map wedge
+//   "lob_crosscut_lat"         float | null   crosscut fix latitude
+//   "lob_crosscut_lon"         float | null   crosscut fix longitude
+//   "lob_crosscut_radius_m"    float | null   1-sigma error circle radius
+//   "lob_crosscut_confidence"  float | null   0–1 crosscut confidence
+//
+// Callers that construct track JSON from C++ structs MUST emit all of the
+// above keys (null-initialised when absent) to maintain Python↔C++ parity.
+// The routeTracks handler and the SSE /events/stream share gStateTracks, so
+// any missing key will silently drop from the dashboard.
 void webBackendUpdateTracks(const nlohmann::json& tracks) {
     std::lock_guard<std::mutex> lk(gStateMtx);
     gStateTracks = tracks;

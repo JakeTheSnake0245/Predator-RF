@@ -120,15 +120,36 @@ sudo bash deploy/install_rpi.sh --kraken
 ```
 
 `--kraken` additionally:
-- Installs `numpy` and `scipy` for the N-LOB weighted least-squares path.
-- Installs `rtl-sdr`, `libatlas-base-dev`, and `usbutils` via apt.
+- Installs `numpy` and `scipy` for the N-LOB solver path.
+- Installs `rtl-sdr`, `libatlas-base-dev`, `usbutils`, and `git` via apt.
 - Writes `/etc/udev/rules.d/99-krakensdr.rules` granting USB access.
 - Adds the service user to the `plugdev` group.
-- Writes `/etc/krakensdr/predator.env` with integration hints.
+- **Clones `krakensdr_doa` into `/opt/krakensdr_doa`** (shallow clone of
+  `https://github.com/krakenrf/krakensdr_doa`) and pip-installs its
+  `requirements.txt`.  On re-runs it `git pull --ff-only` instead of
+  re-cloning.
+- Writes `/etc/systemd/system/krakensdr-doa.service` (enabled, not started)
+  that launches `krakensdr_doa`'s web interface under `/opt/krakensdr_doa`.
+- Writes `/etc/krakensdr/predator.env` with tunable `KRAKEN_DOA_HOST/PORT`
+  environment hints used by the systemd unit.
+
+**First-start sequence after `--kraken`:**
+```bash
+# 1. Confirm the array is plugged in and drivers are loaded
+lsusb | grep 0bda
+
+# 2. Review / adjust the env file
+sudoedit /etc/krakensdr/predator.env
+
+# 3. Start the DOA engine
+sudo systemctl start krakensdr-doa
+
+# 4. (optionally) watch its log
+journalctl -u krakensdr-doa -f
+```
 
 Without `--kraken` the triangulator falls back to the closed-form 2-node
-solver (Python stdlib only).  `krakensdr_doa` itself must be installed
-separately — see https://github.com/krakenrf/krakensdr_doa.
+solver (Python stdlib only).
 
 ## Python Backend
 
@@ -154,12 +175,24 @@ separately — see https://github.com/krakenrf/krakensdr_doa.
 |---|---|
 | 0 or 1 | Returns `None` |
 | 2 | Closed-form 2-line intersection with crossing-angle veto (`< 15°` → `None`) |
-| 3+ | Weighted least-squares (`numpy`), weight = `confidence²`; falls back to 2-LOB if `numpy` unavailable |
+| 3+ | `scipy.optimize.least_squares` (Levenberg-Marquardt) preferred; numpy normal-equations WLS fallback; 2-LOB last resort |
 
-**Crossing-angle veto:**  When two bearing lines are nearly parallel
-(`|sin(b1 − b2)| < sin(15°)`) the intersection is geometrically
-unstable.  The fix is suppressed; the operator should wait for a third
-node or a better-separated pair.
+**Solver preference (3+ nodes):**
+1. `scipy.optimize.least_squares` with LM damping — most robust on
+   near-degenerate geometry (parallel-ish bearings, one weak node).
+2. NumPy normal equations (`A^T W A x = A^T W b`) — faster but can
+   diverge when `A^T W A` is near-singular.
+3. Closed-form 2-LOB on the first two measurements — used only when
+   neither `scipy` nor `numpy` is available.
+
+**TTL window:**  Measurements older than `measurement_ttl_s` (default
+30 s) are excluded before the solver runs.  This prevents stale bearings
+from a previous sweep from distorting the current crosscut.  If _all_
+measurements fall outside the TTL window (e.g. in unit tests where
+timestamps are synthetic) the full history is used as a fallback.
+
+**Crossing-angle veto (2-node only):**  When `|sin(b1 − b2)| < sin(15°)`
+the intersection is geometrically unstable; the fix is suppressed.
 
 **Error radius:**  Estimated as `range × tan(mean_uncert) × 2`, clamped
 to `[20 m, 50 km]`.  Treat as a rough DF scatter cone, not a hard CEP.
@@ -177,12 +210,24 @@ track = track_manager.ingest_lob(measurement)
 - Associates measurement with an existing track by frequency (`±25 kHz`)
   or creates a new one.
 - Stores `measurement` in `track.lob_measurement_history` (capped at 20).
-- Calls `LOBTriangulator.triangulate()` after each measurement.
-- When a crosscut fix is produced, updates `track.lob_crosscut_*` fields
-  **and** promotes the crosscut to `track.estimated_lat/lon` unless a TDOA
-  fix is already present.
-- LOB crosscut only overwrites RSSI proximity or an older, lower-confidence
-  LOB fix — it never overwrites a `location_method == "tdoa"` fix.
+- Calls `LOBTriangulator.triangulate()` — TTL filtering (30 s) runs inside
+  the triangulator before the solver sees any measurements.
+- When a crosscut fix is produced, updates `track.lob_crosscut_*` fields and:
+  1. **Stationarity gate** (if `stationarity_gate=` was passed to
+     `TrackManager.__init__`): sanity-checks the fix against the track's
+     accepted location history.  Rejected fixes update `lob_crosscut_*`
+     but are _not_ promoted to the primary location.
+  2. **LOB+TDOA hybrid merge** (if `track.location_method == "tdoa"`):
+     blends the LOB crosscut with the existing TDOA fix using
+     inverse-variance weighting (`w = 1/r²`).  The result is stored as
+     `location_method = "lob_tdoa_blend"` with a confidence ceiling of
+     `MAX_LOB_TDOA_BLEND_CONF = 0.85`.
+  3. **LOB-only promotion** (if no TDOA fix present): promotes crosscut
+     to primary only when the current method is `None`,
+     `"rssi_proximity"`, or `"lob_crosscut"` with _lower_ confidence —
+     never overwrites a better LOB fix with a worse one.
+- Calls `custody_elector.assess(track, nodes)` if a `custody_elector`
+  was wired in, so custody re-scores immediately on LOB updates.
 
 ### Track wire format (GET /tracks/)
 
