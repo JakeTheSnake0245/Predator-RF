@@ -298,6 +298,13 @@
                     <span class="toggle-track"></span>
                 </label>
             </div>
+            <div class="layer-row">
+                <span class="layer-label">Elevation</span>
+                <label class="toggle-switch buildings">
+                    <input type="checkbox" id="toggle-terrain" onchange="toggleTerrain(this.checked)">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
         </div>
     </div>
 
@@ -485,6 +492,55 @@
             } catch(e) {}
         }
 
+        /* ── Terrain / elevation ── */
+        let terrainEnabled = false;
+
+        function addTerrain() {
+            // AWS Terrain RGB (Terrarium encoding) — free, no API key.
+            // Provides ~30 m global elevation resolution up to zoom 15.
+            map.addSource('_terrain_dem', {
+                type: 'raster-dem',
+                tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+                encoding: 'terrarium',
+                tileSize: 256,
+                maxzoom: 15,
+                attribution: '© Mapzen/Amazon elevation'
+            });
+
+            // Hillshade layer — subtle tactical shading visible in 2D as well
+            // as adding depth cues in 3D. Inserted below roads so it doesn't
+            // occlude labels.
+            const firstSymbolId = map.getStyle().layers
+                .find(l => l.type === 'symbol')?.id;
+            map.addLayer({
+                id: '_hillshade',
+                type: 'hillshade',
+                source: '_terrain_dem',
+                layout: { visibility: 'none' },
+                paint: {
+                    'hillshade-shadow-color':   '#0a130a',
+                    'hillshade-highlight-color':'#1a3020',
+                    'hillshade-accent-color':   '#0d1a0d',
+                    'hillshade-illumination-direction': 315,
+                    'hillshade-exaggeration':   0.6
+                }
+            }, firstSymbolId || undefined);
+        }
+
+        function toggleTerrain(enabled) {
+            terrainEnabled = enabled;
+            if (!styleReady) return;
+            try {
+                if (enabled) {
+                    map.setTerrain({ source: '_terrain_dem', exaggeration: 1.4 });
+                    map.setLayoutProperty('_hillshade', 'visibility', 'visible');
+                } else {
+                    map.setTerrain(null);
+                    map.setLayoutProperty('_hillshade', 'visibility', 'none');
+                }
+            } catch(e) {}
+        }
+
         /* ── 2D / 3D view ── */
         function setView2D() {
             document.getElementById('btn-2d').classList.add('active');
@@ -663,12 +719,27 @@
             addPositionLayer();
             add3DBuildingLayer();
             addEmitterLayers();
+            addTerrain();
+
+            // Force the canvas to match the container's true pixel size.
+            // MapLibre may have initialised inside an iframe before the flex
+            // layout had settled, resulting in a canvas that is narrower than
+            // the element (the classic "tiles only on the left half" bug).
+            map.resize();
+
             // Notify the parent CoC dashboard that the map is ready
             // so it can flush queued track-update messages.
             if (window.parent && window.parent !== window) {
                 window.parent.postMessage({ type: 'predator-map-ready' }, '*');
             }
         });
+
+        // Keep the canvas in sync whenever the iframe is resized (e.g. the
+        // dashboard grid re-flows at breakpoints or the browser window resizes).
+        if (typeof ResizeObserver !== 'undefined') {
+            new ResizeObserver(() => { try { map.resize(); } catch(e) {} })
+                .observe(document.getElementById('map'));
+        }
 
         /* ── Dashboard postMessage bridge ── */
         // Receives track updates from the parent CoC dashboard and forwards
