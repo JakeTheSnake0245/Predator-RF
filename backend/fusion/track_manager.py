@@ -247,42 +247,49 @@ class TrackManager:
             # ── Stationarity gate for LOB crosscut fix ────────────────────
             # When a gate is configured, sanity-check the LOB crosscut against
             # the track's accepted location history before promoting it.
+            # location_history stores 4-tuples (lat, lon, timestamp_ns,
+            # ellipse_a_m) — same convention as the TDOA path in main.py —
+            # so HistoryPoint(*entry) unpacking always works on both sides.
             gate_accepted = True
             if self._lob_stationarity_gate is not None and _HAS_STATIONARITY_GATE:
-                try:
-                    candidate = FixCandidate(
-                        lat=fix.estimated_lat,
-                        lon=fix.estimated_lon,
-                        ellipse_a_m=fix.error_radius_m,
-                        timestamp_ns=measurement.timestamp_ns,
-                    )
-                    verdict = self._lob_stationarity_gate.evaluate(
-                        candidate,
-                        getattr(track, "location_history", []),
-                    )
-                    if not verdict.accepted:
-                        logger.info(
-                            "Track %s LOB crosscut rejected by stationarity gate: %s",
-                            track.emitter_id, verdict.reason)
-                        gate_accepted = False
-                    else:
-                        # Append accepted fix to the track's location history.
-                        hp = HistoryPoint(
-                            lat=fix.estimated_lat,
-                            lon=fix.estimated_lon,
-                            timestamp_ns=measurement.timestamp_ns,
-                            ellipse_a_m=fix.error_radius_m,
-                        )
-                        if not hasattr(track, "location_history"):
-                            track.location_history = []
-                        track.location_history.append(hp)
-                        history_max = getattr(
-                            self._lob_stationarity_gate, "history_max", 20)
-                        if len(track.location_history) > history_max:
-                            track.location_history = (
-                                track.location_history[-history_max:])
-                except Exception as exc:
-                    logger.debug("LOB stationarity gate error — fix accepted: %s", exc)
+                candidate = FixCandidate(
+                    lat=fix.estimated_lat,
+                    lon=fix.estimated_lon,
+                    ellipse_a_m=fix.error_radius_m,
+                    timestamp_ns=measurement.timestamp_ns,
+                )
+                # Convert stored tuples → HistoryPoint objects for the gate.
+                history = [HistoryPoint(*e)
+                           for e in getattr(track, "location_history", [])]
+                verdict = self._lob_stationarity_gate.evaluate(
+                    candidate, history,
+                    prior_motion_state=getattr(track, "motion_state", "unknown"))
+                if not verdict.accepted:
+                    logger.info(
+                        "Track %s LOB crosscut rejected by stationarity gate: %s",
+                        track.emitter_id, verdict.reason)
+                    gate_accepted = False
+                else:
+                    # Store accepted fix as a tuple (lat, lon, ts_ns, r_m)
+                    # so to_dict() serialises naturally and TDOA's
+                    # HistoryPoint(*entry) unpacking is always valid.
+                    if not hasattr(track, "location_history"):
+                        track.location_history = []
+                    track.location_history.append((
+                        fix.estimated_lat,
+                        fix.estimated_lon,
+                        measurement.timestamp_ns,
+                        fix.error_radius_m,
+                    ))
+                    history_max = getattr(
+                        self._lob_stationarity_gate, "history_max", 20)
+                    if len(track.location_history) > history_max:
+                        track.location_history = (
+                            track.location_history[-history_max:])
+                    # Update motion state so _advance_state() applies the
+                    # correct STABLE threshold (mobile tracks need 25 LOB
+                    # fixes; stationary/unknown tracks need 10).
+                    track.motion_state = verdict.motion_state
 
             if gate_accepted:
                 # ── LOB+TDOA hybrid merge ─────────────────────────────────
