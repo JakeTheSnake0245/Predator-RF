@@ -26,16 +26,14 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .schema import (
-    DEVICE_LOCAL_FIELDS,
     SchemaError,
     validate_config,
     validate_interface,
 )
 from .token import (
-    TokenError,
     export_token,
     import_token,
     mint_replication_token,

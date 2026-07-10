@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Optional
+from typing import Optional
 
 from backend.models.emitter_track import EmitterTrack
 from backend.models.rf_event import RFEvent
@@ -93,6 +93,8 @@ class ConfidenceEngine:
         try:
             stdev = statistics.stdev(track.frequency_history)
         except Exception:
+            logger.debug("frequency stdev failed; defaulting to 0.5",
+                         exc_info=True)
             return 0.5
         # stdev < 500 Hz → 1.0; stdev > 10 kHz → 0.2
         return max(0.2, min(1.0, 1.0 - (stdev / 10_000.0)))

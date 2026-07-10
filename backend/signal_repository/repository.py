@@ -31,7 +31,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
 
 from .fingerprinter import SignalFingerprinter, MATCH_THRESHOLD
 

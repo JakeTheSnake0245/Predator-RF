@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Awaitable, Callable, Dict, Iterable, Optional, Protocol
+from typing import Awaitable, Callable, Dict, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 

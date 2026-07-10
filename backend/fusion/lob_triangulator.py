@@ -234,6 +234,8 @@ class LOBTriangulator:
              diverge when geometry is ill-conditioned.
           3. 2-LOB closed-form on the first two measurements — last resort.
         """
+        if not measurements:            # defensive: callers already guard >=3
+            return None
         ref_lat = sum(m.node_lat for m in measurements) / len(measurements)
         ref_lon = sum(m.node_lon for m in measurements) / len(measurements)
 

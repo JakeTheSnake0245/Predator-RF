@@ -43,7 +43,10 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.models.sdr_backend import SDRBackend
 
 logger = logging.getLogger(__name__)
 

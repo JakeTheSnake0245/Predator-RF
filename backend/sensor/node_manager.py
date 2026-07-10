@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Callable
+from typing import List, Optional, Callable
 
 from backend.models.rf_event import RFEvent
 from backend.models.sensor_node import SensorNodeTrust
@@ -9,8 +9,12 @@ from backend.sensor.hardware.sdr_interface import SDRInterface
 from backend.sensor.modes import ModeConfig, SURVEY_MODE
 from backend.sensor.dsp_engine import HardwareAdaptiveDSP
 from backend.sensor.calibration.calibrator import SensorCalibrator
-from backend.sensor.detection.detector_registry import detector_registry
-from backend.sensor.decoders.decoder_registry import decoder_registry
+# Imported for their import-time side effect: each module's registry
+# populates its defaults via _register_defaults() on load. Do NOT remove
+# these even though the names look unused — dropping them breaks
+# detector/decoder registration.
+from backend.sensor.detection.detector_registry import detector_registry  # noqa: F401
+from backend.sensor.decoders.decoder_registry import decoder_registry  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,5 @@
 import logging
-import time
-from typing import List, Optional
+from typing import List
 import numpy as np
 
 from backend.models.rf_event import RFEvent

@@ -134,7 +134,8 @@ try:
                 try:
                     t._latest_assessment = asmt
                 except Exception:
-                    pass
+                    logger.debug("could not attach _latest_assessment to track",
+                                 exc_info=True)
                 approved_tracks.append(t)
 
         events = []

@@ -15,7 +15,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import defaultdict
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 class MetricsRegistry:

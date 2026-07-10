@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from typing import Optional
-import asyncio
 import numpy as np
 
 from .capabilities import SDRCapabilities, GainMode

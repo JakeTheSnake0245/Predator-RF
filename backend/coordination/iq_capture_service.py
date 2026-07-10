@@ -17,13 +17,9 @@ The captured file is available at GET /api/iq/<capture_id>
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 import uuid
 from typing import Optional
-
-import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +60,6 @@ class IQCaptureService:
         if client is None:
             logger.warning("IQCaptureService: node %s not found in fleet", node_id)
             return None
-
-        args = {
-            "freq_hz":        freq_hz,
-            "duration_s":     dur,
-            "sample_rate_hz": sr,
-            "signal_id":      sid,
-        }
 
         try:
             ok = await client.send_iq_capture_command(freq_hz, dur, sr, sid)

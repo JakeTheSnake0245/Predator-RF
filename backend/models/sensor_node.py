@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
-import time
+import logging
 
 from backend.models.sdr_backend import SDRBackend
+
+logger = logging.getLogger(__name__)
 
 
 def _load_hardware_capabilities(hardware_code: str):
@@ -31,6 +33,8 @@ def _load_hardware_capabilities(hardware_code: str):
             return None
         return getter(hardware_code)
     except Exception:
+        logger.debug("hardware-capabilities lookup for %s failed",
+                     hardware_code, exc_info=True)
         return None
 
 

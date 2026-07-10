@@ -6,7 +6,6 @@ overrides, and observability over HTTP/JSON.
 
 import logging
 import os
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +63,12 @@ def create_app(track_manager=None, fleet_manager=None,
                             dispatch=make_bearer_middleware(
                                 config.api_bearer_token))
         logger.info("API auth: bearer-token middleware ARMED")
+    elif config.api_require_auth:
+        # Fail closed: an operator explicitly demanded auth but no token is
+        # configured. Refuse to start rather than come up with an open API.
+        raise RuntimeError(
+            "API_REQUIRE_AUTH is set but API_BEARER_TOKEN is empty. "
+            "Set a bearer token or unset API_REQUIRE_AUTH.")
     else:
         logger.warning("API auth: DISABLED (API_BEARER_TOKEN unset). "
                        "Do NOT expose this backend beyond a trusted LAN.")
@@ -191,7 +196,6 @@ def create_app(track_manager=None, fleet_manager=None,
     # /api/v1/* never gets shadowed by a static file.
     try:
         from fastapi.staticfiles import StaticFiles
-        from fastapi.responses import RedirectResponse
 
         _dashboard_dir = os.path.join(_PROJECT_ROOT, "dashboard")
         _maps_dir      = os.path.join(_PROJECT_ROOT, "root", "res", "maps")

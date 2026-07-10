@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from backend.models.rf_event import RFEvent
-from backend.models.emitter_track import EmitterTrack
 
 logger = logging.getLogger(__name__)
 

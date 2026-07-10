@@ -1,5 +1,4 @@
 import logging
-import time
 from typing import Dict, List, Optional, Tuple
 
 from backend.models.rf_event import RFEvent

@@ -112,9 +112,10 @@ public:
     bool stopScan() { return sendCommand("scan",   "stop"); }
 
     bool setMissionMode(const std::string& mode) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "{\"mode\":\"%s\"}", mode.c_str());
-        return sendCommand("mission", "set-mode", buf);
+        // Escape the mode so a value containing a quote/backslash cannot break
+        // out of the JSON string (no fixed-size buffer → no silent truncation).
+        return sendCommand("mission", "set-mode",
+                           "{\"mode\":\"" + _jsonEscape(mode) + "\"}");
     }
 
     std::string activeHost() const {
@@ -134,6 +135,22 @@ private:
 
     std::string _buildBaseUrl() const {
         return "http://" + _active_host + ":" + std::to_string(_port);
+    }
+
+    static std::string _jsonEscape(const std::string& s) {
+        std::string out;
+        out.reserve(s.size() + 8);
+        for (char c : s) {
+            switch (c) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:   out.push_back(c);
+            }
+        }
+        return out;
     }
 
     mutable std::mutex _cfg_mtx;

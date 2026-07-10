@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import time
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import List, Optional, Sequence
+from typing import List
 
 FINGERPRINT_DIM = 32
 MATCH_THRESHOLD = float(os.getenv("FINGERPRINT_MATCH_THRESHOLD", "0.82"))

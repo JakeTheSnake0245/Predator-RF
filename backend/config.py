@@ -3,7 +3,6 @@ Backend configuration — read from environment variables or .env file.
 """
 import os
 from dataclasses import dataclass, field
-from typing import List
 
 
 def _env(key: str, default: str = "") -> str:
@@ -196,6 +195,12 @@ class BackendConfig:
     # Set to a long random string for any LAN-exposed deployment.
     api_bearer_token: str = field(
         default_factory=lambda: _env("API_BEARER_TOKEN", ""))
+
+    # Fail-closed switch. When true, the backend REFUSES to start unless
+    # api_bearer_token is set — so a production deploy can never silently
+    # come up with an open API.
+    api_require_auth: bool = field(
+        default_factory=lambda: _env_bool("API_REQUIRE_AUTH", False))
 
     # ── Manual approval gate for CoT pushes ───────────────────────────────
     # When true, CoT escalations enqueue into ApprovalQueue and the

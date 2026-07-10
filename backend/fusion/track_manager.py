@@ -13,7 +13,7 @@ from backend.fusion.confidence_engine import ConfidenceEngine
 from backend.fusion.proximity_estimator import ProximityEstimator
 from backend.fusion.lob_triangulator import LOBTriangulator
 try:
-    from backend.fusion.stationarity_gate import FixCandidate, HistoryPoint, StationarityGate as _StationarityGate
+    from backend.fusion.stationarity_gate import FixCandidate, HistoryPoint
     _HAS_STATIONARITY_GATE = True
 except ImportError:
     _HAS_STATIONARITY_GATE = False

@@ -47,7 +47,7 @@ from backend.coordination.kujhad_rns_client import KujhadRNSClient
 from backend.coordination.auto_tasker import AutoTasker
 from backend.coordination.custody_election import CustodyElector
 from backend.coordination.fleet_state_manager import FleetStateManager
-from backend.coordination.correlation_engine import CorrelationEngine, CorrelationRule
+from backend.coordination.correlation_engine import CorrelationEngine
 from backend.signal_repository.repository import SignalRepository
 from backend.coordination.iq_capture_service import IQCaptureService
 from backend.models.lob_measurement import LOBMeasurement
@@ -903,18 +903,20 @@ class PredatorBackend:
                 logger.warning("RNS control socket start failed: %s", exc)
                 self._rns_control = None
 
-        # Background maintenance tasks
-        asyncio.create_task(
+        # Background maintenance tasks. Use _spawn() so the tasks are held in
+        # _pending_tasks (preventing GC of the task object mid-flight) and are
+        # drained cleanly on shutdown.
+        self._spawn(
             self.track_manager.maintenance_loop(config.track_maintenance_interval_s))
-        asyncio.create_task(self._merge_loop())
-        asyncio.create_task(self._baseline_prune_loop())
+        self._spawn(self._merge_loop())
+        self._spawn(self._baseline_prune_loop())
         # Cross-station dedup runs only when CoC is on (otherwise every
         # track is local and the dedup pass is a no-op).
         if self.coc is not None:
-            asyncio.create_task(self._dedup_loop())
+            self._spawn(self._dedup_loop())
         # Approval-queue housekeeping: expire stale items so the UI
         # doesn't show a 6-hour-old escalation as still actionable.
-        asyncio.create_task(self._approval_expiry_loop())
+        self._spawn(self._approval_expiry_loop())
 
         logger.info("Backend started. %d node(s) in fleet.",
                     self.fleet_manager.node_count())

@@ -1,8 +1,6 @@
 import logging
 import time
 import numpy as np
-from typing import Optional
-
 from backend.models.sensor_node import SensorNodeTrust
 from backend.sensor.hardware.sdr_interface import SDRInterface
 

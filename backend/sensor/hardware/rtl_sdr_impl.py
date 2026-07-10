@@ -1,8 +1,6 @@
 import asyncio
 import logging
 import numpy as np
-from typing import Optional
-
 from .sdr_interface import SDRInterface
 from .capabilities import RTL_SDR_CAPABILITIES, GainMode
 

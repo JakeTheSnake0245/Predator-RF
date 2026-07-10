@@ -8,17 +8,113 @@
 #ifndef _WIN32
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/select.h>
 #endif
 
 namespace predator_node {
 
+// Cap on how many bytes we will read from a single HTTP response. Protects the
+// worker thread against a buggy/malicious peer streaming an unbounded body.
+static constexpr size_t kMaxResponseBytes = 4 * 1024 * 1024;  // 4 MiB
+
+// connect() with a bounded timeout. SO_RCVTIMEO/SO_SNDTIMEO do NOT bound
+// connect() on a blocking socket, so we switch the socket to non-blocking for
+// the connect, wait on select() with an explicit deadline, then restore
+// blocking mode. Returns true on a completed connection within timeout_ms.
+static bool connect_with_timeout(int sock, const struct sockaddr* addr,
+                                 socklen_t addrlen, int timeout_ms) {
+#ifndef _WIN32
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0) return false;
+    if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) return false;
+
+    int rc = ::connect(sock, addr, addrlen);
+    if (rc == 0) {
+        fcntl(sock, F_SETFL, flags);  // connected immediately
+        return true;
+    }
+    if (errno != EINPROGRESS) {
+        fcntl(sock, F_SETFL, flags);
+        return false;
+    }
+
+    fd_set wset;
+    FD_ZERO(&wset);
+    FD_SET(sock, &wset);
+    struct timeval tv;
+    tv.tv_sec  = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    rc = ::select(sock + 1, nullptr, &wset, nullptr, &tv);
+    if (rc <= 0) {                      // 0 = timeout, <0 = error
+        fcntl(sock, F_SETFL, flags);
+        return false;
+    }
+
+    int soerr = 0;
+    socklen_t len = sizeof(soerr);
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &soerr, &len) < 0 || soerr != 0) {
+        fcntl(sock, F_SETFL, flags);
+        return false;
+    }
+
+    fcntl(sock, F_SETFL, flags);        // restore blocking mode
+    return true;
+#else
+    return ::connect(sock, addr, addrlen) == 0;
+#endif
+}
+
+// send() the whole buffer, looping over short writes. Returns false on error.
+static bool send_all(int sock, const std::string& data) {
+    size_t sent = 0;
+    while (sent < data.size()) {
+        int n = (int)::send(sock, data.data() + sent, data.size() - sent, 0);
+        if (n <= 0) return false;
+        sent += (size_t)n;
+    }
+    return true;
+}
+
+// recv() until EOF or the response cap is hit.
+static std::string recv_bounded(int sock) {
+    std::string resp;
+    char buf[4096];
+    int n;
+    while ((n = (int)::recv(sock, buf, sizeof(buf), 0)) > 0) {
+        resp.append(buf, n);
+        if (resp.size() > kMaxResponseBytes) break;
+    }
+    return resp;
+}
+
 static std::string simple_json_str(const std::string& json, const std::string& key) {
-    std::string needle = "\"" + key + "\":\"";
+    // Match the quoted key, then tolerate whitespace before the opening quote
+    // of the value. NOTE: these are deliberately lightweight, shape-specific
+    // extractors for the known predator-rfd response schema — not a general
+    // JSON parser. They handle whitespace and backslash escapes so a value
+    // like "a\"b" or a reformatted response does not truncate/misparse.
+    std::string needle = "\"" + key + "\":";
     auto pos = json.find(needle);
     if (pos == std::string::npos) return "";
     pos += needle.size();
-    auto end = json.find('"', pos);
-    return (end != std::string::npos) ? json.substr(pos, end - pos) : "";
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' ||
+                                 json[pos] == '\n' || json[pos] == '\r')) ++pos;
+    if (pos >= json.size() || json[pos] != '"') return "";
+    ++pos;  // skip opening quote
+    std::string out;
+    while (pos < json.size()) {
+        char c = json[pos];
+        if (c == '\\' && pos + 1 < json.size()) {   // escaped char — take next verbatim
+            out.push_back(json[pos + 1]);
+            pos += 2;
+            continue;
+        }
+        if (c == '"') break;                          // closing quote
+        out.push_back(c);
+        ++pos;
+    }
+    return out;
 }
 
 static int simple_json_int(const std::string& json, const std::string& key, int def = 0) {
@@ -52,7 +148,7 @@ static std::string tcp_get(const std::string& host, int port,
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 #endif
 
-    if (::connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+    if (!connect_with_timeout(sock, res->ai_addr, res->ai_addrlen, timeout_ms)) {
         freeaddrinfo(res); ::close(sock); return "";
     }
     freeaddrinfo(res);
@@ -61,13 +157,9 @@ static std::string tcp_get(const std::string& host, int port,
                     + "Host: " + host + "\r\n"
                     + "X-Kujhad-Key: " + api_key + "\r\n"
                     + "Connection: close\r\n\r\n";
-    ::send(sock, req.c_str(), (int)req.size(), 0);
+    if (!send_all(sock, req)) { ::close(sock); return ""; }
 
-    std::string resp;
-    char buf[4096];
-    int n;
-    while ((n = (int)::recv(sock, buf, sizeof(buf), 0)) > 0)
-        resp.append(buf, n);
+    std::string resp = recv_bounded(sock);
     ::close(sock);
 
     auto pos = resp.find("\r\n\r\n");
@@ -98,7 +190,7 @@ static std::string tcp_post(const std::string& host, int port,
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 #endif
 
-    if (::connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+    if (!connect_with_timeout(sock, res->ai_addr, res->ai_addrlen, timeout_ms)) {
         freeaddrinfo(res); ::close(sock); return "";
     }
     freeaddrinfo(res);
@@ -110,13 +202,9 @@ static std::string tcp_post(const std::string& host, int port,
                     + "Content-Length: " + std::to_string(body.size()) + "\r\n"
                     + "Connection: close\r\n\r\n"
                     + body;
-    ::send(sock, req.c_str(), (int)req.size(), 0);
+    if (!send_all(sock, req)) { ::close(sock); return ""; }
 
-    std::string resp;
-    char buf[4096];
-    int n;
-    while ((n = (int)::recv(sock, buf, sizeof(buf), 0)) > 0)
-        resp.append(buf, n);
+    std::string resp = recv_bounded(sock);
     ::close(sock);
 
     auto pos = resp.find("\r\n\r\n");
@@ -203,26 +291,31 @@ bool PredatorNodeClient::_pollSpectrum() {
     std::string body = tcp_get(host, port, "/api/spectrum?bins=1024", key, 1000);
     if (body.empty()) return false;
 
+    // A numeric token is at most a couple dozen chars; cap the substring so we
+    // don't copy the entire (kilobyte-scale) body once per field.
+    constexpr size_t kNumLen = 32;
+
     SpectrumFrame frame;
     auto sn_pos = body.find("\"serial\":");
     if (sn_pos != std::string::npos) {
-        try { frame.serial = std::stoull(body.substr(sn_pos + 9)); } catch (...) {}
+        try { frame.serial = std::stoull(body.substr(sn_pos + 9, kNumLen)); } catch (...) {}
     }
     if (frame.serial == _last_spec_serial) return true;
     _last_spec_serial = frame.serial;
 
     auto cpos = body.find("\"center\":");
     if (cpos != std::string::npos)
-        try { frame.center_hz = std::stod(body.substr(cpos + 9)); } catch (...) {}
+        try { frame.center_hz = std::stod(body.substr(cpos + 9, kNumLen)); } catch (...) {}
 
     auto bpos = body.find("\"bandwidth\":");
     if (bpos != std::string::npos)
-        try { frame.bw_hz = std::stod(body.substr(bpos + 12)); } catch (...) {}
+        try { frame.bw_hz = std::stod(body.substr(bpos + 12, kNumLen)); } catch (...) {}
 
     auto bins_pos = body.find("\"bins\":[");
     if (bins_pos != std::string::npos) {
         bins_pos += 8;
         auto end = body.find(']', bins_pos);
+        if (end == std::string::npos) return true;   // malformed / truncated array
         std::string bins_str = body.substr(bins_pos, end - bins_pos);
         std::istringstream iss(bins_str);
         std::string token;

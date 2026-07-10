@@ -18,14 +18,11 @@ Endpoints:
 """
 from __future__ import annotations
 
-import json
 import logging
-import time
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)

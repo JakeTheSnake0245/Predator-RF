@@ -30,11 +30,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import time
-import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +86,10 @@ class CorrelationEngine:
         self._tasker   = auto_tasker
         self._fp_thresh = fingerprint_threshold
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Hold references to in-flight _fire() tasks so they cannot be
+        # garbage-collected before they complete (CPython drops tasks with
+        # no strong reference). Discarded via done-callback.
+        self._pending_fires: set = set()
 
         self._rules: Dict[str, CorrelationRule] = {}
         self._window: Dict[str, List[_DetectionSlot]] = {}
@@ -225,11 +227,24 @@ class CorrelationEngine:
                 loop = None
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(
-                lambda f=fired: asyncio.ensure_future(self._fire(f)))
+                lambda f=fired: self._track_fire(asyncio.ensure_future(self._fire(f))))
         else:
             logger.debug(
                 "CorrelationEngine: no running loop; rule %s fire not dispatched",
                 fired.rule_id)
+
+    def _track_fire(self, task):
+        """Retain a strong reference to an in-flight _fire() task and log any
+        exception it raises (which would otherwise be swallowed silently)."""
+        self._pending_fires.add(task)
+
+        def _done(t):
+            self._pending_fires.discard(t)
+            exc = t.exception() if not t.cancelled() else None
+            if exc is not None:
+                logger.error("CorrelationEngine: _fire() failed: %s", exc)
+
+        task.add_done_callback(_done)
 
     async def on_known_target_detected(self,
                                         track,

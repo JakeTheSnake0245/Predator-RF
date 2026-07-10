@@ -16,7 +16,7 @@ fields"). Helper methods on `SensorNodeTrust` (`all_sdr_backends()`,
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 

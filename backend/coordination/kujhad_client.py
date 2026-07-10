@@ -20,7 +20,7 @@ Wire schema verified against core/src/gui/main_window.cpp event-row builders
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, Optional, Callable
 
 try:
@@ -106,7 +106,7 @@ class KujhadClient:
         # Create the session BEFORE returning so callers may immediately call
         # send_tune_command / send_scan_command / send_mission_command without
         # racing the poll loop. (Architect-reported race fixed.)
-        import aiohttp
+        # aiohttp is imported at module scope and gated by _HAVE_AIOHTTP above.
         # TLS verification: opt-out only; insecure_skip_verify defaults to
         # False on SensorNodeTrust so self-signed fleets must explicitly set
         # it on each node. Plain HTTP nodes are unaffected.
@@ -516,6 +516,28 @@ class KujhadClient:
         action ∈ {setMode, setSearchBands, setTargets, setExcludes, setSettings}
         See main_window.cpp:1941-1967 for per-action arg requirements."""
         payload = {"class": "mission", "action": action, "args": args}
+        return await self._post_command(payload)
+
+    async def send_iq_capture_command(self, freq_hz: float,
+                                      duration_s: float,
+                                      sample_rate_hz: float,
+                                      signal_id: str) -> bool:
+        """Task the node to record a raw IQ capture.
+
+        Wire shape:
+          {"class":"capture","action":"iq",
+           "args":{"freqHz":Hz,"durationS":s,"sampleRateHz":Hz,"signalId":id}}
+        """
+        payload = {
+            "class": "capture",
+            "action": "iq",
+            "args": {
+                "freqHz":       float(freq_hz),
+                "durationS":    float(duration_s),
+                "sampleRateHz": float(sample_rate_hz),
+                "signalId":     str(signal_id),
+            },
+        }
         return await self._post_command(payload)
 
     async def _post_command(self, payload: dict) -> bool:

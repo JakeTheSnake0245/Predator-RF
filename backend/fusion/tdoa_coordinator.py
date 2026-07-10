@@ -4,7 +4,6 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from backend.models.emitter_track import EmitterTrack
 from backend.models.sensor_node import SensorNodeTrust
 
 logger = logging.getLogger(__name__)
@@ -296,9 +295,10 @@ class TDOACoordinator:
         Iterative least-squares TDOA triangulation.
         Converts lat/lon to a local ENU frame, solves, then converts back.
         """
+        if not measurements:            # defensive: solve() already guards >=2
+            raise ValueError("triangulate requires >=1 measurement")
         ref = measurements[0]
         ref_lat_r = math.radians(ref.node_lat)
-        ref_lon_r = math.radians(ref.node_lon)
 
         def to_enu(lat: float, lon: float) -> Tuple[float, float]:
             dlat = math.radians(lat - ref.node_lat)
@@ -339,6 +339,8 @@ class TDOACoordinator:
                 ex += delta[0]
                 ey += delta[1]
             except Exception:
+                logger.debug("TDOA lstsq step failed; stopping iteration",
+                             exc_info=True)
                 break
 
         # Convert back to lat/lon

@@ -17,8 +17,6 @@ async def assess_track(emitter_id: str):
 
     from backend.intelligence.anomaly_detector import AnomalyDetector
     from backend.models.rf_event import RFEvent
-    import time
-
     # Re-run anomaly detection on latest state
     detector = AnomalyDetector()
     # Create a synthetic "latest event" from track state
