@@ -1,0 +1,113 @@
+I want you to simulate a specific field deployment scenario end-to-end against the 
+ACTUAL code in this project — not a hypothetical description, but a real trace through 
+the code paths, function calls, API endpoints, and data flow that would actually 
+execute if this happened. Run/trace the code silently — do not paste code blocks or 
+show me the implementation as you go. At the end, give me a chronological play-by-play 
+narrative of what happened, step by step, as if you were debriefing the mission — and 
+flag every point where the code does NOT actually support what the scenario requires.
+
+## Scenario
+
+Six operators in a rural 2km x 2km search box, hunting a single rogue/unknown emitter. 
+Each operator has: an Android device running the app, a Raspberry Pi with either a 
+HackRF or RTL-SDR attached, and a battery pack for power. Connectivity is cellular only 
+— no local Wi-Fi/LAN between nodes. One of the six is the coordinator and runs the main 
+backend server from his RPi; the other five are field nodes only. All six devices were 
+previously enrolled on a self-hosted Headscale instance (already authenticated, existing 
+node keys/tags from prior setup — this is not first-time enrollment) and all traffic 
+between nodes is expected to route over that tailnet. All six operate independently, 
+running their own sweeps, until a signal of interest is found and nominated as a 
+candidate target.
+
+## Trace through these phases in order. For each step, tell me which files/functions/
+## endpoints actually fire, and whether the behavior matches what's described or is 
+## a gap.
+
+**Phase 1 — Cold start / network formation**
+- Coordinator powers on his RPi and starts the backend server, bound to its Headscale 
+  (tailnet) IP.
+- Each field node powers on, and its local Headscale/Tailscale client attempts to 
+  reconnect to the tailnet using its existing node key.
+- Trace the actual sequence: does the field node wait for the tailnet client to report 
+  "connected" before the app/RPi attempts to reach the coordinator, or can it race ahead 
+  and try the coordinator's tailnet IP before the VPN interface is even up?
+- If a node's previously-issued node key or auth key has expired since it was last used, 
+  what happens — does it fail silently, prompt for re-auth, or hang?
+- Each device is also independently connecting to cellular. Trace what happens if a 
+  node has cellular signal (can reach the internet generally) but cannot reach your 
+  self-hosted Headscale coordination server specifically (e.g. your EC2 instance is 
+  unreachable or slow to respond) — does the tailnet come up in a degraded state, retry, 
+  or block everything downstream?
+- Once the tailnet is up, trace how each node actually reaches the coordinator's tailnet 
+  IP: is it a direct WireGuard peer-to-peer connection, or is it relayed through a DERP 
+  server? If direct connection fails (e.g. carrier-grade NAT on cellular, which is 
+  extremely common on mobile networks), does the code path assume direct connectivity, 
+  or does it tolerate the added latency/behavior of a DERP relay fallback?
+- What happens if the coordinator's RPi is slow to boot and a field node's tailnet 
+  client is up before the coordinator's server process is listening?
+
+**Phase 2 — Independent sweep operation**
+- Each of the 5 field nodes begins independently sweeping for signals, with no 
+  awareness of what the others are seeing in real time (or do they have awareness — 
+  trace what's actually shared and when).
+- Trace what happens on a single node from "SDR captures IQ/spectrum data" through 
+  "operator/app flags something as a candidate signal" through "that candidate gets 
+  transmitted to the coordinator over the tailnet."
+- What's the actual bearing/LOB data associated with each detection — does it depend 
+  on GPS/heading input, and what happens if that input is missing or stale on a node?
+- What happens if two nodes detect the same emitter on the same frequency at 
+  different bearings — does the coordinator recognize these as the same candidate, 
+  or does it register two separate ones?
+- What happens if a node detects a signal but its tailnet connection is degraded at 
+  that moment (relayed through DERP with added latency, or briefly unreachable) — does 
+  the detection queue, retry, or get dropped silently?
+
+**Phase 3 — Nomination and fusion**
+- Trace exactly how "nominate the target emitter" works in the code. Is this a manual 
+  operator action, an automatic confidence-based flag, or both?
+- Once 2+ nodes have nominated candidates, trace how the coordinator fuses bearings 
+  into a location estimate (LOB intersection, TDOA, or other). What's the minimum 
+  number of independent bearings the fusion logic actually requires to produce a 
+  location, and what does it do with only 1?
+- What happens if the nominated candidates from different nodes don't actually match 
+  in frequency/modulation — does the system have any check for "these two people 
+  found different signals and are about to fuse noise into a fake location"?
+
+**Phase 4 — Degraded conditions (walk through each independently)**
+- A field node's cellular connection drops for 90 seconds mid-sweep. Trace what happens 
+  to its Headscale/tailnet session specifically — does it need to fully re-handshake 
+  with the coordination server when cellular returns, or does the WireGuard session 
+  resume cleanly? What does the node do locally while disconnected, and what happens 
+  to any detections made during the gap?
+- The coordinator's RPi loses power or crashes mid-mission. Is there any failover, or 
+  does the whole mission halt? Since Headscale itself is presumably hosted separately 
+  (e.g. your EC2 instance) rather than on the coordinator's RPi, confirm: does the 
+  tailnet itself survive the coordinator RPi going down, even though the mission server 
+  process does not? What state, if any, survives on the field nodes?
+- A field node's battery pack dies. Does the app/RPi have any low-power warning or 
+  graceful shutdown, or does it just go dark mid-transmission?
+- Your self-hosted Headscale coordination server (the EC2 instance) itself becomes 
+  briefly unreachable during the mission — trace whether existing already-established 
+  WireGuard peer connections between nodes continue to function (as they should, since 
+  Headscale is only needed for coordination/key exchange, not for data relay in a 
+  direct-connection scenario), or whether the code has any hidden dependency that 
+  assumes the coordination server is always reachable.
+- Two nodes are 1.9km apart (near the edge of the box) and both have marginal cellular 
+  signal simultaneously — trace whether the system degrades gracefully or whether 
+  packet loss on both sides at once creates any bad state (duplicate nominations, 
+  corrupted fusion input, etc.).
+
+## Output format
+
+After tracing all four phases against the real code, give me the results as a 
+mission debrief — a timestamped, narrative play-by-play (e.g. "T+0:00 — Coordinator 
+server starts, tailnet interface up... T+2:14 — Node 3 loses cellular link mid-
+transmission of a candidate detection, WireGuard session state unknown..."). At each 
+beat, tell me in plain terms:
+- What actually happens in the code (not what should happen)
+- Whether that's correct/safe behavior or a gap
+- If it's a gap, what file/function needs to change and roughly how
+
+End with a clear verdict: is this scenario fully supported by the current code, 
+partially supported, or not supported — and a prioritized list of what to fix before 
+you'd trust this in the field.
