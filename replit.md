@@ -99,7 +99,7 @@ _Populate as you build_
 - **Headless mode:** `predator-rfd` never calls ImGui or OpenGL. `backend::render()` and `backend::beginFrame()` are no-ops. The main loop in `backend::renderLoop()` sleeps 50 ms per tick and lets the web server threads handle requests. State that previously lived in `main_window.cpp`'s kujhad snapshots is NOT automatically populated — wire-up hooks `backend::webBackendPush*()` must be called from the signal path or from a future thin shim that reads `sigpath::*` singletons.
 - **Dashboard parity:** `preview.html` is the canonical dashboard. It is copied to `web/index.html` and served as the static root. Any change to the dashboard's API surface must be reflected in both `backend/main.py` (Python) and `core/backends/web/backend.cpp` (C++). See architecture decision above.
 - **Control socket perms:** `/run/predator-rfd/control.sock` is created with `chmod 600` so only the `predator` user (daemon owner) and root can talk to it. `predator-rfctl` must run as the same user or root.
-- **tx.* rejection:** `tx.*` class commands are rejected by the control socket AND by the web `/api/command` endpoint, matching the Kujhad and RNS rejection posture.
+- **tx.* rejection:** `tx.*` class commands are rejected by the control socket AND by the web `/api/command` endpoint, matching the Kujhad and RNS rejection posture. The `predator_node_source` remote-cockpit module defines `OPT_ALLOW_TX_COMMANDS` to lift this guard on the Controller side only — Device nodes still reject tx.* unconditionally. See `docs/remote_cockpit.md`.
 
 ### Android
 All deeply Android-specific gotchas live in `docs/android_gotchas.md`. The
@@ -122,6 +122,20 @@ short list of what's covered there:
 - **RNS commanding wrapper (#6).** `predatorrf/cmd.v1` aspect carries Kujhad-shape `{class,action,args}` tasking over Reticulum. `tx.*` hard-rejected at wrap AND unwrap (RX-only). Per-peer LRU dedupe `(uid, ts_ms//1000)`, peer allowlist + loop suppression shared with cot.v1. Wire body byte-identical to Kujhad HTTP `/v1/command` so a single Device-side dispatcher serves both transports. Opt-in via `config["cmd_v1_enabled"]` (default False). Test surface: `python -m unittest backend.tests.test_rns_cmd -v` (29 cases). Full design + auth model + diagnostics → `docs/rns_commanding.md`.
 - **CustodyElector + C++↔Python parity (#3).** Per-track cache must be released on `TrackManager._age_tracks()` via `custody_elector.forget()`; hard-gate ordering puts GPS-sync before stale-GPS; tests must use a far-future `now_ns` (`2e18`) so subtracting 600 s stays positive; opt-in via `config.custody_election_enabled` with `AutoTasker` falling back to legacy heuristic. C++ port in `core/src/predator/custody_election.h` MUST produce byte-identical decisions to the Python elector — drift is caught by `python scripts/test_custody_parity.py`. Five test-helper footguns and the C++ wiring status (consumed only by unit tests until #6/#7 land) live in `docs/custody_election.md`. Read that before touching `backend/coordination/custody_election.py`, `core/src/predator/custody_election.h`, or the parity harness.
 - **StationarityGate (#3.5).** Stateless w.r.t. tracks — the caller (`PredatorBackend._try_tdoa_solve`) owns `location_history` and must trim to `gate.history_max` and pass `prior_motion_state` for hysteresis. Velocity-gate `dt_floor_s=2.0`, mobile-track STABLE-at-25 (vs 10 for stationary), invalid-candidate rejection rules, env-var configuration, and diagnostics all live in `docs/stationarity_gate.md`. Read that before touching `backend/fusion/stationarity_gate.py` or the TDOA solve path.
+
+## Where things live (continued)
+
+- `source_modules/predator_node_source/`: Remote-cockpit source module — phone/tablet acts as Controller, RPi/mini-PC runs predator-rfd as Device. Link auto-detection (Android hotspot → RPi AP → static IP), full command forwarding, NO tx.* restriction on the Controller side. See `docs/remote_cockpit.md`.
+- `backend/signal_repository/repository.py`: Three-tier signal store — metadata (always), fingerprint (STABLE tracks), IQ captures (on demand). SQLite, `REPO_SCHEMA_VERSION=1`. See `docs/signal_repository.md`.
+- `backend/signal_repository/fingerprinter.py`: 32-float cosine-similarity fingerprint vectors from FFT bins or signal metadata (octave bands, moments, flatness, autocorr, BW fraction). See `docs/signal_repository.md`.
+- `backend/coordination/fleet_state_manager.py`: FleetStateManager — in-memory snapshot of all peer nodes (tracks, events, GPS, SDR status). Global event ring with monotonic serials for lossless client catch-up. See `docs/correlation_engine.md`.
+- `backend/coordination/correlation_engine.py`: CorrelationEngine — operator-defined band+node rules; fires when ≥N distinct nodes hear a signal in a time window. Also handles known-target fingerprint match → geo-cue + intercept log. See `docs/correlation_engine.md`.
+- `backend/coordination/iq_capture_service.py`: IQCaptureService — operator-demand raw IQ recording forwarded to the target Device node via Kujhad.
+- `backend/api/repository_routes.py`: REST API for signal search, fingerprint similarity, IQ capture trigger, intercept list, correlation rule CRUD, fleet state/events (`/api/v1/repository/`).
+- `backend/tests/test_signal_repository.py`: 39-case test suite — fingerprint math, repository CRUD, correlation rules, fleet state. Run: `python -m unittest backend.tests.test_signal_repository -v`.
+- `docs/remote_cockpit.md`: Remote-cockpit architecture, tx.* unlock model, link auto-detection, operator runbook.
+- `docs/signal_repository.md`: Signal repository API, schema, fingerprinter feature set, REST routes.
+- `docs/correlation_engine.md`: CorrelationEngine rule API, firing logic, known-target response, FleetStateManager event ring, IQCaptureService.
 
 ## Pointers
 

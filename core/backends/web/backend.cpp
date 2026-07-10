@@ -105,8 +105,13 @@ static void pushEvent(nlohmann::json ev) {
 
 static void enqueueCmd(const std::string& cls, const std::string& action,
                         const nlohmann::json& args, const std::string& origin) {
-    // Hard-reject tx.* class at the enqueue point
+    // Hard-reject tx.* class at the enqueue point.
+    // OPT_ALLOW_TX_COMMANDS bypasses this guard ONLY for the remote-cockpit
+    // path where the phone is the trusted controller and tx rejection is
+    // enforced at the Device node instead.
+#ifndef OPT_ALLOW_TX_COMMANDS
     if(cls.rfind("tx",0)==0) return;
+#endif
     std::lock_guard<std::mutex> lk(gCmdMtx);
     gCmdQueue.push({cls, action, args, origin});
 }
@@ -242,11 +247,13 @@ static void routeCommand(predator::PwsContext& ctx) {
     }
     std::string cls    = body.value("class", "");
     std::string action = body.value("action", "");
+#ifndef OPT_ALLOW_TX_COMMANDS
     if(cls.rfind("tx",0)==0) {
         predator::pwsHttpReply(ctx.sock, 403, "application/json",
                                "{\"error\":\"tx commands rejected\"}");
         return;
     }
+#endif
     enqueueCmd(cls, action, body.value("args", nlohmann::json::object()), "web");
     predator::pwsHttpReply(ctx.sock, 200, "application/json", "{\"ok\":true}");
 }

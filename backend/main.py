@@ -46,6 +46,10 @@ from backend.rns.daemon import RNSDaemon
 from backend.coordination.kujhad_rns_client import KujhadRNSClient
 from backend.coordination.auto_tasker import AutoTasker
 from backend.coordination.custody_election import CustodyElector
+from backend.coordination.fleet_state_manager import FleetStateManager
+from backend.coordination.correlation_engine import CorrelationEngine, CorrelationRule
+from backend.signal_repository.repository import SignalRepository
+from backend.coordination.iq_capture_service import IQCaptureService
 from backend.models.lob_measurement import LOBMeasurement
 from backend.coc import CoCAggregator
 from backend.operator.approvals import ApprovalQueue
@@ -252,6 +256,41 @@ class PredatorBackend:
         # ledger — not just the approved subset.
         self.approvals.on_terminal(self._on_approval_terminal)
 
+        # Signal repository — three-tier signal store (metadata always,
+        # fingerprint at STABLE, IQ capture on demand).
+        repo_db_path = getattr(config, "mission_db_path",
+                               "/var/lib/predator-rf/mission.db")
+        iq_dir = getattr(config, "iq_capture_dir",
+                         "/var/lib/predator-rf/iq")
+        self.signal_repo: Optional[SignalRepository] = None
+        if config.persistence_enabled:
+            try:
+                self.signal_repo = SignalRepository(repo_db_path, iq_dir=iq_dir)
+                logger.info("SignalRepository opened at %s (iq_dir=%s)",
+                            repo_db_path, iq_dir)
+            except Exception as exc:
+                logger.error("SignalRepository init failed: %s", exc)
+
+        # Fleet state manager — shared distributed sensor picture.
+        self.fleet_state_manager = FleetStateManager(store=self.store)
+
+        # IQ capture service — operator-demand raw sample recording.
+        self.iq_capture_service = IQCaptureService(
+            signal_repo=self.signal_repo,
+            fleet_manager=self.fleet_manager,
+        )
+
+        # Correlation engine — custom rules + known-target sweep response.
+        self.correlation_engine: Optional[CorrelationEngine] = None
+        if self.store is not None:
+            self.correlation_engine = CorrelationEngine(
+                store=self.store,
+                signal_repo=self.signal_repo,
+                auto_tasker=self.auto_tasker,
+            )
+            self.correlation_engine.on_alert(self._on_correlation_alert)
+            logger.info("CorrelationEngine initialised")
+
         # Cross-station dedup — coalesces tracks for the same physical
         # emitter heard by both local fleet and CoC peers.
         self.dedup: CrossStationDedup = CrossStationDedup(
@@ -369,6 +408,15 @@ class PredatorBackend:
         # AutoTasker — react to the assessment by re-tuning recommended
         # nodes to this emitter's frequency for closer inspection.
         self.auto_tasker.handle_assessment(track.to_dict(), report.to_dict())
+
+        # Correlation engine — fire custom rules and check for known-target
+        # fingerprint matches on STABLE tracks.
+        if self.correlation_engine is not None:
+            self.correlation_engine.on_event(
+                event.node_id, event.frequency,
+                getattr(event, "power_dbfs", 0.0))
+            if (track.state == "STABLE" and self.signal_repo is not None):
+                self._spawn(self._check_fingerprint_match(track))
 
         # CoT/TAK escalation — gated by config.cot_enabled AND
         # report.escalate_to_atak AND (when COT_REQUIRE_MANUAL_APPROVAL)
@@ -738,6 +786,48 @@ class PredatorBackend:
             })
         except Exception:
             logger.exception("Custody-change SSE push failed — ignored")
+
+    def _on_correlation_alert(self, alert: dict):
+        """Push correlation engine alerts onto the SSE ring."""
+        try:
+            push_event({"kind": "correlation_alert", **alert})
+            logger.info("CorrelationEngine alert: type=%s freq=%.3f MHz",
+                        alert.get("type", "?"),
+                        alert.get("freq_hz", 0) / 1e6)
+        except Exception:
+            logger.exception("Correlation alert push failed — ignored")
+
+    async def _check_fingerprint_match(self, track) -> None:
+        """
+        Compare a STABLE track against the signal repository fingerprints.
+        If a match is found above threshold, fire the known-target response.
+        """
+        if self.signal_repo is None or self.correlation_engine is None:
+            return
+        try:
+            from backend.signal_repository.fingerprinter import SignalFingerprinter
+            fp = SignalFingerprinter()
+            power = getattr(track, "last_power_dbfs", -80.0) or -80.0
+            bw    = getattr(track, "estimated_bandwidth_hz", 12500.0) or 12500.0
+            snr   = getattr(track, "snr_db", 10.0) or 10.0
+            vec = fp.fingerprint_from_metadata(
+                power_dbfs=power,
+                bandwidth_hz=bw,
+                center_hz=track.primary_frequency,
+                snr_db=snr)
+            matches = self.signal_repo.find_similar(vec, limit=1)
+            if not matches:
+                return
+            best = matches[0]
+            node_ids = list(getattr(track, "detecting_nodes", {}).keys())
+            await self.correlation_engine.on_known_target_detected(
+                track=track,
+                signal_id=best["signal_id"],
+                similarity=best["similarity"],
+                node_ids=node_ids,
+            )
+        except Exception as exc:
+            logger.debug("_check_fingerprint_match: %s", exc)
 
     def _on_track_update(self, track):
         metrics.gauge("predator_track_confidence",

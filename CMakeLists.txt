@@ -29,6 +29,7 @@ option(OPT_BUILD_SOAPY_SOURCE "Build SoapySDR Source Module (Dependencies: soapy
 option(OPT_BUILD_SPECTRAN_SOURCE "Build Spectran Source Module (Dependencies: Aaronia RTSA Suite)" OFF)
 option(OPT_BUILD_SPECTRAN_HTTP_SOURCE "Build Spectran HTTP Source Module (no dependencies required)" ON)
 option(OPT_BUILD_SPYSERVER_SOURCE "Build SpyServer Source Module (no dependencies required)" ON)
+option(OPT_BUILD_PREDATOR_NODE_SOURCE "Build Predator Node remote-cockpit source module (no external deps)" ON)
 option(OPT_BUILD_USRP_SOURCE "Build USRP Source Module (libuhd)" OFF)
 
 # Sinks
@@ -228,6 +229,10 @@ endif (OPT_BUILD_SPECTRAN_HTTP_SOURCE)
 if (OPT_BUILD_SPYSERVER_SOURCE)
 add_subdirectory("source_modules/spyserver_source")
 endif (OPT_BUILD_SPYSERVER_SOURCE)
+
+if (OPT_BUILD_PREDATOR_NODE_SOURCE)
+add_subdirectory("source_modules/predator_node_source")
+endif (OPT_BUILD_PREDATOR_NODE_SOURCE)
 
 if (OPT_BUILD_USRP_SOURCE)
 add_subdirectory("source_modules/usrp_source")

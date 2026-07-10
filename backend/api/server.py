@@ -132,6 +132,16 @@ def create_app(track_manager=None, fleet_manager=None,
     # binds to 0.0.0.0. The `rns` module remains importable for tests
     # and a hypothetical future opt-in mode.
     rns.daemon = rns_daemon
+
+    from backend.api.repository_routes import router as repo_router
+    if backend is not None:
+        app.state.signal_repo        = getattr(backend, "signal_repo", None)
+        app.state.correlation_engine = getattr(backend, "correlation_engine", None)
+        app.state.fleet_state_manager= getattr(backend, "fleet_state_manager", None)
+        app.state.iq_capture_service = getattr(backend, "iq_capture_service", None)
+    app.include_router(repo_router,
+                       prefix="/api/v1/repository", tags=["repository"])
+
     app.include_router(health.router, tags=["health"])
 
     @app.get("/health")
