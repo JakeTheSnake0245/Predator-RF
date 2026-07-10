@@ -5,7 +5,12 @@
 # so a transient Kujhad / network blip doesn't kill the mission.
 Description=Predator-RF backend (Path 1: Python fusion + Kujhad HTTP)
 Documentation=file:/opt/predator-rf/docs/OPERATOR_RUNBOOK.md
-After=network-online.target chronyd.service gpsd.service
+# Order after the overlay VPN daemons when present (missing units are
+# ignored by systemd). If API_HOST is pinned to a tailnet/overlay IP
+# instead of the default 0.0.0.0, binding fails until the interface
+# exists — without this ordering a slow VPN reconnect can burn through
+# StartLimitBurst and leave the unit in a permanent `failed` state.
+After=network-online.target chronyd.service gpsd.service tailscaled.service zerotier-one.service
 Wants=network-online.target
 
 [Service]
