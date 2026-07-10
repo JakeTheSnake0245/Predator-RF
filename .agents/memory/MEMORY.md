@@ -1,0 +1,2 @@
+- [Android native module wiring](android-native-module-wiring.md) — a native module needs BOTH top-level CMake add_subdirectory AND an explicit entry in android/app/build.gradle externalNativeBuild targets, or it silently never ships in the APK.
+- [asyncio loop scheduling (Py3.11)](asyncio-loop-scheduling-py311.md) — don't call asyncio.get_event_loop() from sync code; it raises when no loop runs. Capture get_running_loop() lazily and skip gracefully.

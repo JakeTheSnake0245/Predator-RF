@@ -93,6 +93,7 @@ android {
                         "sdrpp_server_source",
                         "spectran_http_source",
                         "spyserver_source",
+                        "predator_node_source",
                         "audio_sink",
                         "network_sink",
                         "m17_decoder",

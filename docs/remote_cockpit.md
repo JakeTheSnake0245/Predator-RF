@@ -44,14 +44,24 @@ The module registers as a standard SDR++ source. When active it:
 
 The standard Predator RF build **hard-rejects** `tx.*` class commands at
 two points in `core/backends/web/backend.cpp` (compile-time guards via
-`#ifndef OPT_ALLOW_TX_COMMANDS`).
+`#ifndef OPT_ALLOW_TX_COMMANDS`). Those guards protect the **Device**'s
+inbound command surface (`predator-rfd`, the web backend).
 
-The `predator_node_source` CMakeLists defines `OPT_ALLOW_TX_COMMANDS` so
-the **Controller** binary can forward any command class. The **Device**
-node's own tx.* guard (in its `predator-rfd` build, which does NOT define
-`OPT_ALLOW_TX_COMMANDS`) enforces the RX-only policy at the point of
-execution. This two-tier model means the phone cannot cause actual RF
-transmission — the Device simply rejects any tx.* it receives.
+The **Controller** forwards commands over its own HTTP client
+(`PredatorNodeClient`, `POST /v1/command`) — it does **not** route through
+the local web backend, so no local guard applies to what the Controller
+sends. `predator_node_source`'s CMakeLists defines `OPT_ALLOW_TX_COMMANDS`
+`PRIVATE` to the module target; this only affects the module's own
+translation units (which contain no guard) and does **not** propagate to
+`sdrpp_core` where `backend.cpp` compiles. In other words: the flag is a
+declaration of intent on the Controller side, not a code path that unlocks
+the web backend. Do NOT set it globally — doing so would wrongly unlock a
+Device's own web backend.
+
+The RX-only policy is enforced authoritatively at the **Device**: its
+`predator-rfd` build does not define `OPT_ALLOW_TX_COMMANDS`, so it rejects
+any `tx.*` it receives. This two-tier model means the phone cannot cause
+actual RF transmission regardless of what it forwards.
 
 Python RNS commanding (`backend/rns/cmd.py`) retains its own independent
 tx.* rejection and is NOT affected by `OPT_ALLOW_TX_COMMANDS`.

@@ -87,6 +87,7 @@ class CorrelationEngine:
         self._repo     = signal_repo
         self._tasker   = auto_tasker
         self._fp_thresh = fingerprint_threshold
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         self._rules: Dict[str, CorrelationRule] = {}
         self._window: Dict[str, List[_DetectionSlot]] = {}
@@ -205,9 +206,30 @@ class CorrelationEngine:
                     node_ids=list(distinct_nodes), freq_hz=freq_hz,
                     window_s=rule.window_s, action=rule.action
                 )
-                asyncio.get_event_loop().call_soon_threadsafe(
-                    lambda f=fired: asyncio.ensure_future(self._fire(f))
-                )
+                self._schedule_fire(fired)
+
+    def _schedule_fire(self, fired: "CorrelationFired"):
+        """Dispatch _fire() onto the event loop.
+
+        Tolerates being called from a worker thread (uses the cached loop
+        reference captured on first run) and from a context with no running
+        loop at all (e.g. unit tests) — in which case the fire is skipped
+        rather than raising, matching Python 3.11's stricter get_event_loop().
+        """
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+                self._loop = loop
+            except RuntimeError:
+                loop = None
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(
+                lambda f=fired: asyncio.ensure_future(self._fire(f)))
+        else:
+            logger.debug(
+                "CorrelationEngine: no running loop; rule %s fire not dispatched",
+                fired.rule_id)
 
     async def on_known_target_detected(self,
                                         track,
