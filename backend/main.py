@@ -47,6 +47,7 @@ from backend.coordination.kujhad_rns_client import KujhadRNSClient
 from backend.coordination.auto_tasker import AutoTasker
 from backend.coordination.custody_election import CustodyElector
 from backend.coordination.fleet_state_manager import FleetStateManager
+from backend.coordination.link_health import LinkHealthMonitor
 from backend.coordination.correlation_engine import CorrelationEngine
 from backend.signal_repository.repository import SignalRepository
 from backend.coordination.iq_capture_service import IQCaptureService
@@ -273,6 +274,11 @@ class PredatorBackend:
 
         # Fleet state manager — shared distributed sensor picture.
         self.fleet_state_manager = FleetStateManager(store=self.store)
+
+        # Link health monitor — detects node online↔offline transitions
+        # (120 s staleness rule) and raises them as explicit events on
+        # both the SSE stream and the fleet event ring.
+        self.link_health = LinkHealthMonitor()
 
         # IQ capture service — operator-demand raw sample recording.
         self.iq_capture_service = IQCaptureService(
@@ -917,6 +923,9 @@ class PredatorBackend:
         # Approval-queue housekeeping: expire stale items so the UI
         # doesn't show a 6-hour-old escalation as still actionable.
         self._spawn(self._approval_expiry_loop())
+        # Link health: raise node online/offline transitions as explicit
+        # events so a silent connectivity failure alarms the dashboard.
+        self._spawn(self._link_health_loop())
 
         logger.info("Backend started. %d node(s) in fleet.",
                     self.fleet_manager.node_count())
@@ -1035,6 +1044,31 @@ class PredatorBackend:
                 await self.approvals.expire_stale()
             except Exception as exc:
                 logger.debug("Approval expiry pass failed: %s", exc)
+
+    async def _link_health_loop(self):
+        """Watch every registered fleet node's last-contact age and emit
+        explicit node_online / node_offline transition events (120 s
+        staleness rule) onto the SSE stream AND the fleet event ring.
+        Without this, an offline node is only quietly excluded — the
+        operator never sees an alarm."""
+        while True:
+            await asyncio.sleep(5.0)
+            try:
+                contacts = {
+                    node_id: client.node.last_contact_ns
+                    for node_id, client in self.fleet_manager._clients.items()
+                }
+                for ev in self.link_health.observe_fleet(contacts):
+                    if ev["type"] == "node_offline":
+                        logger.warning(
+                            "Node %s OFFLINE — no successful poll for %.0f s",
+                            ev["node_id"], ev["offline_after_s"])
+                    else:
+                        logger.info("Node %s back ONLINE", ev["node_id"])
+                    push_event(ev)
+                    self.fleet_state_manager.record_link_event(ev)
+            except Exception as exc:
+                logger.debug("Link health pass failed: %s", exc)
 
 
 async def main():

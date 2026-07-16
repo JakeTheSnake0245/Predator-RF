@@ -5944,6 +5944,34 @@ void MainWindow::draw() {
                                 T("Commands"), kujhadServer.inboundCommands(),
                                 T("Rejected"), kujhadServer.rejectedCommands());
 
+                    // Coordinator link health — seconds since the last
+                    // AUTHENTICATED poll landed on the Kujhad server.
+                    // Thresholds: <=15 s LINKED (green, coordinator polls
+                    // every ~1 s), <=120 s DEGRADED (yellow), >120 s
+                    // DISCONNECTED (red — matches the coordinator-side
+                    // 120 s offline rule).
+                    if (kujhadDeviceServerRunning) {
+                        double sincePoll = kujhadServer.secondsSinceLastAuthedRequest();
+                        if (sincePoll < 0.0) {
+                            ImGui::TextColored(ImVec4(0.94f, 0.72f, 0.29f, 1.0f),
+                                "%s: %s", T("Coordinator link"), T("no poll received yet"));
+                        }
+                        else if (sincePoll <= 15.0) {
+                            ImGui::TextColored(ImVec4(0.25f, 0.82f, 0.49f, 1.0f),
+                                "%s: %s (%.0fs)", T("Coordinator link"), T("LINKED"), sincePoll);
+                        }
+                        else if (sincePoll <= 120.0) {
+                            ImGui::TextColored(ImVec4(0.94f, 0.72f, 0.29f, 1.0f),
+                                "%s: %s (%.0fs %s)", T("Coordinator link"), T("DEGRADED"),
+                                sincePoll, T("since last poll"));
+                        }
+                        else {
+                            ImGui::TextColored(ImVec4(0.88f, 0.33f, 0.33f, 1.0f),
+                                "%s: %s (%.0fs %s)", T("Coordinator link"), T("DISCONNECTED"),
+                                sincePoll, T("since last poll"));
+                        }
+                    }
+
                     // TLS toggle. The change only takes effect on the
                     // next start() — we surface that explicitly so the
                     // operator isn't surprised when the running server

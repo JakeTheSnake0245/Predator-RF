@@ -14,6 +14,7 @@
       <span class="brand">PREDATOR RF <span class="brand-sub">CoC</span></span>
       <span id="pill-sse" class="pill" title="SSE event stream">SSE</span>
       <span id="pill-nodes" class="pill" title="Connected fleet nodes">0 NODES</span>
+      <span id="pill-offline" class="pill err" title="Nodes offline — no poll in 120 s" hidden>0 OFFLINE</span>
       <span id="pill-tracks" class="pill" title="Active emitter tracks">0 TRACKS</span>
       <span id="pill-approvals" class="pill" title="Pending CoT approvals">0 PENDING</span>
       <span class="spacer"></span>
@@ -36,6 +37,7 @@
             <table class="data-table" id="fleet-table">
               <thead>
                 <tr>
+                  <th>Link</th>
                   <th>Hostname</th>
                   <th>Node ID</th>
                   <th>Hardware</th>
@@ -47,7 +49,7 @@
                 </tr>
               </thead>
               <tbody id="fleet-tbody">
-                <tr class="empty-row"><td colspan="7">No nodes registered</td></tr>
+                <tr class="empty-row"><td colspan="9">No nodes registered</td></tr>
               </tbody>
             </table>
           </div>

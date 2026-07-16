@@ -899,6 +899,16 @@ public:
     int  inboundCommands() const { return inboundCommands_.load(); }
     int  rejectedCommands() const { return rejectedCommands_.load(); }
 
+    // Seconds since the last AUTHENTICATED request (coordinator poll)
+    // landed. Returns -1.0 when no authenticated request has arrived
+    // since the server object was created. Monotonic-clock based, so
+    // immune to wall-clock jumps (NTP step, operator changing the time).
+    double secondsSinceLastAuthedRequest() const {
+        int64_t last = lastAuthedRequestMs_.load(std::memory_order_relaxed);
+        if (last <= 0) { return -1.0; }
+        return (double)(kujhadMonotonicMs() - last) / 1000.0;
+    }
+
     std::string status() const {
         std::lock_guard<std::mutex> lk(statusMtx_);
         return statusMsg_;
@@ -1059,6 +1069,12 @@ private:
             return;
         }
 
+        // Link-health bookkeeping: record the monotonic time of every
+        // AUTHENTICATED request. The local UI uses this to show the
+        // "seconds since last coordinator poll" indicator — unauthenticated
+        // probes must not count as coordinator contact.
+        lastAuthedRequestMs_.store(kujhadMonotonicMs(), std::memory_order_relaxed);
+
         if (req.method == "GET" && path == "/v1/identify") {
             kujhad_json j = identifyProvider_ ? identifyProvider_() : kujhad_json::object();
             res.body = j.dump();
@@ -1201,6 +1217,14 @@ private:
     std::atomic<int>  inboundRequests_{0};
     std::atomic<int>  inboundCommands_{0};
     std::atomic<int>  rejectedCommands_{0};
+    // Monotonic ms timestamp of the last request that PASSED the API-key
+    // gate. 0 = never. Drives the local "coordinator link" indicator.
+    std::atomic<int64_t> lastAuthedRequestMs_{0};
+
+    static int64_t kujhadMonotonicMs() {
+        return (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
 
     std::thread worker_;
     mutable std::mutex mtx_;

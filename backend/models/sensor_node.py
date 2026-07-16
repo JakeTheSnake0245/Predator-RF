@@ -2,10 +2,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
 import logging
+import time
 
 from backend.models.sdr_backend import SDRBackend
 
 logger = logging.getLogger(__name__)
+
+# A node is considered offline once no successful Kujhad poll has landed
+# for this many seconds. Mirrors FleetStateManager._NODE_STALE_S — keep
+# the two in lockstep so the dashboard badge and the fleet-state layer
+# agree on what "offline" means.
+NODE_OFFLINE_AFTER_S = 120.0
 
 
 def _load_hardware_capabilities(hardware_code: str):
@@ -274,6 +281,15 @@ class SensorNodeTrust:
         """Backends not currently claimed by an active scan/decode."""
         return [s for s in self.all_sdr_backends() if not s.in_use]
 
+    @property
+    def is_online(self) -> bool:
+        """True when a successful Kujhad poll landed within the last
+        NODE_OFFLINE_AFTER_S seconds. Never-contacted nodes are offline."""
+        if not self.last_contact_ns:
+            return False
+        age_s = (time.time_ns() - self.last_contact_ns) / 1e9
+        return age_s < NODE_OFFLINE_AFTER_S
+
     def to_dict(self) -> dict:
         return {
             "node_id": self.node_id,
@@ -290,4 +306,6 @@ class SensorNodeTrust:
             "thermal_throttling_active": self.thermal_throttling_active,
             "total_observations": self.total_observations,
             "last_contact_ns": self.last_contact_ns or None,
+            "is_online": self.is_online,
+            "offline_after_s": NODE_OFFLINE_AFTER_S,
         }

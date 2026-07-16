@@ -113,11 +113,31 @@ async function pollFleet() {
     document.getElementById('fleet-age').textContent = 'Updated ' + new Date().toISOString().slice(11, 19) + 'Z';
     document.getElementById('pill-nodes').textContent = nodes.length + ' NODE' + (nodes.length !== 1 ? 'S' : '');
     setPillClass(document.getElementById('pill-nodes'), nodes.length ? 'live' : '');
+
+    // Header-level link-health warning: any registered node offline?
+    const offline = nodes.filter(n => nodeOffline(n)).length;
+    const pillOffline = document.getElementById('pill-offline');
+    if (pillOffline) {
+      pillOffline.hidden = offline === 0;
+      pillOffline.textContent = offline + ' OFFLINE';
+      setPillClass(pillOffline, offline ? 'err' : '');
+    }
+
     document.getElementById('fleet-subtitle').textContent =
-      nodes.length + ' node' + (nodes.length !== 1 ? 's' : '') + ' registered';
+      nodes.length + ' node' + (nodes.length !== 1 ? 's' : '') + ' registered'
+      + (offline ? ` — ${offline} OFFLINE` : '');
   } catch (err) {
     document.getElementById('fleet-subtitle').textContent = 'Poll error: ' + err.message;
   }
+}
+
+// A node is offline when the backend says so (is_online, 120 s staleness
+// rule) — with a client-side fallback for older backends that don't send
+// the field yet.
+function nodeOffline(n) {
+  if (typeof n.is_online === 'boolean') return !n.is_online;
+  if (!n.last_contact_ns) return true;
+  return (Date.now() - n.last_contact_ns / 1e6) > 120_000;
 }
 
 function gpsQualityLabel(n) {
@@ -130,7 +150,7 @@ function gpsQualityLabel(n) {
 function renderFleet(nodes) {
   const tbody = document.getElementById('fleet-tbody');
   if (!nodes.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No nodes registered</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No nodes registered</td></tr>';
     return;
   }
   tbody.innerHTML = nodes.map(n => {
@@ -143,7 +163,12 @@ function renderFleet(nodes) {
     const tdoaLabel = n.can_do_tdoa
       ? '<span style="color:var(--accent)">✔</span>'
       : '<span class="dim">—</span>';
-    return `<tr class="clickable" data-node="${esc(n.node_id)}">
+    const offline = nodeOffline(n);
+    const linkBadge = offline
+      ? '<span class="link-badge link-offline">● OFFLINE</span>'
+      : '<span class="link-badge link-online">● ONLINE</span>';
+    return `<tr class="clickable${offline ? ' node-offline' : ''}" data-node="${esc(n.node_id)}">
+      <td>${linkBadge}</td>
       <td style="color:var(--cyan)">${hostname}</td>
       <td><span title="${nodeId}" style="font-size:10px;color:var(--text-dim)">${nodeId.slice(0, 12)}${nodeId.length > 12 ? '…' : ''}</span></td>
       <td>${hw}</td>
@@ -193,9 +218,19 @@ function connectSSE() {
   sseSource.onmessage = ev => {
     try {
       const event = JSON.parse(ev.data);
+      if (event.type === 'node_offline' || event.type === 'node_online') {
+        handleNodeLinkEvent(event);
+        return;
+      }
       handleRFEvent(event);
     } catch { /* ignore parse errors */ }
   };
+}
+
+function handleNodeLinkEvent(event) {
+  // Link-health transition — re-poll the fleet table immediately so the
+  // badge + header warning update without waiting for the 10 s poll tick.
+  pollFleet();
 }
 
 function handleRFEvent(event) {

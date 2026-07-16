@@ -12,6 +12,7 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -93,6 +94,47 @@ static std::queue<PendingCmd>   gCmdQueue;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Link health — parity with the Python backend's 120 s staleness rule.
+// Nodes served at GET /nodes/ carry `is_online` + `offline_after_s`, and
+// online↔offline transitions emit node_online / node_offline events onto
+// the SSE stream (same event shape as backend/coordination/link_health.py).
+// ---------------------------------------------------------------------------
+static const double NODE_OFFLINE_AFTER_S = 120.0;
+static std::map<std::string, bool> gLinkState;  // node_id → last known online
+static void checkNodeLinkTransitions();
+
+static int64_t nowNs() {
+    return (int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// Compute is_online for one node object from its last_contact_ns.
+// Nodes with no (or null) last_contact_ns are offline, matching Python.
+static bool nodeIsOnline(const nlohmann::json& n, int64_t now) {
+    auto it = n.find("last_contact_ns");
+    if (it == n.end() || it->is_null() || !it->is_number()) {
+        // No contact info at all — fall back to a pre-set is_online flag
+        // (a pushing shim may know better), else offline.
+        auto io = n.find("is_online");
+        if (io != n.end() && io->is_boolean()) return io->get<bool>();
+        return false;
+    }
+    int64_t last = it->get<int64_t>();
+    if (last <= 0) return false;
+    return (double)(now - last) / 1e9 < NODE_OFFLINE_AFTER_S;
+}
+
+// Stamp is_online / offline_after_s onto every node in the array.
+static void annotateNodeLinkHealth(nlohmann::json& nodes, int64_t now) {
+    if (!nodes.is_array()) return;
+    for (auto& n : nodes) {
+        if (!n.is_object()) continue;
+        n["is_online"] = nodeIsOnline(n, now);
+        n["offline_after_s"] = NODE_OFFLINE_AFTER_S;
+    }
+}
+
 static void pushEvent(nlohmann::json ev) {
     ev["id"] = ++gLastEventId;
     {
@@ -153,8 +195,15 @@ static void routeStatus(predator::PwsContext& ctx) {
 }
 
 static void routeNodes(predator::PwsContext& ctx) {
-    std::lock_guard<std::mutex> lk(gStateMtx);
-    predator::pwsHttpReply(ctx.sock, 200, "application/json", gStateNodes.dump());
+    nlohmann::json nodes;
+    {
+        std::lock_guard<std::mutex> lk(gStateMtx);
+        nodes = gStateNodes;
+    }
+    // Re-annotate at serve time so is_online reflects NOW, not the last
+    // webBackendUpdateNodes() push — a node can go stale between pushes.
+    annotateNodeLinkHealth(nodes, nowNs());
+    predator::pwsHttpReply(ctx.sock, 200, "application/json", nodes.dump());
 }
 
 static void routeTracks(predator::PwsContext& ctx) {
@@ -621,6 +670,7 @@ SafeAreaInsets getSafeAreaInsets() { return {}; }
 
 int renderLoop() {
     flog::info("Predator web backend: headless loop running");
+    int linkTick = 0;
     while(gRunning) {
         // Drain the command queue on the main thread
         {
@@ -630,6 +680,12 @@ int renderLoop() {
                 applyCommand(local.front());
                 local.pop();
             }
+        }
+        // Link-health sweep every ~5 s (100 × 50 ms) so nodes that go
+        // stale between webBackendUpdateNodes() pushes still alarm.
+        if (++linkTick >= 100) {
+            linkTick = 0;
+            checkNodeLinkTransitions();
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
@@ -666,9 +722,67 @@ void webBackendPushSpectrumSnapshot(const float* bins, int count,
 
 void webBackendPushEvent(const nlohmann::json& ev) { pushEvent(ev); }
 
+// Detect node online↔offline transitions against the cached node list and
+// emit node_online / node_offline events (Python-parity shape). Called from
+// webBackendUpdateNodes() on every push and periodically from renderLoop()
+// so a node that silently goes stale between pushes still raises an alarm.
+// The first observation of a node seeds its baseline without an event.
+static void checkNodeLinkTransitions() {
+    int64_t now = nowNs();
+    std::vector<nlohmann::json> transitions;
+    {
+        std::lock_guard<std::mutex> lk(gStateMtx);
+        if (!gStateNodes.is_array()) return;
+        for (const auto& n : gStateNodes) {
+            if (!n.is_object()) continue;
+            auto idIt = n.find("node_id");
+            if (idIt == n.end() || !idIt->is_string()) continue;
+            std::string nodeId = idIt->get<std::string>();
+            bool online = nodeIsOnline(n, now);
+            auto prev = gLinkState.find(nodeId);
+            if (prev == gLinkState.end()) {
+                gLinkState[nodeId] = online;
+                continue;
+            }
+            if (prev->second == online) continue;
+            prev->second = online;
+            nlohmann::json ev;
+            ev["type"] = online ? "node_online" : "node_offline";
+            ev["node_id"] = nodeId;
+            ev["ts_ns"] = now;
+            auto lcIt = n.find("last_contact_ns");
+            if (lcIt != n.end() && lcIt->is_number()) ev["last_contact_ns"] = *lcIt;
+            else ev["last_contact_ns"] = nullptr;
+            ev["offline_after_s"] = NODE_OFFLINE_AFTER_S;
+            transitions.push_back(std::move(ev));
+        }
+    }
+    // Push outside gStateMtx — pushEvent takes its own locks.
+    for (auto& ev : transitions) {
+        flog::warn("Kujhad link health: {} {}",
+                   ev["node_id"].get<std::string>(),
+                   ev["type"].get<std::string>());
+        pushEvent(ev);
+    }
+}
+
 void webBackendUpdateNodes(const nlohmann::json& nodes) {
-    std::lock_guard<std::mutex> lk(gStateMtx);
-    gStateNodes = nodes;
+    {
+        std::lock_guard<std::mutex> lk(gStateMtx);
+        gStateNodes = nodes;
+        annotateNodeLinkHealth(gStateNodes, nowNs());
+        // Drop cached link state for deregistered nodes.
+        for (auto it = gLinkState.begin(); it != gLinkState.end();) {
+            bool found = false;
+            for (const auto& n : gStateNodes) {
+                if (n.is_object() && n.value("node_id", std::string()) == it->first) {
+                    found = true; break;
+                }
+            }
+            it = found ? std::next(it) : gLinkState.erase(it);
+        }
+    }
+    checkNodeLinkTransitions();
 }
 
 // webBackendUpdateTracks — replace the cached track list served at GET /tracks/.

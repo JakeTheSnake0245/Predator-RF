@@ -102,6 +102,19 @@ class FleetStateManager:
                 snap.hw_profile   = status.get("hw_profile", snap.hw_profile)
                 snap.version      = status.get("version", snap.version)
 
+    def record_link_event(self, event: Dict):
+        """Append a node online/offline transition event to the global
+        event ring so link-health changes are serialised alongside RF
+        events for lossless client catch-up and post-mission review."""
+        with self._lock:
+            ev = dict(event)
+            ev.setdefault("_node_id", ev.get("node_id", ""))
+            ev["_fleet_serial"] = self._global_serial
+            self._global_serial += 1
+            self._global_event_ring.append(ev)
+            while len(self._global_event_ring) > self._MAX_RING:
+                self._global_event_ring.pop(0)
+
     def get_fleet_snapshot(self) -> Dict[str, NodeSnapshot]:
         with self._lock:
             return dict(self._nodes)
