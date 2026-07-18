@@ -275,6 +275,7 @@ void MainWindow::init() {
         kujhadTlsEnabled = cfg.value("kujhadTlsEnabled", false);
         kujhadTlsCertPath = cfg.value("kujhadTlsCertPath", std::string(""));
         kujhadTlsKeyPath = cfg.value("kujhadTlsKeyPath", std::string(""));
+        kujhadPlainHttpAllowCidrs = cfg.value("kujhadPlainHttpAllowCidrs", std::string(""));
         if (kujhadApiKey.empty()) {
             kujhadApiKey = predator::kujhadGenerateApiKey();
             cfg["kujhadApiKey"] = kujhadApiKey;
@@ -832,6 +833,7 @@ void MainWindow::draw() {
         core::configManager.conf["kujhadTlsEnabled"] = kujhadTlsEnabled;
         core::configManager.conf["kujhadTlsCertPath"] = kujhadTlsCertPath;
         core::configManager.conf["kujhadTlsKeyPath"] = kujhadTlsKeyPath;
+        core::configManager.conf["kujhadPlainHttpAllowCidrs"] = kujhadPlainHttpAllowCidrs;
         core::configManager.release(true);
     };
 
@@ -2248,6 +2250,17 @@ void MainWindow::draw() {
             std::string tlsErr;
             kujhadServer.setTlsConfig(kujhadTlsEnabled, kujhadTlsCertPath, kujhadTlsKeyPath, tlsErr);
             kujhadTlsConfigError = tlsErr;
+            // Push the (opt-in, default empty) plain-HTTP overlay CIDR
+            // allowlist into the listener. Invalid entries are counted
+            // so the UI can flag typos instead of silently ignoring
+            // them.
+            {
+                auto parsed = kujhadServer.setPlainHttpAllowlist(
+                    predator::kujhadSplitCidrList(kujhadPlainHttpAllowCidrs));
+                kujhadPlainHttpAllowError = parsed.second > 0
+                    ? std::to_string(parsed.second) + " invalid CIDR entr" + (parsed.second == 1 ? "y" : "ies") + " ignored"
+                    : "";
+            }
             kujhadTlsFingerprint = kujhadServer.tlsFingerprint();
             if (kujhadTlsFingerprint.empty()) {
                 // Fall back to whatever's on disk so the operator at
@@ -6039,12 +6052,53 @@ void MainWindow::draw() {
                     if (kujhadServer.tlsEnabled()) {
                         ImGui::TextWrapped("%s", T("HTTPS active. Controllers must use https:// and pin the fingerprint above."));
                     } else {
-                        // Plain HTTP is a hard loopback-only path —
-                        // the listener refuses non-127.0.0.0/8 peers
-                        // at accept time regardless of how the build
-                        // was configured. To accept a remote peer the
-                        // operator MUST enable TLS above.
-                        ImGui::TextWrapped("%s", T("Plain HTTP — listener accepts loopback (127.0.0.0/8) connections only. Remote controllers will be refused at accept until TLS is enabled above."));
+                        // Plain HTTP is loopback-only by default — the
+                        // listener refuses non-127.0.0.0/8 peers at
+                        // accept time unless the operator has opted
+                        // into an overlay CIDR allowlist below.
+                        if (kujhadServer.plainHttpAllowlistSize() > 0) {
+                            ImGui::TextWrapped("%s", T("Plain HTTP — loopback plus the overlay CIDR allowlist below. The API key travels UNENCRYPTED to allowlisted peers; only safe when the overlay (tailnet/ZeroTier) encrypts the wire."));
+                        } else {
+                            ImGui::TextWrapped("%s", T("Plain HTTP — listener accepts loopback (127.0.0.0/8) connections only. Remote controllers will be refused at accept until TLS is enabled above (or an overlay CIDR allowlist is set below)."));
+                        }
+                        // Persistent lockout warning: a remote peer HAS
+                        // been rejected while in plain-HTTP mode. This
+                        // is the silent-blackout signature — on a
+                        // tailnet deployment it means the coordinator
+                        // is dialing this node and being dropped.
+                        int rejects = kujhadServer.plainHttpRemoteRejects();
+                        if (rejects > 0) {
+                            std::string lastIp = kujhadServer.lastPlainHttpRejectIp();
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.30f, 0.30f, 1.0f));
+                            ImGui::TextWrapped("%s %d %s%s%s",
+                                T("PLAIN-HTTP LOCKOUT:"), rejects,
+                                T("remote connection(s) rejected because TLS is off"),
+                                lastIp.empty() ? "" : " — last peer: ",
+                                lastIp.c_str());
+                            ImGui::TextWrapped("%s", T("A coordinator may be polling this node and seeing it as DEAD. Enable TLS, or allowlist the overlay CIDR if the overlay is the encryption boundary."));
+                            ImGui::PopStyleColor();
+                        }
+                    }
+                    // Opt-in overlay CIDR allowlist (config-gated,
+                    // default empty). Edits apply live when the server
+                    // is running.
+                    drawEditButton(T("Plain-HTTP overlay allowlist (CIDRs)"), kujhadPlainHttpAllowCidrs,
+                        [this](std::string nextCidrs) {
+                            kujhadPlainHttpAllowCidrs = nextCidrs;
+                            auto parsed = kujhadServer.setPlainHttpAllowlist(
+                                predator::kujhadSplitCidrList(kujhadPlainHttpAllowCidrs));
+                            kujhadPlainHttpAllowError = parsed.second > 0
+                                ? std::to_string(parsed.second) + " invalid CIDR entr" + (parsed.second == 1 ? "y" : "ies") + " ignored"
+                                : "";
+                            core::configManager.acquire();
+                            core::configManager.conf["kujhadPlainHttpAllowCidrs"] = kujhadPlainHttpAllowCidrs;
+                            core::configManager.release(true);
+                        });
+                    ImGui::TextDisabled("%s", T("e.g. 100.64.0.0/10 for a tailnet. Leave empty (default) to keep plain HTTP loopback-only. Ignored when TLS is on."));
+                    if (!kujhadPlainHttpAllowError.empty()) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.30f, 0.30f, 1.0f));
+                        ImGui::TextWrapped("%s %s", T("Allowlist:"), kujhadPlainHttpAllowError.c_str());
+                        ImGui::PopStyleColor();
                     }
                 }
 

@@ -79,6 +79,42 @@ Relevant `config.json` keys:
   `true` only when the operator explicitly needs the dashboard reachable from
   other hosts on the LAN. Must be paired with a strong `kujhadApiKey`.
 
+## Kujhad plain-HTTP lockout on overlay networks (tailnet / ZeroTier)
+
+The Kujhad fleet server (the device-side peer protocol listener, distinct
+from the dashboard web server above) is **loopback-only when TLS is off**:
+every non-loopback connection is closed at accept time so the API key never
+crosses the network in the clear.
+
+On an overlay deployment (Tailscale, ZeroTier, WireGuard) this means a node
+started **without TLS enabled is invisible to its coordinator** — polls are
+accepted then instantly dropped, which looks exactly like a dead node. This
+is no longer silent:
+
+- The node logs a rate-limited (30 s) warning to stderr/journal identifying
+  the rejected peer IP:
+  `[kujhad] WARNING: plain-HTTP mode: rejected remote peer <ip> …`
+- The Kujhad tab in the node UI shows a persistent red **PLAIN-HTTP
+  LOCKOUT** warning with the rejection count and the last rejected peer IP.
+
+### Fixes
+
+1. **Enable TLS** (preferred) — flip the TLS toggle in the Kujhad tab and
+   regenerate the self-signed cert; controllers pin the fingerprint.
+2. **Overlay CIDR allowlist** (opt-in, default empty) — when the overlay
+   itself is the encryption/trust boundary, allowlist its CIDR range for
+   plain HTTP:
+
+   - UI: Kujhad tab → *Plain-HTTP overlay allowlist (CIDRs)*, e.g.
+     `100.64.0.0/10` (tailnet CGNAT range) or your ZeroTier subnet.
+   - Config key: `"kujhadPlainHttpAllowCidrs": "100.64.0.0/10"` (comma /
+     space / semicolon separated IPv4 CIDRs; a bare address means `/32`).
+
+   **The API key travels unencrypted to allowlisted peers.** This is only
+   safe when the overlay encrypts the wire end-to-end. The allowlist is
+   ignored while TLS is active, invalid entries are flagged in the UI, and
+   edits apply live. RX-only posture (`tx.*` rejection) is unaffected.
+
 ## Authentication
 
 All `/api/v1/*`, `/v1/*`, and `/ws` endpoints (except `/api/v1/identify`)

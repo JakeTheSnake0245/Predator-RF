@@ -108,6 +108,25 @@ namespace predator {
 
 using kujhad_json = nlohmann::json;
 
+// Split a comma/space/semicolon-separated CIDR list string into
+// individual entries ("100.64.0.0/10, 10.144.0.0/16" → 2 entries).
+// Empty tokens are dropped; no validation happens here — feed the
+// result to KujhadDeviceServer::setPlainHttpAllowlist(), which counts
+// invalid entries.
+inline std::vector<std::string> kujhadSplitCidrList(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+        } else {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty()) { out.push_back(cur); }
+    return out;
+}
+
 struct KujhadInterfaceCandidate {
     std::string name;
     std::string address;
@@ -844,6 +863,72 @@ public:
         return tlsEnabled_ && tlsCtx_.valid();
     }
 
+    // Opt-in overlay allowlist for plain-HTTP mode. Each entry is an
+    // IPv4 CIDR string ("100.64.0.0/10"). When TLS is OFF, a
+    // non-loopback peer whose source address falls inside one of these
+    // ranges is accepted anyway — for deployments where the overlay
+    // (Tailscale / ZeroTier / WireGuard) is itself the encryption and
+    // trust boundary. WARNING: the API key travels unencrypted on the
+    // local wire inside the overlay tunnel endpoints. Default: empty
+    // (loopback-only behavior preserved). Invalid entries are skipped
+    // and counted in the return value's second slot.
+    // Returns {parsedCount, skippedCount}. Applies live — the accept
+    // loop re-reads the list per connection.
+    std::pair<int, int> setPlainHttpAllowlist(const std::vector<std::string>& cidrs) {
+        std::vector<std::pair<uint32_t, uint32_t>> parsed; // {baseHbo, maskHbo}
+        int skipped = 0;
+        for (const auto& c : cidrs) {
+            uint32_t base, mask;
+            if (kujhadParseCidr4(c, base, mask)) { parsed.emplace_back(base, mask); }
+            else if (!c.empty()) { skipped++; }
+        }
+        std::lock_guard<std::mutex> lk(mtx_);
+        plainHttpAllowlist_ = std::move(parsed);
+        return { (int)plainHttpAllowlist_.size(), skipped };
+    }
+
+    int plainHttpAllowlistSize() const {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return (int)plainHttpAllowlist_.size();
+    }
+
+    // Count of non-loopback peers refused because TLS is off (and no
+    // allowlist entry matched). Non-zero while in plain-HTTP mode is
+    // the signature of the silent-blackout misconfiguration: a remote
+    // coordinator is dialing this node and being dropped before any
+    // I/O. Surface this to the operator.
+    int plainHttpRemoteRejects() const { return plainHttpRemoteRejects_.load(); }
+
+    // Dotted-quad of the most recently rejected remote peer ("" when
+    // none). Helps the operator identify WHICH coordinator is being
+    // locked out.
+    std::string lastPlainHttpRejectIp() const {
+        std::lock_guard<std::mutex> lk(statusMtx_);
+        return lastPlainHttpRejectIp_;
+    }
+
+    // IPv4 CIDR parser ("a.b.c.d/len", len 0..32; bare "a.b.c.d" means
+    // /32). Outputs host-byte-order base (pre-masked) and mask.
+    static bool kujhadParseCidr4(const std::string& cidr, uint32_t& baseOut, uint32_t& maskOut) {
+        std::string addr = cidr;
+        int len = 32;
+        size_t slash = cidr.find('/');
+        if (slash != std::string::npos) {
+            addr = cidr.substr(0, slash);
+            std::string lenStr = cidr.substr(slash + 1);
+            if (lenStr.empty() || lenStr.size() > 2) { return false; }
+            for (char ch : lenStr) { if (ch < '0' || ch > '9') { return false; } }
+            len = std::atoi(lenStr.c_str());
+            if (len < 0 || len > 32) { return false; }
+        }
+        in_addr a{};
+        if (inet_pton(AF_INET, addr.c_str(), &a) != 1) { return false; }
+        uint32_t mask = (len == 0) ? 0u : (0xFFFFFFFFu << (32 - len));
+        baseOut = ntohl(a.s_addr) & mask;
+        maskOut = mask;
+        return true;
+    }
+
     std::string tlsFingerprint() const {
         std::lock_guard<std::mutex> lk(mtx_);
         return tlsCtx_.fingerprint();
@@ -974,8 +1059,57 @@ private:
                 uint32_t ipHbo = ntohl(client.sin_addr.s_addr);
                 // 127.0.0.0/8 is the IPv4 loopback block.
                 if ((ipHbo >> 24) != 127) {
-                    KUJHAD_CLOSESOCK(conn);
-                    continue;
+                    // Opt-in escape hatch: operator-configured overlay
+                    // CIDRs (tailnet / ZeroTier) may be allowlisted for
+                    // plain HTTP when the overlay itself is the
+                    // encryption boundary. Default empty = reject.
+                    bool allowed = false;
+                    {
+                        std::lock_guard<std::mutex> lk(mtx_);
+                        for (const auto& e : plainHttpAllowlist_) {
+                            if ((ipHbo & e.second) == e.first) { allowed = true; break; }
+                        }
+                    }
+                    char ipStr[INET_ADDRSTRLEN] = {0};
+                    inet_ntop(AF_INET, &client.sin_addr, ipStr, sizeof(ipStr));
+                    if (!allowed) {
+                        // This used to be a silent drop — on a tailnet
+                        // deployment with TLS off, the coordinator's
+                        // polls were accepted then instantly closed,
+                        // indistinguishable from a dead node. Count it,
+                        // remember the peer, and log a rate-limited
+                        // warning so the misconfiguration is visible.
+                        plainHttpRemoteRejects_++;
+                        {
+                            std::lock_guard<std::mutex> lk(statusMtx_);
+                            lastPlainHttpRejectIp_ = ipStr;
+                        }
+                        int64_t nowMs = kujhadMonotonicMs();
+                        int64_t last = lastRejectLogMs_.load(std::memory_order_relaxed);
+                        if (nowMs - last >= 30000 &&
+                            lastRejectLogMs_.compare_exchange_strong(last, nowMs)) {
+                            std::fprintf(stderr,
+                                "[kujhad] WARNING: plain-HTTP mode: rejected remote peer %s "
+                                "(%d rejected so far) — remote peers are refused while TLS is off. "
+                                "Enable TLS, or allowlist the overlay CIDR if the overlay is the "
+                                "encryption boundary.\n",
+                                ipStr, plainHttpRemoteRejects_.load());
+                        }
+                        KUJHAD_CLOSESOCK(conn);
+                        continue;
+                    }
+                    // Allowed via overlay CIDR — remind (rate-limited)
+                    // that the API key crosses this wire unencrypted.
+                    int64_t nowMs = kujhadMonotonicMs();
+                    int64_t last = lastAllowLogMs_.load(std::memory_order_relaxed);
+                    if (nowMs - last >= 300000 &&
+                        lastAllowLogMs_.compare_exchange_strong(last, nowMs)) {
+                        std::fprintf(stderr,
+                            "[kujhad] NOTICE: plain-HTTP peer %s accepted via overlay CIDR "
+                            "allowlist — the API key travels unencrypted on this wire. Only "
+                            "safe when the overlay (tailnet/ZeroTier) provides encryption.\n",
+                            ipStr);
+                    }
                 }
             }
             // Detached worker — small per-connection thread is fine; the
@@ -1217,6 +1351,11 @@ private:
     std::atomic<int>  inboundRequests_{0};
     std::atomic<int>  inboundCommands_{0};
     std::atomic<int>  rejectedCommands_{0};
+    // Non-loopback peers refused because TLS is off and no allowlist
+    // entry matched. Rate-limit timestamps for the reject/allow logs.
+    std::atomic<int>     plainHttpRemoteRejects_{0};
+    std::atomic<int64_t> lastRejectLogMs_{-60000};
+    std::atomic<int64_t> lastAllowLogMs_{-600000};
     // Monotonic ms timestamp of the last request that PASSED the API-key
     // gate. 0 = never. Drives the local "coordinator link" indicator.
     std::atomic<int64_t> lastAuthedRequestMs_{0};
@@ -1233,9 +1372,12 @@ private:
     std::string tlsCertPath_;
     std::string tlsKeyPath_;
     KujhadServerTlsContext tlsCtx_;
+    // {baseHbo, maskHbo} pairs — guarded by mtx_.
+    std::vector<std::pair<uint32_t, uint32_t>> plainHttpAllowlist_;
 
     mutable std::mutex statusMtx_;
     std::string statusMsg_ = "Idle";
+    std::string lastPlainHttpRejectIp_; // guarded by statusMtx_
 
     SnapshotProvider identifyProvider_;
     SnapshotProvider stateProvider_;

@@ -153,6 +153,13 @@ private:
     std::string kujhadTlsKeyPath;
     std::string kujhadTlsFingerprint;
     std::string kujhadTlsConfigError;
+    // Opt-in overlay CIDR allowlist for plain-HTTP mode. Comma/space
+    // separated IPv4 CIDRs ("100.64.0.0/10, 192.168.192.0/24"). Empty
+    // (default) keeps the loopback-only rejection policy. Only used
+    // when TLS is off; the API key travels unencrypted to allowlisted
+    // peers, so this is safe only when the overlay itself encrypts.
+    std::string kujhadPlainHttpAllowCidrs;
+    std::string kujhadPlainHttpAllowError;
     int kujhadActivePeerIdx = -1;
     char kujhadAddPeerName[64] = {0};
     char kujhadAddPeerHost[128] = {0};
