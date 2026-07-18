@@ -234,7 +234,7 @@ void MainWindow::init() {
     gui::waterfall.setFFTHeight(fftHeight);
 
     predatorMissionMode = std::clamp<int>((int)core::configManager.conf["predatorMissionMode"], PREDATOR_MODE_MANUAL, PREDATOR_MODE_QUICKSCAN);
-    predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], PREDATOR_TAB_SPECTRUM, PREDATOR_TAB_BASELINE);
+    predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], (int)PREDATOR_TAB_SPECTRUM, (int)PREDATOR_TAB_LAST);
     predatorQuickFilter = std::clamp<int>((int)core::configManager.conf["predatorQuickFilter"], 0, 3);
     predatorHitSortMode = std::clamp<int>((int)core::configManager.conf["predatorHitSortMode"], 0, 5);
     predatorEventFilter = std::clamp<int>((int)core::configManager.conf["predatorEventFilter"], 0, 5);
@@ -303,6 +303,33 @@ void MainWindow::init() {
         // server. Empty when there's no usable cert yet.
         kujhadTlsFingerprint = predator::kujhadCertFingerprintFromPemFile(kujhadTlsCertPath);
     }
+
+#ifdef OPT_BUILD_FOXHUNT
+    // Fox Hunt TX settings. All read with .value() so a config written by
+    // an older build (no foxhunt keys) loads clean defaults. The ARM state
+    // is deliberately NOT persisted — every launch starts disarmed.
+    {
+        auto& cfg = core::configManager.conf;
+        foxhuntFreqMhz      = std::clamp<double>(cfg.value("foxhuntFreqMhz", 146.565), 0.1, 6000.0);
+        foxhuntBandwidthKhz = std::clamp<double>(cfg.value("foxhuntBandwidthKhz", 200.0), 1.0, 61440.0);
+        foxhuntGainDb       = cfg.value("foxhuntGainDb", 0.0);
+        foxhuntSampleRate   = std::clamp<double>(cfg.value("foxhuntSampleRate", 1000000.0), 100000.0, 61440000.0);
+        foxhuntRepeat       = cfg.value("foxhuntRepeat", false);
+        foxhuntDutyEnabled  = cfg.value("foxhuntDutyEnabled", false);
+        foxhuntDutyOnSec    = std::clamp<double>(cfg.value("foxhuntDutyOnSec", 10.0), 1.0, 3600.0);
+        foxhuntDutyOffSec   = std::clamp<double>(cfg.value("foxhuntDutyOffSec", 20.0), 1.0, 3600.0);
+        foxhuntCallsign     = cfg.value("foxhuntCallsign", std::string(""));
+        foxhuntCwIdEnabled  = cfg.value("foxhuntCwIdEnabled", false);
+        foxhuntCwIdPeriodSec = std::clamp<double>(cfg.value("foxhuntCwIdPeriodSec", 600.0), 30.0, 3600.0);
+        foxhuntCwWpm        = std::clamp<int>(cfg.value("foxhuntCwWpm", 20), 5, 60);
+        foxhuntDeadManSec   = std::clamp<double>(cfg.value("foxhuntDeadManSec", 600.0), 10.0, 7200.0);
+        foxhuntSourceMode   = std::clamp<int>(cfg.value("foxhuntSourceMode", 0), 0, 2);
+        foxhuntFolder       = cfg.value("foxhuntFolder", std::string(""));
+        if (foxhuntFolder.empty()) {
+            foxhuntFolder = (std::filesystem::path((std::string)core::args["root"]) / "recordings").string();
+        }
+    }
+#endif
 
     tuningMode = core::configManager.conf["centerTuning"] ? tuner::TUNER_MODE_CENTER : tuner::TUNER_MODE_NORMAL;
     gui::waterfall.VFOMoveSingleClick = (tuningMode == tuner::TUNER_MODE_CENTER);
@@ -673,6 +700,10 @@ void MainWindow::draw() {
         "KUJ",
         "SYS",
         "BASE"
+#ifdef OPT_BUILD_FOXHUNT
+        ,
+        "FOX"
+#endif
     };
 
     const char* tabTitles[] = {
@@ -684,6 +715,10 @@ void MainWindow::draw() {
         T("Kujhad Fleet"),
         T("System"),
         T("Baseline")
+#ifdef OPT_BUILD_FOXHUNT
+        ,
+        T("Fox Hunt TX")
+#endif
     };
 
     const char* tabDescriptions[] = {
@@ -695,6 +730,10 @@ void MainWindow::draw() {
         T("Operate this unit as a Device or pull peer state from a Controller."),
         T("Health, theme, legacy modules, and operator-level status."),
         T("Record local RF noise floor and scan against it to surface anomalies.")
+#ifdef OPT_BUILD_FOXHUNT
+        ,
+        T("Replay IQ recordings or a tone/CW beacon through a TX-capable SDR.")
+#endif
     };
 
     const char* quickFilterLabels[] = {
@@ -721,6 +760,10 @@ void MainWindow::draw() {
         // rendered. Decoupling via this flag keeps the OpenPopup and
         // BeginPopupModal calls at matching ID stacks.
         bool                              openRequested = false;
+        // Ask the platform for a numeric (digits + decimal) soft keyboard
+        // instead of full QWERTY while this edit is up. Reset when the
+        // popup closes so the next text field gets QWERTY again.
+        bool                              numeric = false;
         char                              buf[256] = {};
         char                              label[128] = {};
         std::function<void(std::string)>  onAccept;
@@ -760,10 +803,25 @@ void MainWindow::draw() {
         pendEdit.onAccept      = std::move(cb);
         pendEdit.open          = true;
         pendEdit.setFocus      = true;
+        pendEdit.numeric       = false;
         // Defer the actual OpenPopup until we're at the root ID stack
         // (see comment on openRequested above). Until this fix every
         // drawEditButton click queued a popup ID nobody could find,
         // which is why Add Peer / Edit IP / Edit Port appeared dead.
+        pendEdit.openRequested = true;
+    };
+
+    // Numeric variant: same modal, but asks the platform for a numeric
+    // soft keyboard (digits + decimal point) instead of full QWERTY, and
+    // restricts ImGui-side input to decimal characters.
+    auto openPendEditNumeric = [&](const char* label, const std::string& initial,
+                                   std::function<void(std::string)> cb) {
+        snprintf(pendEdit.label, sizeof(pendEdit.label), "%s", label);
+        snprintf(pendEdit.buf,   sizeof(pendEdit.buf),   "%s", initial.c_str());
+        pendEdit.onAccept      = std::move(cb);
+        pendEdit.open          = true;
+        pendEdit.setFocus      = true;
+        pendEdit.numeric       = true;
         pendEdit.openRequested = true;
     };
 
@@ -793,6 +851,29 @@ void MainWindow::draw() {
                 cb(next);
             }
         });
+    };
+
+    // Numeric-keyboard variant of drawEditDoubleButton (Fox Hunt fields).
+    auto drawEditDoubleButtonNumeric = [&](const char* label, double value, const char* fmt,
+                                           std::function<void(double)> cb) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), fmt, value);
+        std::string preview(buf);
+        ImGui::TextDisabled("%s", label);
+        ImGui::PushID(label);
+        bool clicked = ImGui::Button(preview.c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0));
+        ImGui::PopID();
+        if (clicked) {
+            char initStr[96];
+            snprintf(initStr, sizeof(initStr), "%g", value);
+            openPendEditNumeric(label, std::string(initStr), [cb = std::move(cb)](std::string text) {
+                char* end = nullptr;
+                double next = std::strtod(text.c_str(), &end);
+                if (end != text.c_str()) {
+                    cb(next);
+                }
+            });
+        }
     };
 
     auto drawEditIntButton = [&](const char* label, int value,
@@ -834,6 +915,23 @@ void MainWindow::draw() {
         core::configManager.conf["kujhadTlsCertPath"] = kujhadTlsCertPath;
         core::configManager.conf["kujhadTlsKeyPath"] = kujhadTlsKeyPath;
         core::configManager.conf["kujhadPlainHttpAllowCidrs"] = kujhadPlainHttpAllowCidrs;
+#ifdef OPT_BUILD_FOXHUNT
+        core::configManager.conf["foxhuntFreqMhz"] = foxhuntFreqMhz;
+        core::configManager.conf["foxhuntBandwidthKhz"] = foxhuntBandwidthKhz;
+        core::configManager.conf["foxhuntGainDb"] = foxhuntGainDb;
+        core::configManager.conf["foxhuntSampleRate"] = foxhuntSampleRate;
+        core::configManager.conf["foxhuntRepeat"] = foxhuntRepeat;
+        core::configManager.conf["foxhuntDutyEnabled"] = foxhuntDutyEnabled;
+        core::configManager.conf["foxhuntDutyOnSec"] = foxhuntDutyOnSec;
+        core::configManager.conf["foxhuntDutyOffSec"] = foxhuntDutyOffSec;
+        core::configManager.conf["foxhuntCallsign"] = foxhuntCallsign;
+        core::configManager.conf["foxhuntCwIdEnabled"] = foxhuntCwIdEnabled;
+        core::configManager.conf["foxhuntCwIdPeriodSec"] = foxhuntCwIdPeriodSec;
+        core::configManager.conf["foxhuntCwWpm"] = foxhuntCwWpm;
+        core::configManager.conf["foxhuntDeadManSec"] = foxhuntDeadManSec;
+        core::configManager.conf["foxhuntSourceMode"] = foxhuntSourceMode;
+        core::configManager.conf["foxhuntFolder"] = foxhuntFolder;
+#endif
         core::configManager.release(true);
     };
 
@@ -8390,10 +8488,10 @@ void MainWindow::draw() {
 
     float tabAvailH = ImGui::GetContentRegionAvail().y;
     float tabSpacingY = ImGui::GetStyle().ItemSpacing.y;
-    float tabBtnH = std::floor((tabAvailH - (tabSpacingY * 7.0f)) / 8.0f);
+    float tabBtnH = std::floor((tabAvailH - (tabSpacingY * (float)(PREDATOR_TAB_COUNT - 1))) / (float)PREDATOR_TAB_COUNT);
     tabBtnH = std::max(tabBtnH, 1.0f);
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < PREDATOR_TAB_COUNT; i++) {
         bool activeTab = (predatorTab == i);
         if (activeTab) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
@@ -8438,6 +8536,10 @@ void MainWindow::draw() {
     // openRequested=true; we trigger the actual OpenPopup right here.
     if (pendEdit.openRequested) {
         pendEdit.openRequested = false;
+        // Switch the soft keyboard layout BEFORE the IME is raised for the
+        // focused InputText (numeric pad for freq/duty fields, QWERTY
+        // otherwise). No-op on desktop and headless backends.
+        backend::setImeNumeric(pendEdit.numeric);
         ImGui::OpenPopup("##pend_edit");
     }
     if (ImGui::IsPopupOpen("##pend_edit")) {
@@ -8488,16 +8590,19 @@ void MainWindow::draw() {
             ImGui::SetKeyboardFocusHere();
             pendEdit.setFocus = false;
         }
-        bool submitted = ImGui::InputText("##pend_edit_text", pendEdit.buf, sizeof(pendEdit.buf),
-            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        ImGuiInputTextFlags textFlags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll;
+        if (pendEdit.numeric) { textFlags |= ImGuiInputTextFlags_CharsDecimal; }
+        bool submitted = ImGui::InputText("##pend_edit_text", pendEdit.buf, sizeof(pendEdit.buf), textFlags);
         ImGui::Spacing();
         float bw2 = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
         if (submitted || ImGui::Button(T("OK##pend_edit_ok"), ImVec2(bw2, 0))) {
             if (pendEdit.onAccept) { pendEdit.onAccept(std::string(pendEdit.buf)); }
+            backend::setImeNumeric(false);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine(0, 8.0f * style::uiScale);
         if (ImGui::Button(T("Cancel##pend_edit_cancel"), ImVec2(bw2, 0))) {
+            backend::setImeNumeric(false);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

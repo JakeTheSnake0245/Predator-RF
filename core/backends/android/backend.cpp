@@ -688,6 +688,28 @@ namespace backend {
         return out;
     }
 
+    void setImeNumeric(bool numeric) {
+        // Cache to avoid a JNI round-trip per frame — the GUI calls this
+        // every time the pendEdit popup opens/closes.
+        static bool lastNumeric = false;
+        static bool initialized = false;
+        if (initialized && lastNumeric == numeric) { return; }
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+        if (java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6) == JNI_ERR) return;
+        if (java_vm->AttachCurrentThread(&java_env, NULL) != JNI_OK)        return;
+        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (clazz) {
+            jmethodID m = java_env->GetMethodID(clazz, "setImeNumeric", "(Z)V");
+            if (m) {
+                java_env->CallVoidMethod(app->activity->clazz, m, (jboolean)numeric);
+                lastNumeric = numeric;
+                initialized = true;
+            }
+        }
+        java_vm->DetachCurrentThread();
+    }
+
     int getImeBottomInset() {
         JavaVM* java_vm = app->activity->vm;
         JNIEnv* java_env = NULL;

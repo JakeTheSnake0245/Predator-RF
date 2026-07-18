@@ -809,6 +809,7 @@ bool openMapView() { return false; }
 float getNativeUiScale() { return 1.0f; }
 bool isTouchPrimary() { return false; }
 int getImeBottomInset() { return 0; }
+void setImeNumeric(bool) {}
 SafeAreaInsets getSafeAreaInsets() { return {}; }
 
 int renderLoop() {

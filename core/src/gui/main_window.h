@@ -6,6 +6,10 @@
 #include <signal_path/vfo_manager.h>
 #include <predator/hold_manager.h>
 #include <predator/hold_decoder_binder.h>
+#ifdef OPT_BUILD_FOXHUNT
+#include <predator/foxhunt/tx_driver.h>
+#include <predator/foxhunt/replay_engine.h>
+#endif
 #include <string>
 #include <utils/event.h>
 #include <mutex>
@@ -55,7 +59,19 @@ private:
         PREDATOR_TAB_KUJHAD,
         PREDATOR_TAB_SYSTEM,
         PREDATOR_TAB_BASELINE
+#ifdef OPT_BUILD_FOXHUNT
+        ,
+        PREDATOR_TAB_FOXHUNT
+#endif
     };
+
+#ifdef OPT_BUILD_FOXHUNT
+    static constexpr int PREDATOR_TAB_COUNT = 9;
+    static constexpr int PREDATOR_TAB_LAST = PREDATOR_TAB_FOXHUNT;
+#else
+    static constexpr int PREDATOR_TAB_COUNT = 8;
+    static constexpr int PREDATOR_TAB_LAST = PREDATOR_TAB_BASELINE;
+#endif
 
     enum PredatorRole {
         PREDATOR_ROLE_DEVICE,
@@ -130,6 +146,33 @@ private:
     int predatorDuplicateHitWindowSec = 20;
     int predatorMarkerSlots = 4;
     std::string predatorScanStatus = "Idle";
+
+#ifdef OPT_BUILD_FOXHUNT
+    // ── Fox Hunt TX tab (local-hardware-only transmit) ──────────────────
+    // Persisted settings (config.json, keys "foxhunt*"). The engine and
+    // driver session live for the app lifetime; TX is only possible after
+    // the operator flips the ARM switch each session (never persisted).
+    double foxhuntFreqMhz      = 146.565;   // common fox-hunt frequency
+    double foxhuntBandwidthKhz = 200.0;
+    double foxhuntGainDb       = 0.0;       // clamped to device range on start
+    double foxhuntSampleRate   = 1000000.0; // used when the file has no rate
+    bool   foxhuntRepeat       = false;
+    bool   foxhuntDutyEnabled  = false;
+    double foxhuntDutyOnSec    = 10.0;
+    double foxhuntDutyOffSec   = 20.0;
+    std::string foxhuntCallsign;
+    bool   foxhuntCwIdEnabled  = false;
+    double foxhuntCwIdPeriodSec = 600.0;
+    int    foxhuntCwWpm        = 20;
+    double foxhuntDeadManSec   = 600.0;
+    int    foxhuntSourceMode   = 0;         // 0=file, 1=tone, 2=CW beacon
+    std::string foxhuntFolder;
+    // Runtime-only state
+    bool   foxhuntArmed        = false;     // ARM switch, resets every launch
+    predator::foxhunt::ReplayEngine foxhuntEngine;
+    predator::foxhunt::TxDriver*    foxhuntOpenDriver = nullptr; // open device owner
+    std::string foxhuntOpenDeviceId;        // id of the currently-open device
+#endif
 
     // Kujhad fleet console state. The role determines whether this
     // instance publishes its state to peers (Device) or pulls state

@@ -257,6 +257,11 @@ namespace backend {
         return 0;
     }
 
+    void setImeNumeric(bool numeric) {
+        // Desktop has no soft keyboard — nothing to switch.
+        (void)numeric;
+    }
+
     SafeAreaInsets getSafeAreaInsets() {
         // Desktop windows have no notch / status-bar / nav-bar safe area.
         return SafeAreaInsets{};

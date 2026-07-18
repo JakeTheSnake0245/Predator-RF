@@ -493,6 +493,38 @@ class MainActivity : NativeActivity() {
         }
     }
 
+    // ── Numeric IME mode (Fox Hunt frequency / duty / timer fields) ─────
+    // Called from native (backend::setImeNumeric) BEFORE the keyboard is
+    // raised for a numeric-only field. Sticky until called again with
+    // false. Applying inputType on the capture EditText is enough — the
+    // subsequent showSoftInput() call does restartInput(), which makes the
+    // IME re-read the input type and switch to the number pad layout.
+    @Volatile private var imeNumericMode = false
+
+    fun setImeNumeric(numeric: Boolean) {
+        if (imeNumericMode == numeric) return
+        imeNumericMode = numeric
+        runOnUiThread {
+            val capture = imeCaptureView ?: return@runOnUiThread
+            capture.inputType = if (numeric) {
+                InputType.TYPE_CLASS_NUMBER or
+                InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                InputType.TYPE_NUMBER_FLAG_SIGNED
+            } else {
+                InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            }
+            // If the field is already up (mode flipped mid-edit), force the
+            // IME to re-bind so the layout actually changes on screen.
+            if (capture.hasFocus()) {
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.restartInput(capture)
+            }
+            Log.i(TAG, "setImeNumeric: numeric=$numeric")
+        }
+    }
+
     fun hideSoftInput() {
         imeKeepFocus = false
         runOnUiThread {

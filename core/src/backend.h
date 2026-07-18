@@ -31,6 +31,13 @@ namespace backend {
     // surface stays full-screen so DisplaySize never shrinks for us.
     int getImeBottomInset();
 
+    // Ask the platform IME for a numeric (digits + decimal point) soft
+    // keyboard for subsequent text input instead of the full QWERTY layout.
+    // Sticky until called again with false. No-op on backends without a
+    // soft keyboard (desktop / GLFW / web). Used by the Fox Hunt tab's
+    // frequency / duty-cycle / dead-man fields.
+    void setImeNumeric(bool numeric);
+
     // Device safe-area insets (notch / status bar / nav bar) in raw screen
     // pixels. All zero on backends without insets (desktop / GLFW). The
     // GUI layer uses these to keep absolute-positioned popups clear of

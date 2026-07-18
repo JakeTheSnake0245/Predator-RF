@@ -1,0 +1,38 @@
+#75 - Fox Hunt TX Tab (Android + RPi)
+What & Why
+Add a streamlined "Fox Hunt" tab to the C++ app (Android + RPi/Linux GUI builds) that turns the node into a fox-hunt beacon transmitter: replay a selected IQ recording (or a built-in tone/CW beacon) on a chosen frequency through a TX-capable SDR. This is the app's first transmit path — the core signal path is currently RX-only. SoapySDR TX is the primary target; PlutoSDR native TX as the second driver, with a driver interface designed so HackRF/LimeSDR/USRP can be added later.
+
+Done looks like
+A "Fox Hunt" tab appears in the right rail (same collapsible/scrollable rail as existing tabs; inherits touch scroll).
+Operator can pick a folder and see its IQ recordings (WAV files from the recorder module, plus raw IQ files), select one, and replay it.
+Frequency entry is a dedicated XXX.XXXX MHz text field that raises the numeric-only soft keyboard on Android (not the full QWERTY).
+Bandwidth slider snaps to clean kHz values and shows the value in kHz, bounded by what the detected SDR reports it supports.
+TX power slider shows the live value as it moves — TX gain in dB from the driver's reported range, with estimated output power shown where the driver provides it.
+"Repeat" checkbox: unchecked = file plays once and TX stops; checked = loops. A duty-cycle option (TX N seconds / silent M seconds) is available when repeating.
+Auto CW ID: optional callsign field that keys a Morse ID every N minutes while transmitting (legal station ID).
+Safety: explicit ARM switch before TX is possible, big STOP button, max-continuous-TX dead-man timer, clipping warning if the IQ file exceeds full scale.
+Build flag OPT_BUILD_FOXHUNT (default ON for Android/Linux GUI, OFF for the headless web backend) so RX-only deployments can exclude TX entirely.
+All settings persist in config.json.
+Out of scope
+Remote TX commanding — the Kujhad/RNS/control-socket tx.* hard-reject stays exactly as is. Fox Hunt is local-hardware-only.
+The headless predator-rfd web backend and Python backend (no TX surface added there).
+Full duplex (simultaneous RX+TX on one device).
+HackRF/LimeSDR/USRP drivers (interface ready, drivers deferred).
+MP4/audio-file modulation — IQ files and built-in tone/CW only in v1.
+Steps
+TX driver abstraction — Define a small transmit driver interface (enumerate TX-capable devices, report gain range / sample rates / bandwidth caps, stream complex float samples) separate from the RX sigpath. Implement the SoapySDR TX driver first, then PlutoSDR (libiio TX channels).
+IQ replay engine — File playback thread that reads WAV IQ (reuse the existing WAV reader) or raw cf32/cs16 files, streams to the TX driver, handles once vs repeat vs duty-cycle timing, and generates tone/CW-ID samples. Detect and warn on sample clipping.
+Fox Hunt tab UI — New module/panel in the right rail: folder picker + file list, MHz frequency field, kHz-snapped bandwidth slider, live-updating gain/power slider, repeat + duty-cycle controls, callsign CW ID settings, ARM/STOP safety controls, TX status readout (elapsed, next burst, ID countdown).
+Android numeric keyboard — Extend the soft-keyboard capture path so the frequency field requests a numeric IME (digits + decimal point) instead of full QWERTY; follow the existing EditText-overlay gotchas.
+Safety + persistence + build wiring — ARM gate, dead-man timer, config persistence, OPT_BUILD_FOXHUNT CMake flag, Android Gradle native-target entry (both CMake add_subdirectory AND build.gradle target), and docs page covering legal-ID responsibility and the local-TX-only posture.
+Relevant files
+core/src/gui/main_window.cpp
+source_modules/soapy_source/src/main.cpp
+source_modules/plutosdr_source/src/main.cpp
+source_modules/file_source/src/main.cpp
+misc_modules/recorder/src/main.cpp
+core/src/utils/wav.cpp
+core/src/gui/widgets/frequency_select.cpp
+android/app/src/main/java/org/sdrpp/sdrpp/MainActivity.kt
+docs/android_gotchas.md
+CMakeLists.txt
