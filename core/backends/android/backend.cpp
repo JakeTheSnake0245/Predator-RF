@@ -207,6 +207,14 @@ namespace backend {
         // context is a guaranteed SIGSEGV.
         if (ImGui::GetCurrentContext() == nullptr) { return; }
 
+        // Defensive: the GL renderer backend may be shut down while the
+        // ImGui context still exists (TERM_WINDOW → INIT_WINDOW re-init
+        // window). ImGui_ImplOpenGL3_RenderDrawData() dereferences its
+        // backend data unconditionally in release builds (asserts are
+        // compiled out), so a frame rendered in that window SIGSEGVs at
+        // a small fault offset (~0x28). Skip the frame instead.
+        if (ImGui::GetIO().BackendRendererUserData == nullptr) { return; }
+
         // Rendering
         ImGui::Render();
         ImDrawData* drawData = ImGui::GetDrawData();
@@ -356,6 +364,11 @@ namespace backend {
             // would SIGSEGV inside ImGui::GetDrawData(). Skip until a
             // valid context exists again.
             if (ImGui::GetCurrentContext() == nullptr) { continue; }
+
+            // Same guard for the GL renderer backend: NewFrame/RenderDrawData
+            // on a shut-down backend crash in release builds (asserts
+            // compiled out). Skip until re-init completes.
+            if (ImGui::GetIO().BackendRendererUserData == nullptr) { continue; }
 
             if (!pauseRendering) {
                 // Initiate a new frame
@@ -616,7 +629,7 @@ namespace backend {
         jfieldID vid_field_id = java_env->GetFieldID(native_activity_clazz, "SDR_VID", "I");
         jfieldID pid_field_id = java_env->GetFieldID(native_activity_clazz, "SDR_PID", "I");
         
-        if (!vid_field_id || !vid_field_id || !pid_field_id)
+        if (!fd_field_id || !vid_field_id || !pid_field_id)
             return -1;
 
         int fd = java_env->GetIntField(app->activity->clazz, fd_field_id);

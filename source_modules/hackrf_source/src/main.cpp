@@ -13,6 +13,7 @@
 #else
 #include <android_backend.h>
 #include <hackrf.h>
+#include <libusb.h>
 #endif
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -83,7 +84,19 @@ public:
     HackRFSourceModule(std::string name) {
         this->name = name;
 
-        hackrf_init();
+#ifdef __ANDROID__
+        // MANDATORY on Android: libusb has no permission to enumerate
+        // usbfs, so libusb_init() FAILS unless device discovery is
+        // disabled first (option must be set with a NULL ctx BEFORE the
+        // first libusb_init in the process). Without this, hackrf_init()
+        // silently fails, libusb's context stays NULL, and the first
+        // hackrf_open_by_fd() SIGSEGVs inside libusb_wrap_sys_device.
+        libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, NULL);
+#endif
+        int initErr = hackrf_init();
+        if (initErr != HACKRF_SUCCESS) {
+            flog::error("hackrf_init() failed: {0}", hackrf_error_name((hackrf_error)initErr));
+        }
 
         // Select the last samplerate option
         sampleRate = 2000000;
