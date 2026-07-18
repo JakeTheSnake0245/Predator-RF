@@ -39,7 +39,7 @@ def create_app(track_manager=None, fleet_manager=None,
     from backend.api.routes import (
         tracks, nodes, events, assessments,
         health, missions, approvals, overrides,
-        preflight, android_pull, cot_export, rns, nomination)
+        preflight, android_pull, cot_export, rns, nomination, snapshot)
     from backend.api.middleware.auth import make_bearer_middleware
 
     app = FastAPI(
@@ -84,6 +84,7 @@ def create_app(track_manager=None, fleet_manager=None,
             missions.registry = backend.missions
         if hasattr(backend, "store"):
             missions.store = backend.store
+            snapshot.store = backend.store
         if hasattr(backend, "approvals"):
             approvals.queue = backend.approvals
         if hasattr(backend, "overrides"):
@@ -118,6 +119,12 @@ def create_app(track_manager=None, fleet_manager=None,
     # so guard the include.
     if getattr(preflight, "router", None) is not None:
         app.include_router(preflight.router, tags=["preflight"])
+    # Coordinator failure recovery — standby kits pull mission-DB
+    # snapshots from here (see docs/OPERATOR_RUNBOOK.md §10).
+    if getattr(snapshot, "router", None) is not None:
+        app.include_router(snapshot.router,
+                            prefix="/api/v1/snapshot",
+                            tags=["snapshot"])
     if getattr(android_pull, "router", None) is not None:
         app.include_router(android_pull.router,
                             prefix="/api/v1/android-pull",

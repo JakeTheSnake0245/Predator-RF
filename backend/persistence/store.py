@@ -462,6 +462,48 @@ class MissionStore:
             cur = self._conn.execute("SELECT COUNT(*) FROM assessment_reports")
             return cur.fetchone()[0]
 
+    # ── Snapshot export (coordinator failure recovery) ────────────────
+    # `VACUUM INTO` produces a consistent single-file copy of the DB
+    # even while the backend keeps writing (same primitive as
+    # deploy/backup_mission.sh). A standby kit pulls this over HTTP
+    # (`GET /api/v1/snapshot`) so a backup coordinator can bootstrap
+    # from recent mission state instead of an empty DB.
+
+    def _snapshot_to_file_sync(self, dest_path: str):
+        os.makedirs(os.path.dirname(os.path.abspath(dest_path)) or ".",
+                    exist_ok=True)
+        # VACUUM INTO refuses to overwrite an existing file.
+        if os.path.exists(dest_path):
+            os.unlink(dest_path)
+        with self._lock:
+            # Parameter binding is not allowed for VACUUM INTO's target
+            # in older SQLite; escape single quotes defensively.
+            escaped = dest_path.replace("'", "''")
+            self._conn.execute(f"VACUUM INTO '{escaped}'")
+
+    async def snapshot_to_file(self, dest_path: str):
+        """Write a consistent snapshot of the mission DB to dest_path."""
+        await asyncio.to_thread(self._snapshot_to_file_sync, dest_path)
+
+    async def snapshot_to_bytes(self) -> bytes:
+        """Snapshot the DB into a temp file and return its raw bytes.
+        Used by the HTTP export route. The mission DB on a field kit
+        is small (tens of MB at most), so buffering in memory is fine."""
+        import tempfile
+        tmpdir = tempfile.mkdtemp(prefix="predator_snap_")
+        tmp = os.path.join(tmpdir, "snapshot.db")
+        try:
+            await asyncio.to_thread(self._snapshot_to_file_sync, tmp)
+            with open(tmp, "rb") as f:
+                return f.read()
+        finally:
+            try:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+                os.rmdir(tmpdir)
+            except OSError:
+                pass
+
     def close(self):
         with self._lock:
             try:

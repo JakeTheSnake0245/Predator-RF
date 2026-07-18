@@ -14,6 +14,12 @@ Print this. Walk it before you go live. Anything not green is a no-go.
 - [ ] `AUTO_TASKER_ENABLED` matches your ROE — leave OFF unless you're authorized to re-tune nodes
 - [ ] `AUTO_TASKER_GLOBAL_MAX_PER_MIN` sized for your fleet (default 30 = ~6 nodes worth of churn)
 
+### Backup coordinator kit (if fielding one)
+
+- [ ] Backup kit has the same checkout + venv and a current copy of `/etc/predator-rf/predator-rf.env` (`FLEET_NODES` + `API_BEARER_TOKEN` match the primary)
+- [ ] Snapshot cron installed on the backup kit (`deploy/fetch_snapshot.sh` against the primary, every 15 min — runbook §9c)
+- [ ] `PREFLIGHT_STANDBY=1 python deploy/preflight.py` on the backup kit reports **GO** (verifies FLEET_NODES + fresh snapshot)
+
 ## On-site, before fleet power-on
 
 - [ ] Each sensor node placed; antennas oriented; GPS sky-view confirmed
@@ -34,6 +40,7 @@ Print this. Walk it before you go live. Anything not green is a no-go.
 - [ ] `curl /metrics` → `predator_events_total` is climbing
 - [ ] `curl /api/v1/android-pull?since_ns=0` → all listed nodes show `gps_lock=true` AND `gps_age_s < 60`
 - [ ] No CoT approvals stuck > 5 min in `/api/v1/approvals` (operator backlog)
+- [ ] Backup kit (if fielded): newest `standby/mission-snapshot-*.db` less than an hour old
 
 ## End-of-mission
 

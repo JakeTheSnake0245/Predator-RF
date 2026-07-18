@@ -162,7 +162,104 @@ SSE feed exactly like a local node — same fusion, same baselines,
 same TDOA. Cross-station dedup coalesces tracks for the same
 physical emitter heard by multiple stations.
 
-## 9. When to hard-stop the mission
+## 9. Coordinator down — failure recovery
+
+The coordinator (this backend's RPi/laptop) is a single point of
+failure for **fusion**: while it is down, no new TDOA fixes, track
+updates, assessments, or CoT escalations happen. The sensor nodes
+themselves keep running — this section is about making coordinator
+loss a bounded, rehearsed event.
+
+### What survives, what is lost
+
+| Survives coordinator loss | Lost |
+|---|---|
+| Node-side Kujhad event rings (each node keeps buffering hits) | Fusion output during the outage (no fixes/assessments produced) |
+| SQLite mission DB on the coordinator disk (WAL — survives SIGKILL) | In-flight approval queue entries (queue is ephemeral by design) |
+| Operator overrides, missions, approvals *ledger* (all in the DB) | Events older than the node rings' retention if outage is long |
+| Standby snapshots pulled by the backup kit (see below) | Anything written after the last standby snapshot, if the disk itself dies |
+
+**Data-loss bound:** same-kit restart with an intact disk loses
+nothing durable. Backup promotion loses at most one snapshot
+interval of coordinator-side state (default cron: 15 min) — but
+events still buffered in node rings are re-fetched via `since=`
+catch-up, so the practical loss is usually just assessments/fix
+history from the gap, not the raw events.
+
+### 9a. Same-kit restart (RPi rebooted / process died, disk OK)
+
+1. `sudo systemctl start predator-rf` (or reboot the Pi; the unit
+   is `WantedBy=multi-user.target`).
+2. Watch `journalctl -u predator-rf -f` — you should see
+   `MissionStore schema now at v2` and track rehydration
+   (`load_active_tracks`) log lines.
+3. Verify recovery:
+   ```bash
+   curl -H "Authorization: Bearer $TOKEN" localhost:8000/readyz    # 200 after first fleet poll
+   curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/tracks/   # pre-outage tracks present
+   ```
+4. The backend re-polls every `FLEET_NODES` entry and catches up
+   each node's event ring from its last-seen cursor — no operator
+   action needed. Tracks are keyed by `emitter_id`, so replayed
+   events update existing tracks instead of duplicating them.
+
+### 9b. Promoting the pre-designated backup kit
+
+Prerequisites (verify BEFORE the mission — see §9c):
+the backup kit has the same source checkout + venv, a copy of
+`/etc/predator-rf/predator-rf.env` with current `FLEET_NODES` and
+`API_BEARER_TOKEN`, and a snapshot cron pulling
+`GET /api/v1/snapshot` via `deploy/fetch_snapshot.sh`.
+
+1. **Confirm the primary is really dead** (not just a network
+   blip) — two coordinators polling the same fleet is wasteful but
+   safe (RX-only); two coordinators with `AUTO_TASKER_ENABLED`
+   is NOT. If in doubt, physically power off the primary.
+2. On the backup kit, place the newest snapshot as the live DB:
+   ```bash
+   sudo systemctl stop predator-rf   # if it was idling
+   cp /var/lib/predator-rf/standby/latest.db /var/lib/predator-rf/mission.db
+   rm -f /var/lib/predator-rf/mission.db-wal /var/lib/predator-rf/mission.db-shm
+   ```
+3. Preflight: `PREFLIGHT_STANDBY=1 python deploy/preflight.py`
+   → must report **GO** (the `backup` check verifies FLEET_NODES
+   and snapshot freshness).
+4. `sudo systemctl start predator-rf`.
+5. Verify: same checks as §9a step 3. Rehydrated tracks come from
+   the snapshot; node re-polling catches up event rings via the
+   `since=` cursors. Because tracks upsert on `emitter_id` and
+   events are `INSERT OR IGNORE` on `event_id`, replaying events
+   the snapshot already contained does **not** duplicate anything.
+6. If the fleet nodes pin the coordinator's address (static IP /
+   Kujhad registration), either move the primary's IP to the backup
+   kit or update the nodes — nodes configured by hostname need no
+   change if DNS/mDNS points at the backup.
+7. Start a new mission (or continue the active one — the active
+   mission row travels with the snapshot).
+
+**Do not** re-arm `COT_ENABLED` / `AUTO_TASKER_ENABLED` on the
+backup until you have confirmed the primary is off — the two-key
+posture starts safe because the env file ships with both off
+unless you copied armed values.
+
+### 9c. Keeping the backup ready (during the mission)
+
+On the **backup kit**, cron the snapshot pull while the primary is
+healthy:
+
+```
+*/15 * * * * predator COORDINATOR_URL=http://<primary-ip>:8000 \
+  API_BEARER_TOKEN=<token> /opt/predator-rf/deploy/fetch_snapshot.sh >/dev/null 2>&1
+```
+
+Snapshots land in `/var/lib/predator-rf/standby/` with a
+`latest.db` symlink; the last 8 are kept. Tune with
+`SNAPSHOT_KEEP` and check freshness anytime with
+`PREFLIGHT_STANDBY=1 python deploy/preflight.py` (FAILs if the
+newest snapshot is older than `STANDBY_SNAPSHOT_MAX_AGE_S`,
+default 3600 s, or if `FLEET_NODES` is unset).
+
+## 10. When to hard-stop the mission
 
 * Time sync silently lost (`/api/v1/preflight` shows `time` FAIL) → TDOA garbage
 * >50% of nodes unreachable in `/api/v1/health` → no fusion

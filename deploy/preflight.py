@@ -207,6 +207,65 @@ async def check_fleet(fleet_csv: str, *, http_timeout_s: float = 3.0
                  extra={"nodes": results})
 
 
+def check_backup_readiness(fleet_csv: str, snapshot_dir: str,
+                           *, standby: bool,
+                           max_age_s: float = 3600.0,
+                           now: Optional[float] = None) -> Dict[str, Any]:
+    """Coordinator failure recovery — is the BACKUP kit ready to be
+    promoted? Two things must be true on a standby kit:
+
+      1. FLEET_NODES is configured (else the promoted backend polls
+         nothing and fusion never resumes), and
+      2. a recent mission-DB snapshot exists in the standby dir
+         (pulled by deploy/fetch_snapshot.sh) so the backend starts
+         from recent mission state instead of empty.
+
+    On the PRIMARY kit (standby=False) this check is informational:
+    a missing snapshot dir is a PASS (this kit isn't the backup),
+    but if snapshots ARE being collected here we still report their
+    freshness so a stale cron is caught early.
+    """
+    now = time.time() if now is None else now
+
+    newest_age: Optional[float] = None
+    try:
+        snaps = [os.path.join(snapshot_dir, f)
+                 for f in os.listdir(snapshot_dir)
+                 if f.startswith("mission-snapshot-") and f.endswith(".db")]
+        if snaps:
+            newest_age = now - max(os.path.getmtime(p) for p in snaps)
+    except OSError:
+        pass  # dir missing/unreadable → newest_age stays None
+
+    if not standby:
+        if newest_age is None:
+            return _pass("backup", "not a standby kit "
+                                    "(set PREFLIGHT_STANDBY=1 on the backup "
+                                    "coordinator to enforce backup readiness)")
+        if newest_age > max_age_s:
+            return _warn("backup", f"snapshots present but newest is "
+                                    f"{int(newest_age)}s old (> {int(max_age_s)}s) "
+                                    f"— is the fetch_snapshot.sh cron alive?")
+        return _pass("backup", f"snapshot fresh ({int(newest_age)}s old) "
+                               f"in {snapshot_dir}")
+
+    # Standby kit — both conditions are blocking.
+    problems: List[str] = []
+    if not fleet_csv:
+        problems.append("FLEET_NODES unset — promoted backend would "
+                        "poll no nodes")
+    if newest_age is None:
+        problems.append(f"no mission-snapshot-*.db in {snapshot_dir} — "
+                        f"run deploy/fetch_snapshot.sh")
+    elif newest_age > max_age_s:
+        problems.append(f"newest snapshot is {int(newest_age)}s old "
+                        f"(> {int(max_age_s)}s) — fetch cron stale")
+    if problems:
+        return _fail("backup", "; ".join(problems))
+    return _pass("backup", f"standby ready: FLEET_NODES set, snapshot "
+                           f"{int(newest_age)}s old in {snapshot_dir}")
+
+
 # ─── Result helpers ────────────────────────────────────────────────
 
 def _result(check: str, severity: str, msg: str,
@@ -255,6 +314,14 @@ async def run_all(*, allow_lab: bool = False) -> Dict[str, Any]:
         check_token(token, allow_lab=allow_lab),
         check_port_free(api_host, api_port),
         check_tx_posture(cot_on, at_on, approval_on),
+        check_backup_readiness(
+            fleet,
+            os.environ.get("STANDBY_SNAPSHOT_DIR",
+                           os.path.join(data_dir, "standby")),
+            standby=os.environ.get("PREFLIGHT_STANDBY", "").lower()
+                in ("1", "true", "yes", "on"),
+            max_age_s=float(os.environ.get(
+                "STANDBY_SNAPSHOT_MAX_AGE_S", "3600"))),
     ]
     results.append(await check_fleet(fleet))
 
