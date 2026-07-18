@@ -22,6 +22,7 @@
 #include <utils/optionlist.h>
 #include <utils/wav.h>
 #include <radio_interface.h>
+#include <gui/widgets/ime_scroll.h>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -262,7 +263,7 @@ private:
 
         ImGui::LeftLabel("Name template");
         ImGui::FillWidth();
-        if (ImGui::InputText(CONCAT("##_recorder_name_template_", _this->name), _this->nameTemplate, 1023)) {
+        if (ImGui::InputTextIME(CONCAT("##_recorder_name_template_", _this->name), _this->nameTemplate, 1023)) {
             config.acquire();
             config.conf[_this->name]["nameTemplate"] = _this->nameTemplate;
             config.release(true);

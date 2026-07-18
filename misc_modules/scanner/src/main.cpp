@@ -3,6 +3,7 @@
 #include <gui/gui.h>
 #include <gui/style.h>
 #include <signal_path/signal_path.h>
+#include <gui/widgets/ime_scroll.h>
 
 SDRPP_MOD_INFO{
     /* Name:            */ "scanner",
@@ -46,32 +47,32 @@ private:
         if (_this->running) { ImGui::BeginDisabled(); }
         ImGui::LeftLabel("Start");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputDouble("##start_freq_scanner", &_this->startFreq, 100.0, 100000.0, "%0.0f")) {
+        if (ImGui::InputDoubleIME("##start_freq_scanner", &_this->startFreq, 100.0, 100000.0, "%0.0f")) {
             _this->startFreq = round(_this->startFreq);
         }
         ImGui::LeftLabel("Stop");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputDouble("##stop_freq_scanner", &_this->stopFreq, 100.0, 100000.0, "%0.0f")) {
+        if (ImGui::InputDoubleIME("##stop_freq_scanner", &_this->stopFreq, 100.0, 100000.0, "%0.0f")) {
             _this->stopFreq = round(_this->stopFreq);
         }
         ImGui::LeftLabel("Interval");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputDouble("##interval_scanner", &_this->interval, 100.0, 100000.0, "%0.0f")) {
+        if (ImGui::InputDoubleIME("##interval_scanner", &_this->interval, 100.0, 100000.0, "%0.0f")) {
             _this->interval = round(_this->interval);
         }
         ImGui::LeftLabel("Passband Ratio (%)");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputDouble("##pb_ratio_scanner", &_this->passbandRatio, 1.0, 10.0, "%0.0f")) {
+        if (ImGui::InputDoubleIME("##pb_ratio_scanner", &_this->passbandRatio, 1.0, 10.0, "%0.0f")) {
             _this->passbandRatio = std::clamp<double>(round(_this->passbandRatio), 1.0, 100.0);
         }
         ImGui::LeftLabel("Tuning Time (ms)");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputInt("##tuning_time_scanner", &_this->tuningTime, 100, 1000)) {
+        if (ImGui::InputIntIME("##tuning_time_scanner", &_this->tuningTime, 100, 1000)) {
             _this->tuningTime = std::clamp<int>(_this->tuningTime, 100, 10000.0);
         }
         ImGui::LeftLabel("Linger Time (ms)");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputInt("##linger_time_scanner", &_this->lingerTime, 100, 1000)) {
+        if (ImGui::InputIntIME("##linger_time_scanner", &_this->lingerTime, 100, 1000)) {
             _this->lingerTime = std::clamp<int>(_this->lingerTime, 100, 10000.0);
         }
         if (_this->running) { ImGui::EndDisabled(); }

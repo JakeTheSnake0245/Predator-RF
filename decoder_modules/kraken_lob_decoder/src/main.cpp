@@ -58,6 +58,7 @@
 #include <vector>
 
 #include "../../../core/src/predator/decoder_ingest.h"
+#include <gui/widgets/ime_scroll.h>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -152,14 +153,14 @@ private:
 
     void drawMenu() {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
-        if (ImGui::InputText(CONCAT("##krakenHost", name_), hostBuf_, sizeof(hostBuf_))) {
+        if (ImGui::InputTextIME(CONCAT("##krakenHost", name_), hostBuf_, sizeof(hostBuf_))) {
             saveConfig();
         }
         ImGui::SameLine();
         ImGui::TextUnformatted("Host");
 
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.4f);
-        if (ImGui::InputInt(CONCAT("##krakenPort", name_), &port_, 0, 0)) {
+        if (ImGui::InputIntIME(CONCAT("##krakenPort", name_), &port_, 0, 0)) {
             port_ = std::max(1, std::min(65535, port_));
             saveConfig();
         }
@@ -167,14 +168,14 @@ private:
         ImGui::TextUnformatted("Port");
 
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
-        if (ImGui::InputText(CONCAT("##krakenPath", name_), pathBuf_, sizeof(pathBuf_))) {
+        if (ImGui::InputTextIME(CONCAT("##krakenPath", name_), pathBuf_, sizeof(pathBuf_))) {
             saveConfig();
         }
         ImGui::SameLine();
         ImGui::TextUnformatted("Path");
 
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
-        if (ImGui::InputText(CONCAT("##krakenNodeId", name_), nodeIdBuf_, sizeof(nodeIdBuf_))) {
+        if (ImGui::InputTextIME(CONCAT("##krakenNodeId", name_), nodeIdBuf_, sizeof(nodeIdBuf_))) {
             saveConfig();
         }
         ImGui::SameLine();

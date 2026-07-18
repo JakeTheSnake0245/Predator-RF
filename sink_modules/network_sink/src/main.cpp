@@ -11,6 +11,7 @@
 #include <config.h>
 #include <gui/style.h>
 #include <core.h>
+#include <gui/widgets/ime_scroll.h>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -128,14 +129,14 @@ public:
         bool listening = (listener && listener->isListening()) || (conn && conn->isOpen());
 
         if (listening) { style::beginDisabled(); }
-        if (ImGui::InputText(CONCAT("##_network_sink_host_", _streamName), hostname, 1023)) {
+        if (ImGui::InputTextIME(CONCAT("##_network_sink_host_", _streamName), hostname, 1023)) {
             config.acquire();
             config.conf[_streamName]["hostname"] = hostname;
             config.release(true);
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputInt(CONCAT("##_network_sink_port_", _streamName), &port, 0, 0)) {
+        if (ImGui::InputIntIME(CONCAT("##_network_sink_port_", _streamName), &port, 0, 0)) {
             config.acquire();
             config.conf[_streamName]["port"] = port;
             config.release(true);

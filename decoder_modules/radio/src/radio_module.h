@@ -16,6 +16,7 @@
 #include <utils/optionlist.h>
 #include "radio_interface.h"
 #include "demod.h"
+#include <gui/widgets/ime_scroll.h>
 
 ConfigManager config;
 
@@ -207,7 +208,7 @@ private:
         if (!_this->bandwidthLocked) {
             ImGui::LeftLabel("Bandwidth");
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::InputFloat(("##_radio_bw_" + _this->name).c_str(), &_this->bandwidth, 1, 100, "%.0f")) {
+            if (ImGui::InputFloatIME(("##_radio_bw_" + _this->name).c_str(), &_this->bandwidth, 1, 100, "%.0f")) {
                 _this->bandwidth = std::clamp<float>(_this->bandwidth, _this->minBandwidth, _this->maxBandwidth);
                 _this->setBandwidth(_this->bandwidth);
             }
@@ -216,7 +217,7 @@ private:
         // VFO snap interval
         ImGui::LeftLabel("Snap Interval");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputInt(("##_radio_snap_" + _this->name).c_str(), &_this->snapInterval, 1, 100)) {
+        if (ImGui::InputIntIME(("##_radio_snap_" + _this->name).c_str(), &_this->snapInterval, 1, 100)) {
             if (_this->snapInterval < 1) { _this->snapInterval = 1; }
             _this->vfo->setSnapInterval(_this->snapInterval);
             config.acquire();

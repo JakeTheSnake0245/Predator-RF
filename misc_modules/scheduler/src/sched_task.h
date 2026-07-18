@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <gui/style.h>
 #include <sched_action.h>
+#include <gui/widgets/ime_scroll.h>
 
 class Task {
 public:
@@ -31,7 +32,7 @@ public:
 
     bool showEditMenu(char* name, bool& valid) {
         ImGui::LeftLabel("Name");
-        ImGui::InputText("##scheduler_task_edit_name", name, 1023);
+        ImGui::InputTextIME("##scheduler_task_edit_name", name, 1023);
 
         if (editedAction >= 0) {
             bool valid = false;

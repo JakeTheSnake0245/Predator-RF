@@ -5,6 +5,7 @@
 #include <gui/style.h>
 #include <signal_path/signal_path.h>
 #include <algorithm>
+#include <gui/widgets/ime_scroll.h>
 
 namespace sched_action {
 
@@ -83,7 +84,7 @@ namespace sched_action {
 
             ImGui::LeftLabel("Frequency");
             ImGui::SetNextItemWidth(std::max(60.0f, std::min(250.0f * style::uiScale, ImGui::GetContentRegionAvail().x) - ImGui::GetCursorPosX()));
-            ImGui::InputDouble("Hz##scheduler_action_tunevfo_edit_freq", &tmpFrequency);
+            ImGui::InputDoubleIME("Hz##scheduler_action_tunevfo_edit_freq", &tmpFrequency);
 
             ImGui::LeftLabel("Tuning Mode");
             ImGui::SetNextItemWidth(std::max(60.0f, std::min(250.0f * style::uiScale, ImGui::GetContentRegionAvail().x) - ImGui::GetCursorPosX()));

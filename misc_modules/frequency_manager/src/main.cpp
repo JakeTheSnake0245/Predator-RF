@@ -19,6 +19,7 @@
 #include <gui/dialogs/dialog_box.h>
 #include <fstream>
 #include <algorithm>
+#include <gui/widgets/ime_scroll.h>
 
 SDRPP_MOD_INFO{
     /* Name:            */ "frequency_manager",
@@ -156,7 +157,7 @@ private:
             ImGui::LeftLabel("Name");
             ImGui::TableSetColumnIndex(1);
             ImGui::SetNextItemWidth(std::min(200.0f * style::uiScale, ImGui::GetContentRegionAvail().x));
-            if (ImGui::InputText(("##freq_manager_edit_name" + name).c_str(), nameBuf, 1023)) {
+            if (ImGui::InputTextIME(("##freq_manager_edit_name" + name).c_str(), nameBuf, 1023)) {
                 editedBookmarkName = nameBuf;
             }
 
@@ -165,14 +166,14 @@ private:
             ImGui::LeftLabel("Frequency");
             ImGui::TableSetColumnIndex(1);
             ImGui::SetNextItemWidth(std::min(200.0f * style::uiScale, ImGui::GetContentRegionAvail().x));
-            ImGui::InputDouble(("##freq_manager_edit_freq" + name).c_str(), &editedBookmark.frequency);
+            ImGui::InputDoubleIME(("##freq_manager_edit_freq" + name).c_str(), &editedBookmark.frequency);
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::LeftLabel("Bandwidth");
             ImGui::TableSetColumnIndex(1);
             ImGui::SetNextItemWidth(std::min(200.0f * style::uiScale, ImGui::GetContentRegionAvail().x));
-            ImGui::InputDouble(("##freq_manager_edit_bw" + name).c_str(), &editedBookmark.bandwidth);
+            ImGui::InputDoubleIME(("##freq_manager_edit_bw" + name).c_str(), &editedBookmark.bandwidth);
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
@@ -222,7 +223,7 @@ private:
         if (ImGui::BeginPopup(id.c_str(), ImGuiWindowFlags_NoResize)) {
             ImGui::LeftLabel("Name");
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::InputText(("##freq_manager_edit_name" + name).c_str(), nameBuf, 1023)) {
+            if (ImGui::InputTextIME(("##freq_manager_edit_name" + name).c_str(), nameBuf, 1023)) {
                 editedListName = nameBuf;
             }
 

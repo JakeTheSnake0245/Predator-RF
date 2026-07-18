@@ -1,6 +1,7 @@
 #pragma once
 #include "../demod.h"
 #include <dsp/demod/cw.h>
+#include <gui/widgets/ime_scroll.h>
 
 namespace demod {
     class CW : public Demodulator {
@@ -61,7 +62,7 @@ namespace demod {
             }
             ImGui::LeftLabel("Tone Frequency");
             ImGui::FillWidth();
-            if (ImGui::InputInt(("Stereo##_radio_cw_tone_" + name).c_str(), &tone, 10, 100)) {
+            if (ImGui::InputIntIME(("Stereo##_radio_cw_tone_" + name).c_str(), &tone, 10, 100)) {
                 tone = std::clamp<int>(tone, 250, 1250);
                 demod.setTone(tone);
                 _config->acquire();

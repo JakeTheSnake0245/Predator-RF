@@ -1,5 +1,6 @@
 #include "smgui.h"
 #include "style.h"
+#include <gui/widgets/ime_scroll.h>
 #include <gui/widgets/stepped_slider.h>
 #include <gui/gui.h>
 
@@ -610,7 +611,11 @@ namespace SmGui {
 
     bool InputInt(const char *label, int *v, int step, int step_fast, ImGuiInputTextFlags flags) {
         nextItemFillWidth = false;
-        if (!serverMode) { return ImGui::InputInt(label, v, step, step_fast, flags); }
+        if (!serverMode) {
+            bool ret = ImGui::InputInt(label, v, step, step_fast, flags);
+            ImGui::imeScrollIntoView();
+            return ret;
+        }
         if (rdl) {
             rdl->pushStep(DRAW_STEP_INPUT_INT, forceSyncForNext);
             rdl->pushString(label);
@@ -664,7 +669,11 @@ namespace SmGui {
 
     bool InputText(const char *label, char *buf, size_t buf_size, ImGuiInputTextFlags flags) {
         nextItemFillWidth = false;
-        if (!serverMode) { return ImGui::InputText(label, buf, buf_size, flags); }
+        if (!serverMode) {
+            bool ret = ImGui::InputText(label, buf, buf_size, flags);
+            ImGui::imeScrollIntoView();
+            return ret;
+        }
         if (rdl) {
             rdl->pushStep(DRAW_STEP_INPUT_TEXT, forceSyncForNext);
             rdl->pushString(label);

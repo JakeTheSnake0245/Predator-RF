@@ -10,6 +10,7 @@
 #include <config.h>
 #include <cctype>
 #include <radio_interface.h>
+#include <gui/widgets/ime_scroll.h>
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
 SDRPP_MOD_INFO{
@@ -113,14 +114,14 @@ private:
         float menuWidth = ImGui::GetContentRegionAvail().x;
 
         if (_this->running) { style::beginDisabled(); }
-        if (ImGui::InputText(CONCAT("##_rigctl_cli_host_", _this->name), _this->host, 1023)) {
+        if (ImGui::InputTextIME(CONCAT("##_rigctl_cli_host_", _this->name), _this->host, 1023)) {
             config.acquire();
             config.conf[_this->name]["host"] = std::string(_this->host);
             config.release(true);
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputInt(CONCAT("##_rigctl_cli_port_", _this->name), &_this->port, 0, 0)) {
+        if (ImGui::InputIntIME(CONCAT("##_rigctl_cli_port_", _this->name), &_this->port, 0, 0)) {
             config.acquire();
             config.conf[_this->name]["port"] = _this->port;
             config.release(true);
@@ -129,7 +130,7 @@ private:
 
         ImGui::LeftLabel("IF Frequency");
         ImGui::FillWidth();
-        if (ImGui::InputDouble(CONCAT("##_rigctl_if_freq_", _this->name), &_this->ifFreq, 100.0, 100000.0, "%.0f")) {
+        if (ImGui::InputDoubleIME(CONCAT("##_rigctl_if_freq_", _this->name), &_this->ifFreq, 100.0, 100000.0, "%.0f")) {
             if (_this->running) {
                 sigpath::sourceManager.setPanadpterIF(_this->ifFreq);
             }

@@ -10,6 +10,7 @@
 #include <gui/widgets/stepped_slider.h>
 #include <utils/optionlist.h>
 #include <gui/dialogs/dialog_box.h>
+#include <gui/widgets/ime_scroll.h>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -154,14 +155,14 @@ private:
         });
 
         if (connected) { style::beginDisabled(); }
-        if (ImGui::InputText(CONCAT("##sdrpp_srv_srv_host_", _this->name), _this->hostname, 1023)) {
+        if (ImGui::InputTextIME(CONCAT("##sdrpp_srv_srv_host_", _this->name), _this->hostname, 1023)) {
             config.acquire();
             config.conf["hostname"] = _this->hostname;
             config.release(true);
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputInt(CONCAT("##sdrpp_srv_srv_port_", _this->name), &_this->port, 0, 0)) {
+        if (ImGui::InputIntIME(CONCAT("##sdrpp_srv_srv_port_", _this->name), &_this->port, 0, 0)) {
             config.acquire();
             config.conf["port"] = _this->port;
             config.release(true);

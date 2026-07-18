@@ -29,6 +29,7 @@
 #include <gui/style.h>
 #include <dsp/stream.h>
 #include <dsp/types.h>
+#include <gui/widgets/ime_scroll.h>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -192,7 +193,7 @@ private:
         ImGui::Text("Port");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
-        if (ImGui::InputInt("##port", &_port, 0)) {
+        if (ImGui::InputIntIME("##port", &_port, 0)) {
             if (_port < 1) _port = 1;
             if (_port > 65535) _port = 65535;
             changed = true;
@@ -200,11 +201,11 @@ private:
 
         ImGui::Text("Static IP (optional)");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##sip", _staticIp, sizeof(_staticIp))) changed = true;
+        if (ImGui::InputTextIME("##sip", _staticIp, sizeof(_staticIp))) changed = true;
 
         ImGui::Text("API Key");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##apikey", _apiKey, sizeof(_apiKey),
+        if (ImGui::InputTextIME("##apikey", _apiKey, sizeof(_apiKey),
                              ImGuiInputTextFlags_Password)) changed = true;
 
         if (changed) {
