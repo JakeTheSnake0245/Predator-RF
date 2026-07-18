@@ -11,6 +11,7 @@
 
 #ifdef __ANDROID__
 #include <android_backend.h>
+#include <libusb.h>
 #endif
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -30,6 +31,12 @@ public:
     AirspySourceModule(std::string name) {
         this->name = name;
 
+#ifdef __ANDROID__
+        // See docs/android_gotchas.md: libusb_init() fails on Android unless
+        // device discovery is disabled BEFORE the first libusb context is
+        // created in the process. Safe to call multiple times.
+        libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, NULL);
+#endif
         airspy_init();
 
         sampleRate = 10000000.0;

@@ -15,6 +15,7 @@ if (MSVC)
 elseif (ANDROID)
     target_include_directories(airspy_source PUBLIC
         ${SDR_KIT_ABI_ROOT}/include/libairspy
+        ${SDR_KIT_ABI_ROOT}/include
     )
 
     target_link_libraries(airspy_source PUBLIC

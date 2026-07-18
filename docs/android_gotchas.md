@@ -358,3 +358,40 @@ re-grant. libusb dereferences through the bad fd and segfaults.
 `backend::getDeviceFD(...)` immediately before `hackrf_open_by_fd()`
 and returns with a logged error if it is < 0. Any other Android source
 module that opens by fd must follow the same acquire-at-start pattern.
+
+---
+
+## libusb on Android REQUIRES `LIBUSB_OPTION_NO_DEVICE_DISCOVERY`
+
+Constant-fault-address (0x1a8) SIGSEGV in `libusb_wrap_sys_device` ←
+`hackrf_open_by_fd` even with a VALID fd. Root cause: on Android,
+`libusb_init()` **fails** unless
+`libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, NULL)` is
+called first (with a NULL ctx, BEFORE the first `libusb_init` in the
+process) — the app has no permission to enumerate usbfs. When init
+fails, `hackrf_init()` returns an error that upstream code ignored, the
+library's libusb context stays NULL, and the first open dereferences it
+(fault addr = a field offset inside the NULL context, hence the
+constant address).
+
+**Rule:** every Android source module that links libusb (hackrf, and
+any future airspy/hydrasdr Android port) must set this option before
+its `*_init()` call and must log the init return code. Done for HackRF
+in `source_modules/hackrf_source/src/main.cpp` (module ctor). The
+CMakeLists for such a module also needs `${SDR_KIT_ABI_ROOT}/include`
+on the include path for `<libusb.h>`.
+
+---
+
+## Release builds compile out ImGui asserts — guard the GL backend too
+
+`ImGui_ImplOpenGL3_RenderDrawData+372` SIGSEGV, fault addr 0x28: a
+frame was rendered while the GL renderer backend was shut down but the
+ImGui context still existed (TERM_WINDOW→INIT_WINDOW window). In debug
+builds `IM_ASSERT("Did you call ImGui_ImplOpenGL3_Init()?")` catches
+this; in release NDK builds asserts are compiled out and the null
+backend-data pointer is dereferenced.
+
+**Rule:** the null-context guards in `backend.cpp` are NOT sufficient;
+`renderLoop()` and `render()` must ALSO skip frames while
+`ImGui::GetIO().BackendRendererUserData == nullptr`.

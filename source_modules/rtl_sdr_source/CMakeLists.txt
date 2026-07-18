@@ -11,6 +11,10 @@ if (MSVC)
 
     target_link_libraries(rtl_sdr_source PRIVATE rtlsdr)
 elseif (ANDROID)
+    target_include_directories(rtl_sdr_source PUBLIC
+        ${SDR_KIT_ABI_ROOT}/include
+    )
+
     target_link_libraries(rtl_sdr_source PUBLIC
         ${SDR_KIT_ABI_ROOT}/lib/libusb1.0.so
         ${SDR_KIT_ABI_ROOT}/lib/librtlsdr.so

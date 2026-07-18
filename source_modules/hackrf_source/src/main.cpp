@@ -94,7 +94,8 @@ public:
         libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, NULL);
 #endif
         int initErr = hackrf_init();
-        if (initErr != HACKRF_SUCCESS) {
+        initOk = (initErr == HACKRF_SUCCESS);
+        if (!initOk) {
             flog::error("hackrf_init() failed: {0}", hackrf_error_name((hackrf_error)initErr));
         }
 
@@ -268,6 +269,10 @@ private:
         // goes stale whenever the device re-enumerates (app warm-restart,
         // cable glitch, USB permission re-grant). Passing a stale or -1 fd
         // into hackrf_open_by_fd() segfaults inside libusb_wrap_sys_device.
+        if (!_this->initOk) {
+            flog::error("Could not start HackRF: hackrf_init() failed at module load, refusing to open device");
+            return;
+        }
         {
             int vid, pid;
             _this->devFd = backend::getDeviceFD(vid, pid, backend::HACKRF_VIDPIDS);
@@ -425,6 +430,7 @@ private:
     int srId = 0;
     int bwId = 16;
     bool biasT = false;
+    bool initOk = false;
     bool amp = false;
     float lna = 0;
     float vga = 0;
