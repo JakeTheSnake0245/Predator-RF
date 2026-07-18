@@ -58,6 +58,7 @@
 #include <vector>
 
 #include "../../../core/src/predator/decoder_ingest.h"
+#include "../../../core/src/predator/native_decoder_registry.h"
 #include <gui/widgets/ime_scroll.h>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -120,7 +121,7 @@ public:
         flog::info("[KrakenLOB] module instance '{}' constructed", name_);
     }
 
-    ~KrakenLobDecoderModule() override {
+    ~KrakenLobDecoderModule() {
         gui::menu.removeEntry(name_);
         ingester_->stop();
         predator::unregisterNativeDecoder(this);

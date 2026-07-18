@@ -27,6 +27,7 @@
 #define NOMINMAX
 #include <imgui.h>
 #include <module.h>
+#include <core.h>
 #include <gui/gui.h>
 #include <signal_path/signal_path.h>
 #include <utils/flog.h>
@@ -61,7 +62,7 @@ public:
         flog::info("[KrakenSDR-src] registered in source selector");
     }
 
-    ~KrakenSdrSourceModule() override {
+    ~KrakenSdrSourceModule() {
         stop(this);
         sigpath::sourceManager.unregisterSource("KrakenSDR");
         flog::info("[KrakenSDR-src] unregistered from source selector");

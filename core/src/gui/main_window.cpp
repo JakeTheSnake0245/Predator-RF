@@ -44,6 +44,7 @@
 #include "../predator/kujhad_fleet.h"
 #include "../predator/kujhad_rns.h"
 #include "../predator/native_decoder_registry.h"
+#include "../predator/hold_binding_registry.h"
 #include "../predator/cot_reporter.h"
 #include <ctime>
 
