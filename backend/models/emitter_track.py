@@ -191,6 +191,10 @@ class EmitterTrack:
             "estimated_lon": self.estimated_lon,
             "location_confidence": self.location_confidence,
             "location_method": self.location_method,
+            # Explicit proximity flag: an RSSI ring is a search area
+            # centred on the detecting node, NOT a fix. Dashboards and
+            # SSE consumers must label it as low-confidence proximity.
+            "location_is_proximity": self.location_method == "rssi_proximity",
             "location_error_radius_m": self.location_error_radius_m,
             "tdoa_ellipse_a_m": self.tdoa_ellipse_a_m,
             "tdoa_ellipse_b_m": self.tdoa_ellipse_b_m,

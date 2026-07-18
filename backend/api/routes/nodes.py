@@ -28,6 +28,22 @@ async def list_nodes():
     ]
 
 
+@router.get("/df_capability")
+async def df_capability():
+    """Fleet DF capability summary — LOB-capable count, TDOA viability
+    (timing/GPS-trust gated), RSSI-only fallback status. Drives the
+    dashboard 'no DF hardware' warning."""
+    from backend.fusion.df_capability import compute_df_capability
+    try:
+        from backend.config import config as _cfg
+        max_age_s = float(_cfg.gps_max_age_s)
+    except Exception:
+        max_age_s = 60.0
+    nodes = ([client.node for client in fleet_manager._clients.values()]
+             if fleet_manager else [])
+    return compute_df_capability(nodes, gps_max_age_s=max_age_s)
+
+
 @router.post("/register")
 async def register_node(reg: NodeRegistration):
     if not fleet_manager:

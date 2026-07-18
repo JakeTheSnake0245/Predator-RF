@@ -206,6 +206,91 @@ static void routeNodes(predator::PwsContext& ctx) {
     predator::pwsHttpReply(ctx.sock, 200, "application/json", nodes.dump());
 }
 
+// Fleet DF capability summary — parity with the Python backend's
+// GET /api/v1/nodes/df_capability (backend/fusion/df_capability.py).
+// Derived from the node dicts pushed via webBackendUpdateNodes():
+//   - LOB-capable: hardware_code contains "kraken"
+//   - hardware-timed: can_do_tdoa == true
+//   - GPS fresh: location_gps present (the pushing shim owns freshness;
+//     no per-node gps age is available on this side)
+// Gating mirrors predator::tdoa::kSystemClockMinDistinct: all-system-
+// clock fleets need >= 3 GPS-fixed hearers for TDOA viability.
+static void routeDfCapability(predator::PwsContext& ctx) {
+    nlohmann::json nodes;
+    {
+        std::lock_guard<std::mutex> lk(gStateMtx);
+        nodes = gStateNodes;
+    }
+    const int64_t now = nowNs();
+    const int minDistinct = 3;  // keep in lockstep with kSystemClockMinDistinct
+
+    std::vector<std::string> lobNodes, hwTimed, sysClock;
+    int onlineCount = 0, totalCount = 0;
+    if (nodes.is_array()) {
+        for (auto& n : nodes) {
+            if (!n.is_object()) continue;
+            totalCount++;
+            if (!nodeIsOnline(n, now)) continue;
+            onlineCount++;
+            std::string nid = n.value("node_id", std::string());
+            std::string hw  = n.value("hardware_code", std::string());
+            std::transform(hw.begin(), hw.end(), hw.begin(), ::tolower);
+            if (hw.find("kraken") != std::string::npos)
+                lobNodes.push_back(nid);
+            auto gps = n.find("location_gps");
+            const bool hasGps = gps != n.end() && !gps->is_null();
+            if (!hasGps) continue;
+            if (n.value("can_do_tdoa", false)) hwTimed.push_back(nid);
+            else                               sysClock.push_back(nid);
+        }
+    }
+    const int totalGps = (int)hwTimed.size() + (int)sysClock.size();
+    const bool tdoaViable = !hwTimed.empty() ? (totalGps >= 2)
+                                             : (totalGps >= minDistinct);
+    std::string mode;
+    if (!lobNodes.empty())    mode = "lob";
+    else if (tdoaViable)      mode = "tdoa";
+    else if (onlineCount > 0) mode = "rssi_only";
+    else                      mode = "none";
+
+    nlohmann::json j;
+    j["df_mode"]                   = mode;
+    j["lob_capable_count"]         = lobNodes.size();
+    j["lob_capable_nodes"]         = lobNodes;
+    j["tdoa_viable"]               = tdoaViable;
+    std::vector<std::string> tdoaNodes;
+    if (tdoaViable) {
+        tdoaNodes = hwTimed;
+        tdoaNodes.insert(tdoaNodes.end(), sysClock.begin(), sysClock.end());
+    }
+    j["tdoa_viable_count"]         = tdoaNodes.size();
+    j["tdoa_viable_nodes"]         = tdoaNodes;
+    j["hardware_timed_count"]      = hwTimed.size();
+    j["system_clock_count"]        = sysClock.size();
+    j["system_clock_min_distinct"] = minDistinct;
+    j["rssi_only"]                 = (mode == "rssi_only");
+    j["online_node_count"]         = onlineCount;
+    j["total_node_count"]          = totalCount;
+    if (mode == "rssi_only") {
+        j["warning"] = "No DF hardware — TDOA/RSSI only. Fleet has no "
+                       "LOB-capable node and too few timing/GPS-trusted "
+                       "nodes for TDOA. Location estimates are proximity "
+                       "rings, not fixes.";
+    } else if (mode == "tdoa" && hwTimed.empty()) {
+        j["warning"] = "No LOB-capable node online. TDOA runs on "
+                       "system-clock timing only — fixes are confidence-"
+                       "capped and require >=3 distinct hearers.";
+    } else if (mode == "tdoa") {
+        j["warning"] = "No LOB-capable node online — bearings "
+                       "unavailable, geolocation is TDOA-only.";
+    } else if (mode == "none") {
+        j["warning"] = "No sensor nodes online.";
+    } else {
+        j["warning"] = nullptr;
+    }
+    predator::pwsHttpReply(ctx.sock, 200, "application/json", j.dump());
+}
+
 static void routeTracks(predator::PwsContext& ctx) {
     std::lock_guard<std::mutex> lk(gStateMtx);
     predator::pwsHttpReply(ctx.sock, 200, "application/json", gStateTracks.dump());
@@ -607,6 +692,7 @@ int init(std::string resDir) {
     addBoth("GET",  "/status",        routeStatus);
     addBoth("GET",  "/state",         routeState);
     addBoth("GET",  "/nodes/",        routeNodes);
+    addBoth("GET",  "/nodes/df_capability", routeDfCapability);
     addBoth("GET",  "/tracks/",       routeTracks);
     addBoth("GET",  "/spectrum",      routeSpectrum);
     addBoth("GET",  "/events",        routeEvents);

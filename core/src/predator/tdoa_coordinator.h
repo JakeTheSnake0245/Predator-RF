@@ -33,12 +33,23 @@ namespace tdoa {
 constexpr double kSpeedOfLight = 299792458.0;
 constexpr double kEarthRadiusM = 6371000.0;
 
+// System-clock gating — mirrors backend/fusion/tdoa_coordinator.py.
+// When NO participating measurement has a hardware timing path, require
+// at least this many distinct hearers (2-node system-clock hyperbolas
+// are suppressed) and hard-cap the resulting confidence.
+constexpr int    kSystemClockMinDistinct = 3;
+constexpr double kSystemClockConfCap     = 0.35;
+
 struct Measurement {
     std::string node_id;
     int64_t timestamp_ns = 0;
     double node_lat = 0.0;
     double node_lon = 0.0;
     double timing_trust = 1.0;  // 0..1, scales final confidence
+    // True when the node has a dedicated TDOA timing path (can_do_tdoa
+    // hardware). False = system-clock timestamps only. Parity with the
+    // Python TDOAMeasurement.hardware_timed field.
+    bool hardware_timed = true;
 };
 
 struct Result {
@@ -135,6 +146,18 @@ public:
             return std::nullopt;
         }
 
+        // System-clock hardening (parity with Python): all-system-clock
+        // participant sets need >= kSystemClockMinDistinct hearers.
+        bool any_hw_timed = false;
+        for (const auto& m : ms) any_hw_timed |= m.hardware_timed;
+        if (!any_hw_timed &&
+            distinct.size() < static_cast<size_t>(kSystemClockMinDistinct)) {
+            std::lock_guard<std::mutex> g(mu_);
+            auto& back = pending_[emitter_id];
+            for (auto& m : ms) back.push_back(std::move(m));
+            return std::nullopt;
+        }
+
         std::sort(ms.begin(), ms.end(),
                   [](const Measurement& a, const Measurement& b) {
                       return a.timestamp_ns < b.timestamp_ns;
@@ -166,6 +189,9 @@ public:
         for (const auto& m : ms) ttrust_sum += m.timing_trust;
         const double timing_factor = ttrust_sum / static_cast<double>(ms.size());
         conf *= timing_factor;
+        // All-system-clock solves never present as more than "search
+        // area" quality (parity with Python's SYSTEM_CLOCK_CONF_CAP).
+        if (!any_hw_timed) conf = std::min(conf, kSystemClockConfCap);
 
         double a = 0.0, b = 0.0, theta = 0.0;
         estimateEllipse_(ms, conf, a, b, theta);

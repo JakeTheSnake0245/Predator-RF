@@ -105,6 +105,7 @@ setInterval(pollStatus, STATUS_POLL_MS);
    Fleet panel
 ══════════════════════════════════════════════ */
 async function pollFleet() {
+  pollDfCapability();
   try {
     const r = await fetch(`${API}/api/v1/nodes/`);
     if (!r.ok) throw new Error(r.status);
@@ -188,6 +189,57 @@ function renderFleet(nodes) {
   }).join('');
 }
 
+
+/* ── Fleet DF capability (LOB / TDOA / RSSI-only) ── */
+async function pollDfCapability() {
+  const pill = document.getElementById('pill-df');
+  const summary = document.getElementById('df-summary');
+  try {
+    const r = await fetch(`${API}/api/v1/nodes/df_capability`);
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+
+    if (pill) {
+      if (d.df_mode === 'lob') {
+        pill.textContent = `DF: LOB ×${d.lob_capable_count}`;
+        setPillClass(pill, 'live');
+        pill.title = 'Bearing-capable (KrakenSDR) nodes online';
+      } else if (d.df_mode === 'tdoa') {
+        pill.textContent = 'DF: TDOA ONLY';
+        setPillClass(pill, 'warn');
+        pill.title = d.warning || 'No LOB node online — TDOA geolocation only';
+      } else if (d.df_mode === 'rssi_only') {
+        pill.textContent = 'NO DF — RSSI ONLY';
+        setPillClass(pill, 'err');
+        pill.title = d.warning || 'No DF hardware — proximity estimates only';
+      } else {
+        pill.textContent = 'NO DF';
+        setPillClass(pill, 'err');
+        pill.title = d.warning || 'No sensor nodes online';
+      }
+    }
+
+    if (summary) {
+      const counts =
+        `LOB ${d.lob_capable_count} · ` +
+        `TDOA ${d.tdoa_viable ? d.tdoa_viable_count : 0} viable ` +
+        `(${d.hardware_timed_count} hw-timed, ${d.system_clock_count} sys-clock)`;
+      if (d.warning) {
+        summary.hidden = false;
+        summary.className = 'df-summary ' +
+          (d.df_mode === 'rssi_only' || d.df_mode === 'none' ? 'df-err' : 'df-warn');
+        summary.textContent = `⚠ ${d.warning}  —  ${counts}`;
+      } else {
+        summary.hidden = false;
+        summary.className = 'df-summary df-ok';
+        summary.textContent = `DF capability: ${counts}`;
+      }
+    }
+  } catch {
+    if (pill) { pill.textContent = 'DF —'; setPillClass(pill, ''); }
+    if (summary) summary.hidden = true;
+  }
+}
 
 pollFleet();
 setInterval(pollFleet, FLEET_POLL_MS);
@@ -326,8 +378,10 @@ function renderTracks() {
 
   tbody.innerHTML = list.map(t => {
     const key = esc(t.emitter_id || t._eid || '');
+    const isProx = t.location_is_proximity || t.location_method === 'rssi_proximity';
     const loc = (t.estimated_lat != null && t.estimated_lon != null)
-      ? `${t.estimated_lat.toFixed(4)}, ${t.estimated_lon.toFixed(4)}`
+      ? `${t.estimated_lat.toFixed(4)}, ${t.estimated_lon.toFixed(4)}` +
+        (isProx ? ' <span class="prox-badge" title="RSSI proximity — low-confidence search area, not a fix">~PROX</span>' : '')
       : '<span class="dim">—</span>';
     const nodes = (t.detecting_nodes || []).map(n => esc(n)).join(', ') || '<span class="dim">—</span>';
     const confPct = Math.round((t.confidence || 0) * 100);
@@ -391,7 +445,11 @@ function showTrackDetail(key) {
     <div class="modal-section">
       <div class="modal-section-title">Location</div>
       <div class="modal-kv kv-row"><span class="kv-k">Lat / Lon</span><span class="kv-v">${t.estimated_lat != null ? t.estimated_lat.toFixed(6) + ', ' + (t.estimated_lon || 0).toFixed(6) : '—'}</span></div>
-      <div class="modal-kv kv-row"><span class="kv-k">Method</span><span class="kv-v">${esc(t.location_method || '—')}</span></div>
+      <div class="modal-kv kv-row"><span class="kv-k">Method</span><span class="kv-v">${
+        (t.location_is_proximity || t.location_method === 'rssi_proximity')
+          ? '<span class="prox-badge">~PROX</span> RSSI proximity — low-confidence search area, not a fix'
+          : esc(t.location_method || '—')
+      }</span></div>
       <div class="modal-kv kv-row"><span class="kv-k">Confidence</span><span class="kv-v">${t.location_confidence != null ? Math.round(t.location_confidence * 100) + '%' : '—'}</span></div>
       <div class="modal-kv kv-row"><span class="kv-k">Error radius</span><span class="kv-v">${t.location_error_radius_m != null ? Math.round(t.location_error_radius_m) + ' m' : '—'}</span></div>
       <div class="modal-kv kv-row"><span class="kv-k">TDOA ellipse</span><span class="kv-v">${ellipse}</span></div>

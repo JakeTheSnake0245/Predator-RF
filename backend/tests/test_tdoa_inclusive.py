@@ -31,10 +31,11 @@ class TDOAInclusiveTests(unittest.IsolatedAsyncioTestCase):
         self.tdoa = TDOACoordinator()
         self.now = time.time_ns()
 
-    async def test_non_tdoa_capable_nodes_now_participate(self):
-        """Previously can_do_tdoa=False got dropped at record_measurement.
-        Now they're accepted — operator gets a low-confidence fix
-        instead of nothing."""
+    async def test_non_tdoa_capable_nodes_still_queued(self):
+        """can_do_tdoa=False nodes are accepted at record_measurement —
+        but a 2-node all-system-clock solve is now SUPPRESSED (needs
+        >=3 distinct hearers). Measurements are re-merged so a third
+        hearer can still trigger a solve."""
         n1 = _Node("phone-1", 35.10, -106.50, can_tdoa=False, timing_trust=0.6)
         n2 = _Node("phone-2", 35.15, -106.45, can_tdoa=False, timing_trust=0.6)
         em = "em-cheap"
@@ -43,11 +44,18 @@ class TDOAInclusiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.tdoa.distinct_nodes(em), 2,
             "non-TDOA nodes must now be queued, not silently dropped")
         result = await self.tdoa.solve(em)
+        self.assertIsNone(result,
+            "2-node all-system-clock hyperbola must be suppressed")
+        self.assertEqual(self.tdoa.distinct_nodes(em), 2,
+            "suppressed measurements must be re-merged for a later solve")
+        # Third cheap hearer arrives → solve now allowed, capped low.
+        n3 = _Node("phone-3", 35.12, -106.47, can_tdoa=False, timing_trust=0.6)
+        self.tdoa.record_measurement(em, n3, self.now + 2_000_000)
+        self.tdoa._triangulate = lambda ms: (35.12, -106.47, 0.85)
+        result = await self.tdoa.solve(em)
         self.assertIsNotNone(result)
-        # 2-node midpoint base = 0.3, scaled by mean timing_trust ~0.3
-        # (cheap nodes capped at 0.5*0.6 = 0.3) → ~0.09
-        self.assertLess(result.location_confidence, 0.2,
-            "cheap-node fix must be marked LOW confidence")
+        self.assertLessEqual(result.location_confidence, 0.35,
+            "all-system-clock fix must be confidence-capped")
         self.assertGreater(result.location_confidence, 0.0,
             "but still produce SOME confidence — operator gets a search area")
 

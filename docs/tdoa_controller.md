@@ -63,6 +63,20 @@ The C++ port mirrors the Python iterative LSQ:
    to align across the cluster baseline (TDOA error is across the
    baseline, not along it).
 
+6. System-clock gating (parity with Python's `SYSTEM_CLOCK_MIN_DISTINCT`
+   / `SYSTEM_CLOCK_CONF_CAP`): when **no** participating measurement has
+   `hardware_timed == true` (i.e. every hearer is a system-clock node —
+   `can_do_tdoa == false`), a solve requires
+   `>= kSystemClockMinDistinct` (3) distinct hearers. A 2-node
+   all-system-clock hyperbola is suppressed and the measurements are
+   re-merged for a later attempt. When such a solve does run, the final
+   confidence is hard-capped at `kSystemClockConfCap` (0.35) after the
+   `mean(timing_trust)` scaling — an all-cheap-fleet fix is never
+   presented as more than "search area" quality. Callers set
+   `Measurement::hardware_timed` (and `PeerObservation::hardware_timed`)
+   from the peer's `can_do_tdoa` flag; it defaults to `true` so existing
+   hardware-timed callers are unaffected.
+
 **Drift from Python.** The C++ solver adds a Tikhonov regularizer
 (`lambda = 1e-3 * trace(AT*A)`) and a 50 km step cap inside the LSQ
 loop. Python's `numpy.linalg.lstsq` uses SVD-based pseudo-inverse and

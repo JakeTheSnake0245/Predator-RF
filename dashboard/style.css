@@ -688,3 +688,26 @@ canvas.sparkline {
 
 /* ── Utility ── */
 .dim { color: var(--text-faint); }
+
+/* ── DF capability summary + proximity badge ── */
+.df-summary {
+  margin: 8px 10px 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  letter-spacing: .02em;
+}
+.df-summary.df-ok   { color: var(--text-dim); border: 1px solid var(--border, #2a2f3a); }
+.df-summary.df-warn { color: var(--warn, #e0b34c); border: 1px solid var(--warn, #e0b34c); background: rgba(224,179,76,.08); }
+.df-summary.df-err  { color: var(--err, #e05c5c); border: 1px solid var(--err, #e05c5c); background: rgba(224,92,92,.08); font-weight: 600; }
+.prox-badge {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--warn, #e0b34c);
+  border-radius: 3px;
+  color: var(--warn, #e0b34c);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  vertical-align: 1px;
+}

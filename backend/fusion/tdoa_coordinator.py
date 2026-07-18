@@ -10,6 +10,16 @@ logger = logging.getLogger(__name__)
 
 SPEED_OF_LIGHT = 299_792_458.0  # m/s
 
+# ── System-clock gating (non-Kraken / no-GPSDO fleets) ──────────────────
+# When EVERY participating measurement comes from a system-clock node
+# (no hardware TDOA timing path), a 2-node hyperbola is essentially
+# noise — clock offsets of tens of ms dwarf the microsecond-scale time
+# differences TDOA needs. Require at least 3 distinct hearers so the
+# geometry at least over-determines the noise, and cap the resulting
+# confidence so downstream consumers never mistake it for a real fix.
+SYSTEM_CLOCK_MIN_DISTINCT = 3
+SYSTEM_CLOCK_CONF_CAP = 0.35
+
 
 @dataclass
 class TDOAMeasurement:
@@ -22,6 +32,9 @@ class TDOAMeasurement:
     # SDR with system-clock-only timestamps. Mean of these across the
     # solve's participating nodes scales the final location confidence.
     timing_trust: float = 1.0
+    # True when the node has a dedicated TDOA timing path (GPSDO/OCXO,
+    # can_do_tdoa hardware). False = system-clock timestamps only.
+    hardware_timed: bool = True
 
 
 @dataclass
@@ -112,6 +125,7 @@ class TDOACoordinator:
             node_lat=node.location_gps[0],
             node_lon=node.location_gps[1],
             timing_trust=timing_trust,
+            hardware_timed=bool(can_tdoa),
         )
         self._pending.setdefault(emitter_id, []).append(m)
 
@@ -167,6 +181,22 @@ class TDOACoordinator:
                     self._pending.setdefault(emitter_id, []).extend(measurements)
                 return None
 
+            # System-clock hardening: when NO participating measurement
+            # has a hardware timing path, a 2-node hyperbola from
+            # loosely-synced clocks is misleading. Require at least
+            # SYSTEM_CLOCK_MIN_DISTINCT distinct hearers; re-merge and
+            # bail otherwise so a third hearer arriving within the
+            # correlation window can still trigger a solve.
+            any_hw_timed = any(m.hardware_timed for m in measurements)
+            distinct_now = len({m.node_id for m in measurements})
+            if not any_hw_timed and distinct_now < SYSTEM_CLOCK_MIN_DISTINCT:
+                self._pending.setdefault(emitter_id, []).extend(measurements)
+                logger.debug(
+                    "TDOA %s: suppressed %d-node system-clock solve "
+                    "(need >=%d distinct hearers without hardware timing)",
+                    emitter_id[:8], distinct_now, SYSTEM_CLOCK_MIN_DISTINCT)
+                return None
+
             measurements.sort(key=lambda m: m.timestamp_ns)
             ref = measurements[0]
 
@@ -210,6 +240,11 @@ class TDOACoordinator:
             # vs a "tight fix" instead of being told "no fix".
             timing_factor = sum(m.timing_trust for m in measurements) / len(measurements)
             conf = conf * timing_factor
+            # All-system-clock solves are hard-capped: even good geometry
+            # cannot overcome tens-of-ms clock offsets, so never present
+            # such a fix as more than "search area" quality.
+            if not any_hw_timed:
+                conf = min(conf, SYSTEM_CLOCK_CONF_CAP)
 
             # Error ellipse — approximate from confidence + baseline
             # geometry. With only 2 distinct nodes the fix is a hyperbola,

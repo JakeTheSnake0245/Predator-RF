@@ -38,6 +38,11 @@ struct PeerObservation {
     double node_lat = 0.0;
     double node_lon = 0.0;
     double timing_trust = 0.5; // caller pre-computes via computeTimingTrust
+    // True when the peer has a dedicated TDOA timing path (can_do_tdoa
+    // hardware). All-system-clock participant sets are gated to
+    // >= kSystemClockMinDistinct hearers and confidence-capped by the
+    // coordinator (parity with the Python backend).
+    bool hardware_timed = true;
     int64_t gps_updated_ns = 0;  // 0 = bypass freshness gate
 };
 
@@ -108,6 +113,7 @@ public:
         m.node_lat = obs.node_lat;
         m.node_lon = obs.node_lon;
         m.timing_trust = obs.timing_trust;
+        m.hardware_timed = obs.hardware_timed;
         coord_.recordMeasurement(key, m);
         {
             std::lock_guard<std::mutex> g(mu_);

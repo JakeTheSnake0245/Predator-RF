@@ -217,6 +217,34 @@ static void test_solve_unknown_emitter_returns_nullopt() {
     CHECK(!r.has_value());
 }
 
+static void test_system_clock_gating() {
+    // 2-node all-system-clock solve is suppressed and re-merged.
+    Coordinator c;
+    auto a = mk("A", 100, 35.10, -106.50, 0.3); a.hardware_timed = false;
+    auto b = mk("B", 200, 35.15, -106.45, 0.3); b.hardware_timed = false;
+    c.recordMeasurement("E1", a);
+    c.recordMeasurement("E1", b);
+    auto r = c.solve("E1");
+    CHECK(!r.has_value());
+    CHECK(c.distinctNodes("E1") == 2);  // re-merged for a later solve
+
+    // Third system-clock hearer → solve allowed, confidence capped.
+    auto d = mk("C", 300, 35.12, -106.47, 0.3); d.hardware_timed = false;
+    c.recordMeasurement("E1", d);
+    r = c.solve("E1");
+    CHECK(r.has_value());
+    CHECK(r->location_confidence <= predator::tdoa::kSystemClockConfCap + 1e-12);
+
+    // One hardware-timed participant lifts the 2-node suppression.
+    Coordinator c2;
+    auto h = mk("H", 100, 35.10, -106.50, 0.9);  // hardware_timed=true default
+    auto s = mk("S", 200, 35.15, -106.45, 0.3); s.hardware_timed = false;
+    c2.recordMeasurement("E2", h);
+    c2.recordMeasurement("E2", s);
+    auto r2 = c2.solve("E2");
+    CHECK(r2.has_value());
+}
+
 static void test_clear() {
     Coordinator c;
     c.recordMeasurement("E1", mk("A", 100, 1.0, 1.0));
@@ -239,6 +267,7 @@ int main() {
     test_ellipse_eccentric_when_collinear_nodes();
     test_solve_clears_pending();
     test_solve_unknown_emitter_returns_nullopt();
+    test_system_clock_gating();
     test_clear();
 
     std::cout << "tdoa_coordinator_test: " << g_pass << " passed, "

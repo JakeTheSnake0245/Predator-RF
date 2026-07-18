@@ -121,6 +121,7 @@ The dashboard calls the `/api/v1/` form; `curl` can use either.
 | GET    | `/api/v1/status`             | Daemon status (SDR state, scan, mission mode)        |
 | GET    | `/api/v1/state`              | Combined nodes + tracks + status snapshot            |
 | GET    | `/api/v1/nodes/`             | Kujhad fleet nodes (JSON array)                      |
+| GET    | `/api/v1/nodes/df_capability`| Fleet DF capability summary (LOB / TDOA / RSSI-only) |
 | GET    | `/api/v1/tracks/`            | Active emitter tracks (JSON array)                   |
 | GET    | `/api/v1/events/stream`      | SSE live event stream (`text/event-stream`)          |
 | GET    | `/api/v1/events`             | Paginated event log (`?since=N`)                     |

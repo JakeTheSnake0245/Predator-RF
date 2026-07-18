@@ -15,6 +15,7 @@
       <span id="pill-sse" class="pill" title="SSE event stream">SSE</span>
       <span id="pill-nodes" class="pill" title="Connected fleet nodes">0 NODES</span>
       <span id="pill-offline" class="pill err" title="Nodes offline — no poll in 120 s" hidden>0 OFFLINE</span>
+      <span id="pill-df" class="pill" title="Fleet direction-finding capability">DF —</span>
       <span id="pill-tracks" class="pill" title="Active emitter tracks">0 TRACKS</span>
       <span id="pill-approvals" class="pill" title="Pending CoT approvals">0 PENDING</span>
       <span class="spacer"></span>
@@ -33,6 +34,7 @@
           <span class="poll-badge" id="fleet-age"></span>
         </div>
         <div class="panel-body">
+          <div id="df-summary" class="df-summary" hidden></div>
           <div class="table-wrap">
             <table class="data-table" id="fleet-table">
               <thead>
