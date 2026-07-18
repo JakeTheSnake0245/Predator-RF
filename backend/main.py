@@ -297,6 +297,17 @@ class PredatorBackend:
             self.correlation_engine.on_alert(self._on_correlation_alert)
             logger.info("CorrelationEngine initialised")
 
+        # Operator target nomination — single active mission target,
+        # persisted in the mission store; creates a correlation rule and
+        # a known-target repository entry as fleet-focus side-effects.
+        from backend.coordination.target_nomination import NominationManager
+        self.nomination_manager = NominationManager(
+            store=self.store,
+            correlation_engine=self.correlation_engine,
+            signal_repo=self.signal_repo,
+            track_manager=self.track_manager,
+        )
+
         # Cross-station dedup — coalesces tracks for the same physical
         # emitter heard by both local fleet and CoC peers.
         self.dedup: CrossStationDedup = CrossStationDedup(

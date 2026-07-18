@@ -2,7 +2,20 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter()
-track_manager = None   # Injected by server.py
+track_manager = None       # Injected by server.py
+nomination_manager = None  # Injected by server.py (may stay None)
+
+
+def _decorate(d: dict) -> dict:
+    """Stamp is_nominated_target so the dashboard/map can render the
+    designated mission target distinctly. No-op when nomination is not
+    configured (field is always present per the wire contract)."""
+    if nomination_manager is not None:
+        d["is_nominated_target"] = nomination_manager.is_nominated(
+            d.get("emitter_id"), d.get("primary_frequency"))
+    else:
+        d["is_nominated_target"] = False
+    return d
 
 
 @router.get("/")
@@ -21,14 +34,14 @@ async def list_tracks(
         tracks = [t for t in tracks if t.state.value == state]
 
     tracks.sort(key=lambda t: t.confidence, reverse=True)
-    return [t.to_dict() for t in tracks[:limit]]
+    return [_decorate(t.to_dict()) for t in tracks[:limit]]
 
 
 @router.get("/{emitter_id}")
 async def get_track(emitter_id: str):
     if not track_manager or emitter_id not in track_manager.tracks:
         raise HTTPException(status_code=404, detail="Track not found")
-    return track_manager.tracks[emitter_id].to_dict()
+    return _decorate(track_manager.tracks[emitter_id].to_dict())
 
 
 @router.get("/{emitter_id}/history")

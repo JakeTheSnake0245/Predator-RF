@@ -392,6 +392,25 @@ static void routeCommand(predator::PwsContext& ctx) {
     predator::pwsHttpReply(ctx.sock, 200, "application/json", "{\"ok\":true}");
 }
 
+// GET /api/v1/target/nomination — graceful parity stub for the operator
+// target-nomination feature (backend/coordination/target_nomination.py).
+// The C++ daemon has no MissionStore/CorrelationEngine, so nomination
+// writes are not supported here; the dashboard reads `supported:false`
+// and hides the nominate controls instead of erroring.
+static void routeTargetNomination(predator::PwsContext& ctx) {
+    nlohmann::json j;
+    j["nominated"] = nullptr;
+    j["supported"] = false;
+    predator::pwsHttpReply(ctx.sock, 200, "application/json", j.dump());
+}
+
+static void routeTargetNominationWrite(predator::PwsContext& ctx) {
+    nlohmann::json j;
+    j["error"]     = "target nomination is not supported by the C++ web backend";
+    j["supported"] = false;
+    predator::pwsHttpReply(ctx.sock, 501, "application/json", j.dump());
+}
+
 // Key management endpoints (read-only from the web side)
 static void routeKeyShow(predator::PwsContext& ctx) {
     // Never return the raw key — only confirm it's set and show length
@@ -694,6 +713,9 @@ int init(std::string resDir) {
     addBoth("GET",  "/nodes/",        routeNodes);
     addBoth("GET",  "/nodes/df_capability", routeDfCapability);
     addBoth("GET",  "/tracks/",       routeTracks);
+    addBoth("GET",    "/target/nomination", routeTargetNomination);
+    addBoth("POST",   "/target/nominate",   routeTargetNominationWrite);
+    addBoth("DELETE", "/target/nomination", routeTargetNominationWrite);
     addBoth("GET",  "/spectrum",      routeSpectrum);
     addBoth("GET",  "/events",        routeEvents);
     addBoth("POST", "/command",       routeCommand);

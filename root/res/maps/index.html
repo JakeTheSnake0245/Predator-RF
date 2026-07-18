@@ -783,6 +783,7 @@
                         emitter_id: t.emitter_id,
                         threat_level: t.threat_level || 'unknown',
                         freq_mhz: t.primary_frequency ? (t.primary_frequency / 1e6).toFixed(3) : '',
+                        nominated: t.is_nominated_target ? 1 : 0,
                     },
                     geometry: { type: 'Point', coordinates: [t.estimated_lon, t.estimated_lat] }
                 });
@@ -834,6 +835,16 @@
                     'circle-color': ['match', ['get', 'threat_level'],
                         'critical', '#ff3b3b', 'high', '#ff8c00', 'medium', '#d8c96a', 'low', '#83d099', '#7a9e7e'],
                     'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 1.5, 'circle-opacity': 0.92 } });
+            // Nominated mission target — double red ring under the dot so
+            // the designated target is unmistakable among emitter markers.
+            map.addLayer({ id: '_nominated_ring_outer', source: '_emitter_dots', type: 'circle',
+                filter: ['==', ['get', 'nominated'], 1],
+                paint: { 'circle-radius': 14, 'circle-color': 'rgba(0,0,0,0)',
+                    'circle-stroke-color': '#ff3b3b', 'circle-stroke-width': 2, 'circle-stroke-opacity': 0.9 } });
+            map.addLayer({ id: '_nominated_ring_inner', source: '_emitter_dots', type: 'circle',
+                filter: ['==', ['get', 'nominated'], 1],
+                paint: { 'circle-radius': 10, 'circle-color': 'rgba(0,0,0,0)',
+                    'circle-stroke-color': '#ff3b3b', 'circle-stroke-width': 1, 'circle-stroke-opacity': 0.6 } });
             map.addLayer({ id: '_emitter_labels', source: '_emitter_dots', type: 'symbol',
                 layout: { 'text-field': ['get', 'freq_mhz'],
                     'text-font': ['literal', ['Noto Sans Regular']],

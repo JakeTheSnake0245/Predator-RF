@@ -245,6 +245,96 @@ pollFleet();
 setInterval(pollFleet, FLEET_POLL_MS);
 
 /* ══════════════════════════════════════════════
+   Target nomination — operator "converge on this"
+══════════════════════════════════════════════ */
+const NOMINATION_POLL_MS = 10_000;
+const NOMINATION_FREQ_TOL_HZ = 25_000;
+let nominatedTarget = null;        // { emitter_id, frequency_hz, ... } | null
+let nominationSupported = true;    // false against read-only C++ backend
+
+function isNominatedTrack(t) {
+  if (t.is_nominated_target) return true;   // authoritative server flag
+  if (!nominatedTarget) return false;
+  if (nominatedTarget.emitter_id &&
+      (t.emitter_id === nominatedTarget.emitter_id)) return true;
+  return t.primary_frequency != null &&
+    Math.abs(t.primary_frequency - nominatedTarget.frequency_hz) <= NOMINATION_FREQ_TOL_HZ;
+}
+
+function renderNominationPill() {
+  const pill = document.getElementById('pill-target');
+  if (!pill) return;
+  if (nominatedTarget) {
+    pill.hidden = false;
+    pill.textContent = '◎ TARGET ' + fmtMHz(nominatedTarget.frequency_hz) + ' MHz';
+    setPillClass(pill, 'err');
+    pill.title = 'Nominated mission target'
+      + (nominatedTarget.label ? ': ' + nominatedTarget.label : '')
+      + ' — click a track for details';
+  } else {
+    pill.hidden = true;
+  }
+}
+
+async function pollNomination() {
+  try {
+    const r = await fetch(`${API}/api/v1/target/nomination`);
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    nominatedTarget = d.nominated || null;
+    nominationSupported = d.supported !== false;
+  } catch {
+    // Endpoint missing on older backends — degrade silently.
+    nominatedTarget = null;
+    nominationSupported = false;
+  }
+  renderNominationPill();
+  renderTracks();
+}
+
+async function nominateTrack(t) {
+  const body = t.emitter_id
+    ? { emitter_id: t.emitter_id, operator: 'dashboard' }
+    : { frequency_hz: t.primary_frequency, operator: 'dashboard' };
+  try {
+    const r = await fetch(`${API}/api/v1/target/nominate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.detail || r.status);
+    }
+    const d = await r.json();
+    nominatedTarget = d.nominated || null;
+  } catch (err) {
+    alert('Nominate failed: ' + err.message);
+  }
+  renderNominationPill();
+  renderTracks();
+  refreshTracksFromAPI();
+  modal.hidden = true;
+}
+
+async function clearNomination() {
+  try {
+    const r = await fetch(`${API}/api/v1/target/nomination`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(r.status);
+    nominatedTarget = null;
+  } catch (err) {
+    alert('Clear failed: ' + err.message);
+  }
+  renderNominationPill();
+  renderTracks();
+  refreshTracksFromAPI();
+  modal.hidden = true;
+}
+
+pollNomination();
+setInterval(pollNomination, NOMINATION_POLL_MS);
+
+/* ══════════════════════════════════════════════
    Tracks panel — SSE-driven
 ══════════════════════════════════════════════ */
 function connectSSE() {
@@ -386,12 +476,16 @@ function renderTracks() {
     const nodes = (t.detecting_nodes || []).map(n => esc(n)).join(', ') || '<span class="dim">—</span>';
     const confPct = Math.round((t.confidence || 0) * 100);
     const confColor = confPct >= 70 ? 'var(--accent)' : confPct >= 40 ? 'var(--warn)' : 'var(--text-dim)';
-    return `<tr class="clickable" data-key="${key}">
+    const nominated = isNominatedTrack(t);
+    const targetBadge = nominated
+      ? ' <span class="target-badge" title="Nominated mission target — fleet is converging on this signal">◎ TARGET</span>'
+      : '';
+    return `<tr class="clickable${nominated ? ' nominated-row' : ''}" data-key="${key}">
       <td>
         <span class="state-dot ${stateClass(t.state)}"></span>
         <span style="font-size:10px;text-transform:uppercase;letter-spacing:.08em">${esc(t.state || 'new')}</span>
       </td>
-      <td><span class="freq-val">${fmtMHz(t.primary_frequency)}</span><span class="mhz-unit"> MHz</span></td>
+      <td><span class="freq-val">${fmtMHz(t.primary_frequency)}</span><span class="mhz-unit"> MHz</span>${targetBadge}</td>
       <td style="color:var(--text-dim)">${(t.last_power_dbfs ?? '—') !== '—' ? (t.last_power_dbfs).toFixed(1) + ' dBFS' : '—'}</td>
       <td><span style="color:${confColor};font-weight:600">${confPct}%</span></td>
       <td><span class="threat ${threatClass(t.threat_level)}">${esc(t.threat_level || 'unknown')}</span></td>
@@ -406,9 +500,10 @@ function renderTracks() {
 document.getElementById('filter-state').addEventListener('change', () => { renderTracks(); refreshTracksFromAPI(); });
 document.getElementById('filter-conf').addEventListener('input', renderTracks);
 
-function showTrackDetail(key) {
-  const t = tracks.get(key);
+function showTrackDetail(rawKey) {
+  const t = tracks.get(rawKey);
   if (!t) return;
+  const key = esc(rawKey);
   document.getElementById('modal-title').textContent =
     'Track: ' + (t.primary_frequency ? fmtMHz(t.primary_frequency) + ' MHz' : key.slice(0, 16));
 
@@ -458,6 +553,16 @@ function showTrackDetail(key) {
     <div class="modal-section">
       <div class="modal-section-title">Anomaly flags</div>
       ${anomalies}
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Mission target</div>
+      ${isNominatedTrack(t)
+        ? `<div class="modal-kv kv-row"><span class="kv-k">Status</span><span class="kv-v"><span class="target-badge">◎ NOMINATED TARGET</span></span></div>
+           <button class="btn-reject" id="btn-clear-nomination" data-key="${key}">Clear nomination</button>`
+        : (nominationSupported
+            ? `<button class="btn-approve" id="btn-nominate" data-key="${key}" title="Make this THE mission target — fleet converges on this signal">◎ Nominate as target</button>`
+            : '<span class="dim">Nomination not supported by this backend</span>')}
     </div>
 
     <div class="modal-section">
@@ -632,6 +737,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const row = ev.target.closest('tr[data-key]');
       if (!row) return;
       showTrackDetail(row.dataset.key);
+    });
+  }
+
+  // Track modal: nominate / clear-nomination buttons
+  const modalBody = document.getElementById('modal-body');
+  if (modalBody) {
+    modalBody.addEventListener('click', ev => {
+      const nomBtn = ev.target.closest('#btn-nominate');
+      if (nomBtn) {
+        const t = tracks.get(nomBtn.dataset.key);
+        if (t) nominateTrack(t);
+        return;
+      }
+      if (ev.target.closest('#btn-clear-nomination')) clearNomination();
     });
   }
 

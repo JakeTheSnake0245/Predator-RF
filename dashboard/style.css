@@ -711,3 +711,19 @@ canvas.sparkline {
   letter-spacing: .08em;
   vertical-align: 1px;
 }
+
+/* ── Nominated mission target ── */
+.target-badge {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--hot);
+  border-radius: 3px;
+  color: var(--hot);
+  background: rgba(255, 80, 64, 0.10);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  vertical-align: middle;
+}
+.nominated-row td { background: rgba(255, 80, 64, 0.06); }
+.nominated-row td:first-child { box-shadow: inset 3px 0 0 var(--hot); }

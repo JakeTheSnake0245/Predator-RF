@@ -39,7 +39,7 @@ def create_app(track_manager=None, fleet_manager=None,
     from backend.api.routes import (
         tracks, nodes, events, assessments,
         health, missions, approvals, overrides,
-        preflight, android_pull, cot_export, rns)
+        preflight, android_pull, cot_export, rns, nomination)
     from backend.api.middleware.auth import make_bearer_middleware
 
     app = FastAPI(
@@ -88,6 +88,9 @@ def create_app(track_manager=None, fleet_manager=None,
             approvals.queue = backend.approvals
         if hasattr(backend, "overrides"):
             overrides.registry = backend.overrides
+        if hasattr(backend, "nomination_manager"):
+            nomination.manager = backend.nomination_manager
+            tracks.nomination_manager = backend.nomination_manager
 
     # Tier 4 — Android/Windows client integration routes.
     android_pull.track_manager = track_manager
@@ -107,6 +110,8 @@ def create_app(track_manager=None, fleet_manager=None,
                         prefix="/api/v1/approvals", tags=["approvals"])
     app.include_router(overrides.router,
                         prefix="/api/v1/overrides", tags=["overrides"])
+    app.include_router(nomination.router,
+                        prefix="/api/v1/target", tags=["nomination"])
 
     # Tier 4 — Android/Windows client integration routes. Each module
     # gracefully degrades to `router = None` if FastAPI isn't installed,
