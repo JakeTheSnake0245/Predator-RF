@@ -957,6 +957,31 @@ void MainWindow::draw() {
     excludes = core::configManager.conf["predatorExcludes"];
     hits = core::configManager.conf["predatorHits"];
     events = core::configManager.conf["predatorEvents"];
+    // One-time serial restore: persisted events carry the serials they
+    // were stamped with before the last shutdown. The Kujhad
+    // /v1/events?since=<serial> cursor requires serials to stay monotonic
+    // across restarts — if predatorEventSerial restarted at 0, new events
+    // would reuse persisted serials and a coordinator's catch-up watermark
+    // would silently skip them. Restart the counter above the highest
+    // persisted serial before any new event is stamped.
+    {
+        static bool eventSerialRestored = false;
+        if (!eventSerialRestored) {
+            eventSerialRestored = true;
+            if (events.is_array()) {
+                for (const auto& row : events) {
+                    if (!row.is_object() || !row.contains("serial")) continue;
+                    uint64_t s = 0;
+                    if (row["serial"].is_number_unsigned()) s = row["serial"].get<uint64_t>();
+                    else if (row["serial"].is_number_integer()) {
+                        int64_t v = row["serial"].get<int64_t>();
+                        if (v > 0) s = (uint64_t)v;
+                    }
+                    if (s > predatorEventSerial) predatorEventSerial = s;
+                }
+            }
+        }
+    }
     networkAliases = core::configManager.conf.contains("predatorNetworkAliases") && core::configManager.conf["predatorNetworkAliases"].is_object() ? core::configManager.conf["predatorNetworkAliases"] : json::object();
     decoderBridges = core::configManager.conf.contains("predatorDecoderBridges") && core::configManager.conf["predatorDecoderBridges"].is_object() ? core::configManager.conf["predatorDecoderBridges"] : json::object();
     missionThreshold = core::configManager.conf["predatorThreshold"];

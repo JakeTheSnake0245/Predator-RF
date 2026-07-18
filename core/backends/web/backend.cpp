@@ -28,6 +28,7 @@
 #endif
 
 #include "../../../core/src/json.hpp"
+#include "../../src/predator/event_ring_store.h"
 
 namespace backend {
 
@@ -53,6 +54,10 @@ static std::mutex                   gEventMtx;
 static std::vector<nlohmann::json>  gEventRing;
 static constexpr size_t             EVENT_RING_SIZE = 512;
 static std::atomic<uint64_t>        gLastEventId{0};
+// Durable append-log twin of gEventRing — events survive power loss and
+// are re-served through /v1/events?since= after restart with their
+// original ids/timestamps. See core/src/predator/event_ring_store.h.
+static predator::EventRingStore     gEventStore;
 
 // Spectrum snapshot
 static std::mutex               gSpecMtx;
@@ -142,6 +147,7 @@ static void pushEvent(nlohmann::json ev) {
         gEventRing.push_back(ev);
         while(gEventRing.size() > EVENT_RING_SIZE) gEventRing.erase(gEventRing.begin());
     }
+    gEventStore.append(ev);
     gServer.pushSse(ev.dump());
 }
 
@@ -696,6 +702,35 @@ int init(std::string resDir) {
 
     core::configManager.release();
 
+    // Durable event ring: rehydrate persisted events so a coordinator's
+    // /v1/events?since= catch-up survives a node reboot / power loss.
+    // Storage lives under the config root (daemon state dir on Linux,
+    // app files dir on Android). Override with `webEventStoreDir` or
+    // PREDATOR_EVENT_STORE_DIR. Open failure degrades to memory-only.
+    {
+        std::string evDir = (std::string)core::args["root"] + "/kujhad_events";
+        core::configManager.acquire();
+        if(core::configManager.conf.contains("webEventStoreDir"))
+            evDir = core::configManager.conf["webEventStoreDir"].get<std::string>();
+        core::configManager.release();
+        const char* envEv = ::getenv("PREDATOR_EVENT_STORE_DIR");
+        if(envEv && *envEv) evDir = envEv;
+        if(gEventStore.open(evDir, EVENT_RING_SIZE, "id")) {
+            {
+                std::lock_guard<std::mutex> lk(gEventMtx);
+                gEventRing = gEventStore.loaded();
+                while(gEventRing.size() > EVENT_RING_SIZE) gEventRing.erase(gEventRing.begin());
+            }
+            // Serial continuity: new events start ABOVE the highest
+            // persisted id so coordinator cursors never see a reused id.
+            gLastEventId = gEventStore.maxSerial();
+            flog::info("Predator web backend: event store '{}' — {} events recovered, lastId={}",
+                       evDir, gEventStore.loaded().size(), (uint64_t)gLastEventId);
+        } else {
+            flog::warn("Predator web backend: event store unavailable at '{}' — events are memory-only", evDir);
+        }
+    }
+
     // Register routes — both /api/v1/* (frontend path) and short aliases
     auto addBoth = [&](const std::string& method, const std::string& shortPath,
                        predator::PwsHandler h) {
@@ -802,6 +837,7 @@ int renderLoop() {
 
 int end() {
     gRunning = false;
+    gEventStore.close();
     gServer.stop();
 #ifndef _WIN32
     if(gCtrlSock >= 0) { ::close(gCtrlSock); gCtrlSock = -1; }
