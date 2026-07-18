@@ -1379,7 +1379,9 @@
             <b style="color:var(--accent)">${esc(n.node_id || '?')}</b>
             <span style="color:var(--text-faint)">${esc(n.hardware_code || 'unknown')}</span>
             <span class="pill">trust ${Number(n.trust_score || 0).toFixed(2)}</span>
-            ${n.location_gps ? `<span class="pill">GPS</span>` : ''}
+            ${n.location_gps ? `<span class="pill">GPS${n.gps_source ? ' ' + esc(n.gps_source) : ''}${
+                (n.gps_age_s !== null && n.gps_age_s !== undefined)
+                  ? ' · ' + Math.round(n.gps_age_s) + 's' : ''}</span>` : ''}
             ${n.can_do_tdoa ? `<span class="pill">TDOA</span>` : ''}
             <div style="flex:1"></div>
             <span style="color:var(--text-faint);font-size:11px;">

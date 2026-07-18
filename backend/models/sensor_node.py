@@ -83,6 +83,12 @@ class SensorNodeTrust:
     # we don't triangulate against a position the operator drove
     # away from 20 minutes ago.
     location_gps_updated_ns: int = 0
+    # Where the current location_gps came from:
+    #   "phone"  — live fix polled from the paired phone's Kujhad /v1/gps
+    #   "kujhad" — fix polled from this node's own C++ app /v1/gps
+    #   "manual" — operator-configured static location (updated_ns stays 0)
+    #   ""       — no location source
+    gps_source: str = ""
 
     # Clock — both reported by the C++ /v1/timing endpoint when
     # available. Without this, timing_stability_trust is a guess
@@ -298,6 +304,11 @@ class SensorNodeTrust:
             "kujhad_host": self.kujhad_host,
             "kujhad_port": self.kujhad_port,
             "location_gps": self.location_gps,
+            "location_accuracy_m": self.location_accuracy_m,
+            "gps_source": self.gps_source or None,
+            "gps_age_s": (
+                round((time.time_ns() - self.location_gps_updated_ns) / 1e9, 1)
+                if self.location_gps_updated_ns else None),
             "gps_synchronized": self.gps_synchronized,
             "timing_pps_lock": self.timing_pps_lock,
             "timing_source": self.timing_source,

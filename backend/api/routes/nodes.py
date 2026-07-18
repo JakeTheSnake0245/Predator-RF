@@ -22,10 +22,10 @@ class NodeRegistration(BaseModel):
 async def list_nodes():
     if not fleet_manager:
         return []
-    return [
-        client.node.to_dict()
-        for client in fleet_manager._clients.values()
-    ]
+    nodes = (fleet_manager.all_nodes()
+             if hasattr(fleet_manager, "all_nodes")
+             else [c.node for c in fleet_manager._clients.values()])
+    return [n.to_dict() for n in nodes]
 
 
 @router.get("/df_capability")
@@ -39,8 +39,12 @@ async def df_capability():
         max_age_s = float(_cfg.gps_max_age_s)
     except Exception:
         max_age_s = 60.0
-    nodes = ([client.node for client in fleet_manager._clients.values()]
-             if fleet_manager else [])
+    if not fleet_manager:
+        nodes = []
+    elif hasattr(fleet_manager, "all_nodes"):
+        nodes = fleet_manager.all_nodes()
+    else:
+        nodes = [client.node for client in fleet_manager._clients.values()]
     return compute_df_capability(nodes, gps_max_age_s=max_age_s)
 
 

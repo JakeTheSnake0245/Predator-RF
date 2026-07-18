@@ -301,6 +301,7 @@ class KujhadClient:
                 # Stamp the lock-age clock — TDOACoordinator uses this
                 # to drop stale-GPS nodes from solves.
                 self.node.location_gps_updated_ns = time.time_ns()
+                self.node.gps_source = "kujhad"
             except (TypeError, ValueError):
                 pass
 
@@ -567,6 +568,12 @@ class KujhadFleetManager:
     def __init__(self):
         self._clients: Dict[str, KujhadClient] = {}
         self._on_event: Optional[EventCallback] = None
+        # The coordinator's own co-located sensor node when it is NOT a
+        # registered Kujhad fleet node (no C++ app endpoint of its own —
+        # e.g. the RPi running this backend, with a paired phone acting
+        # only as its GPS puck). Exposed alongside client nodes in
+        # all_nodes() so the nodes API / dashboard include it.
+        self.local_node: Optional[SensorNodeTrust] = None
 
     def on_event(self, fn: EventCallback):
         self._on_event = fn
@@ -594,6 +601,19 @@ class KujhadFleetManager:
         """Tune all nodes to the same frequency."""
         for client in self._clients.values():
             await client.send_tune_command(frequency_hz)
+
+    def set_local_node(self, node: SensorNodeTrust):
+        self.local_node = node
+
+    def all_nodes(self) -> list:
+        """Every node the backend knows about: one per Kujhad client,
+        plus the standalone local/coordinator node (if set and not
+        already a registered client)."""
+        nodes = [c.node for c in self._clients.values()]
+        if (self.local_node is not None
+                and self.local_node.node_id not in self._clients):
+            nodes.append(self.local_node)
+        return nodes
 
     def node_count(self) -> int:
         return len(self._clients)

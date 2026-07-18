@@ -265,6 +265,53 @@ class BackendConfig:
     rssi_max_radius_m: float = field(
         default_factory=lambda: _env_float("RSSI_MAX_RADIUS_M", 5000.0))
 
+    # ── Coordinator local-node GPS from paired phone ─────────────────────
+    # Every kit — including the coordinator's — is an RPi paired with an
+    # Android phone. Field nodes get their GPS through the C++ app's
+    # /v1/gps; the coordinator RPi itself has no GPS. When
+    # LOCAL_GPS_PHONE_HOST is set, the backend polls the paired phone's
+    # Kujhad /v1/gps endpoint directly and feeds the fix into the local
+    # sensor node (LOCAL_NODE_ID) so the coordinator participates in
+    # TDOA with a live GPS age and shows at its true map position.
+    # Works whether the phone is also a registered fleet node or is
+    # only serving as the coordinator's GPS puck.
+    local_node_id: str = field(
+        default_factory=lambda: _env("LOCAL_NODE_ID", "coordinator"))
+    local_node_hardware: str = field(
+        default_factory=lambda: _env("LOCAL_NODE_HARDWARE", "rtlsdr"))
+    local_gps_phone_host: str = field(
+        default_factory=lambda: _env("LOCAL_GPS_PHONE_HOST", ""))
+    local_gps_phone_port: int = field(
+        default_factory=lambda: _env_int("LOCAL_GPS_PHONE_PORT", 5259))
+    local_gps_phone_key: str = field(
+        default_factory=lambda: _env("LOCAL_GPS_PHONE_KEY", ""))
+    local_gps_phone_tls: bool = field(
+        default_factory=lambda: _env_bool("LOCAL_GPS_PHONE_TLS", False))
+    local_gps_poll_interval_s: float = field(
+        default_factory=lambda: _env_float("LOCAL_GPS_POLL_S", 2.0))
+    # After this many seconds without a fresh phone fix, revert the
+    # local node to the manual/static location (if configured). The
+    # stale phone fix is never silently kept forever — and the manual
+    # location carries location_gps_updated_ns=0 so the TDOA gps-age
+    # gate honestly excludes it. Never a fake fix.
+    local_gps_fallback_after_s: float = field(
+        default_factory=lambda: _env_float("LOCAL_GPS_FALLBACK_AFTER_S", 300.0))
+    # Manual/static coordinates for the local node (fallback + no-phone
+    # deployments). Empty = unset.
+    local_node_lat: str = field(
+        default_factory=lambda: _env("LOCAL_NODE_LAT", ""))
+    local_node_lon: str = field(
+        default_factory=lambda: _env("LOCAL_NODE_LON", ""))
+
+    def parse_local_manual_location(self):
+        """Return (lat, lon) tuple or None if unset/invalid."""
+        try:
+            if self.local_node_lat.strip() and self.local_node_lon.strip():
+                return (float(self.local_node_lat), float(self.local_node_lon))
+        except (ValueError, AttributeError):
+            pass
+        return None
+
     # ── /v1/timing poll ───────────────────────────────────────────────────
     # How often KujhadClient asks the C++ node for its timing telemetry
     # (NTP offset, GPSDO lock state, last-PPS age). Cheap call; 30 s is

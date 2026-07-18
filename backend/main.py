@@ -879,6 +879,10 @@ class PredatorBackend:
             logger.info("Fleet node registered: %s (%s)",
                         node.node_id, node.hardware_code)
 
+        # Coordinator local-node GPS from the paired phone (and/or a
+        # manual static location). See backend/coordination/phone_gps.py.
+        await self._start_local_gps()
+
         if self.fleet_manager.node_count() == 0 and self.coc is None:
             logger.warning("No fleet nodes configured AND CoC mode is off. "
                            "Set FLEET_NODES env var or register via API, "
@@ -941,8 +945,65 @@ class PredatorBackend:
         logger.info("Backend started. %d node(s) in fleet.",
                     self.fleet_manager.node_count())
 
+    async def _start_local_gps(self):
+        """Start the paired-phone GPS poller for the coordinator's own
+        co-located sensor node. No-op unless LOCAL_GPS_PHONE_HOST or a
+        LOCAL_NODE_LAT/LON manual location is configured."""
+        manual = config.parse_local_manual_location()
+        phone_host = (config.local_gps_phone_host or "").strip()
+        if not phone_host and manual is None:
+            return
+
+        from backend.coordination.phone_gps import PhoneGPSSource
+        from backend.models.sensor_node import SensorNodeTrust
+
+        # Resolve the local node: reuse the registered fleet node when
+        # LOCAL_NODE_ID matches one (the RPi also runs the C++ app);
+        # otherwise create a standalone coordinator node so it still
+        # shows up in the nodes API / dashboard / TDOA geometry.
+        client = self.fleet_manager.get_client(config.local_node_id)
+        if client is not None:
+            local_node = client.node
+            standalone = False
+        else:
+            local_node = SensorNodeTrust(
+                node_id=config.local_node_id,
+                hardware_code=config.local_node_hardware,
+            )
+            self.fleet_manager.set_local_node(local_node)
+            self.track_manager.register_node(local_node)
+            standalone = True
+
+        if not phone_host:
+            # Manual-only deployment: static position, honestly marked.
+            # PhoneGPSSource seeds the manual location in its ctor; we
+            # never start() it, so no poll loop / session is created.
+            PhoneGPSSource(node=local_node, host="", port=0,
+                           manual_location=manual)
+            logger.info("Local node %s: manual location %s (no phone GPS)",
+                        local_node.node_id, manual)
+            return
+
+        self.local_gps = PhoneGPSSource(
+            node=local_node,
+            host=phone_host,
+            port=config.local_gps_phone_port,
+            api_key=config.local_gps_phone_key,
+            tls=config.local_gps_phone_tls,
+            poll_interval_s=config.local_gps_poll_interval_s,
+            fallback_after_s=config.local_gps_fallback_after_s,
+            manual_location=manual,
+            stamp_contact=standalone,
+        )
+        await self.local_gps.start()
+
     async def stop(self):
         logger.info("Backend stopping...")
+        if getattr(self, "local_gps", None) is not None:
+            try:
+                await self.local_gps.stop()
+            except Exception as exc:
+                logger.warning("PhoneGPSSource stop failed: %s", exc)
         # Stop accepting new RF events first so no fresh tasks spawn
         # while we drain. Includes the CoC upstream consumers.
         if self.coc is not None:
