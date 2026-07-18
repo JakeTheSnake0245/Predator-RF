@@ -8617,6 +8617,10 @@ void MainWindow::draw() {
                             [&](double v) { foxhuntCwIdPeriodSec = std::clamp(v, 30.0, 3600.0); });
                     }
                 }
+                if (foxhuntSourceMode == 2 || foxhuntCwIdEnabled) {
+                    drawEditDoubleButtonNumeric(T("CW speed (WPM)"), (double)foxhuntCwWpm, "%.0f WPM",
+                        [&](double v) { foxhuntCwWpm = std::clamp((int)v, 5, 60); });
+                }
                 drawEditDoubleButtonNumeric(T("Dead-man timer (s, 0=off)"), foxhuntDeadManSec, "%.0f s",
                     [&](double v) {
                         foxhuntDeadManSec = std::clamp(v, 0.0, 7200.0);
