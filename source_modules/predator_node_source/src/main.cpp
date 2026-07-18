@@ -92,7 +92,7 @@ public:
 
     void enable()  { _enabled = true; }
     void disable() { _enabled = false; }
-    bool isEnabled() const { return _enabled; }
+    bool isEnabled() { return _enabled; }
 
 private:
     static void menuHandler(void* ctx) {
@@ -103,7 +103,7 @@ private:
     static void select(void* ctx) {
         auto* m = (PredatorNodeSourceModule*)ctx;
         m->_client.start();
-        sigpath::sourceManager.setSampleRate(m->_sampleRate);
+        core::setInputSampleRate(m->_sampleRate);
     }
 
     static void deselect(void* ctx) {
@@ -146,7 +146,7 @@ private:
 
         if (f.bw_hz > 0 && std::abs(f.bw_hz - _sampleRate) > 1e4) {
             _sampleRate = f.bw_hz;
-            sigpath::sourceManager.setSampleRate(_sampleRate);
+            core::setInputSampleRate(_sampleRate);
         }
     }
 
@@ -260,13 +260,14 @@ private:
     dsp::stream<dsp::complex_t>       _stream;
 
     SourceManager::SourceHandler _handler = {
-        /* ctx         */ this,
-        /* selectHandler  */ select,
-        /* deselectHandler*/ deselect,
-        /* startHandler   */ start,
-        /* stopHandler    */ stop,
-        /* tuneHandler    */ tune,
-        /* menuHandler    */ menuHandler
+        /* stream          */ &_stream,
+        /* menuHandler     */ menuHandler,
+        /* selectHandler   */ select,
+        /* deselectHandler */ deselect,
+        /* startHandler    */ start,
+        /* stopHandler     */ stop,
+        /* tuneHandler     */ tune,
+        /* ctx             */ this
     };
 };
 
