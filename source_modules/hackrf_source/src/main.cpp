@@ -251,6 +251,18 @@ private:
 #ifndef __ANDROID__
         hackrf_error err = (hackrf_error)hackrf_open_by_serial(_this->selectedSerial.c_str(), &_this->openDev);
 #else
+        // Re-acquire the USB fd at start time: the fd cached by refresh()
+        // goes stale whenever the device re-enumerates (app warm-restart,
+        // cable glitch, USB permission re-grant). Passing a stale or -1 fd
+        // into hackrf_open_by_fd() segfaults inside libusb_wrap_sys_device.
+        {
+            int vid, pid;
+            _this->devFd = backend::getDeviceFD(vid, pid, backend::HACKRF_VIDPIDS);
+        }
+        if (_this->devFd < 0) {
+            flog::error("Could not start HackRF: no USB device fd (device disconnected or permission not granted)");
+            return;
+        }
         hackrf_error err = (hackrf_error)hackrf_open_by_fd(_this->devFd, &_this->openDev);
 #endif
         if (err != HACKRF_SUCCESS) {

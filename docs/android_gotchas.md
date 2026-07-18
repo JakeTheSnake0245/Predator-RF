@@ -326,3 +326,35 @@ pressure (Input dispatching timed out > 10s).
 IllegalArgumentException) {}` in `onDestroy` — wrapped because Android
 throws `IllegalArgumentException` if the receiver was never registered
 (e.g. `onCreate` threw before line 296).
+
+---
+
+## Render-loop SIGSEGV in `ImGui::GetDrawData` (fault addr ~0x4028)
+
+Logcat stack: `ImVector<ImGuiViewportP*>::operator[]` →
+`ImGui::GetDrawData+32` → `backend::render+68` → `backend::renderLoop`.
+Fault address ~0x4028 = the `Viewports` field offset inside a NULL
+`ImGuiContext` — i.e. a frame was rendered after `backend::end()`
+destroyed the ImGui context (warm-restart TERM_WINDOW/INIT_WINDOW race,
+e.g. INIT_WINDOW in the same poll batch with a partially-failed
+`doPartialInit`).
+
+**Fix (backend.cpp):** renderLoop skips the frame while
+`ImGui::GetCurrentContext() == nullptr`, and `render()` itself bails on
+a null context or null `GetDrawData()` result. Do not remove these
+guards — `pauseRendering` alone does not cover every teardown ordering.
+
+---
+
+## HackRF start SIGSEGV inside `libusb_wrap_sys_device`
+
+Logcat stack: `libusb_wrap_sys_device+136` → `hackrf_open_by_fd+96` →
+`HackRFSourceModule::start`. Cause: `start()` used the USB fd cached by
+`refresh()`; that fd goes stale (or is -1) whenever the device
+re-enumerates — app warm-restart, cable glitch, USB permission
+re-grant. libusb dereferences through the bad fd and segfaults.
+
+**Fix (hackrf_source/src/main.cpp):** `start()` re-acquires the fd via
+`backend::getDeviceFD(...)` immediately before `hackrf_open_by_fd()`
+and returns with a logged error if it is < 0. Any other Android source
+module that opens by fd must follow the same acquire-at-start pattern.

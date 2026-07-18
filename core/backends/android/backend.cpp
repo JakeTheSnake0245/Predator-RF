@@ -202,13 +202,20 @@ namespace backend {
     }
 
     void render(bool vsync) {
+        // Defensive: never touch ImGui if the context was torn down
+        // (warm-restart TERM_WINDOW path) — GetDrawData() on a null
+        // context is a guaranteed SIGSEGV.
+        if (ImGui::GetCurrentContext() == nullptr) { return; }
+
         // Rendering
         ImGui::Render();
+        ImDrawData* drawData = ImGui::GetDrawData();
+        if (!drawData) { return; }
         auto dSize = ImGui::GetIO().DisplaySize;
         glViewport(0, 0, dSize.x, dSize.y);
         glClearColor(gui::themeManager.clearColor.x, gui::themeManager.clearColor.y, gui::themeManager.clearColor.z, gui::themeManager.clearColor.w);
         glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        ImGui_ImplOpenGL3_RenderDrawData(drawData);
         eglSwapBuffers(_EglDisplay, _EglSurface);
     }
 
@@ -340,6 +347,15 @@ namespace backend {
             }
 
             if (_EglDisplay == EGL_NO_DISPLAY) { continue; }
+
+            // Warm-restart race guard: TERM_WINDOW (processed in the poll
+            // batch above) calls backend::end() which destroys the ImGui
+            // context. If any path leaves pauseRendering false while the
+            // context is gone (e.g. INIT_WINDOW arriving in the same batch
+            // with a partially-failed doPartialInit), rendering a frame
+            // would SIGSEGV inside ImGui::GetDrawData(). Skip until a
+            // valid context exists again.
+            if (ImGui::GetCurrentContext() == nullptr) { continue; }
 
             if (!pauseRendering) {
                 // Initiate a new frame
