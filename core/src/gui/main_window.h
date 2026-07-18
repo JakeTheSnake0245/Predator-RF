@@ -172,6 +172,13 @@ private:
     predator::foxhunt::ReplayEngine foxhuntEngine;
     predator::foxhunt::TxDriver*    foxhuntOpenDriver = nullptr; // open device owner
     std::string foxhuntOpenDeviceId;        // id of the currently-open device
+    std::vector<predator::foxhunt::TxDeviceInfo> foxhuntDevices; // last Refresh
+    int    foxhuntDeviceIdx    = -1;        // selection into foxhuntDevices
+    predator::foxhunt::IQFile foxhuntLoadedFile;   // decoded IQ payload
+    std::string foxhuntLoadedPath;          // full path of the loaded file
+    std::vector<std::string> foxhuntFileList;      // IQ files in foxhuntFolder
+    double foxhuntFileListRefreshedAt = 0.0;
+    std::string foxhuntStatus;              // operator-facing status line
 #endif
 
     // Kujhad fleet console state. The role determines whether this

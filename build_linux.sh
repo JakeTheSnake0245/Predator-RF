@@ -16,6 +16,7 @@ MINIMAL=0
 DEPS_ONLY=0
 CLEAN=0
 KRAKEN=1
+FOXHUNT=1
 
 for arg in "$@"; do
     case "$arg" in
@@ -24,9 +25,11 @@ for arg in "$@"; do
         --clean)      CLEAN=1 ;;
         --kraken)     KRAKEN=1 ;;
         --no-kraken)  KRAKEN=0 ;;
+        --no-foxhunt) FOXHUNT=0 ;;
         -h|--help)
-            echo "Usage: $0 [--minimal] [--deps-only] [--clean] [--no-kraken]"
+            echo "Usage: $0 [--minimal] [--deps-only] [--clean] [--no-kraken] [--no-foxhunt]"
             echo "  --no-kraken  Exclude KrakenSDR LOB decoder + source modules from build"
+            echo "  --no-foxhunt Exclude the Fox Hunt TX tab + TX drivers (RX-only build)"
             exit 0 ;;
     esac
 done
@@ -151,6 +154,8 @@ CMAKE_OPTS=(
     # KrakenSDR LOB decoder (ON by default; disable with --no-kraken if not needed)
     -DOPT_BUILD_KRAKENSDR_LOB_DECODER=$([ "$KRAKEN" -eq 0 ] && echo OFF || echo ON)
     -DOPT_BUILD_KRAKENSDR_SOURCE=$([ "$KRAKEN" -eq 0 ] && echo OFF || echo ON)
+    # Fox Hunt TX tab (ON by default; disable with --no-foxhunt for RX-only build)
+    -DOPT_BUILD_FOXHUNT=$([ "$FOXHUNT" -eq 0 ] && echo OFF || echo ON)
     # Misc modules
     -DOPT_BUILD_FREQUENCY_MANAGER=ON
     -DOPT_BUILD_RECORDER=ON

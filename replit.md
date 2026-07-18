@@ -55,6 +55,7 @@ _Populate as you build_
 - `predator-rfctl/CMakeLists.txt`: Build config for `predator-rfctl`.
 - `web/`: Static web assets served by `predator-rfd`. `preview.html` is the canonical dashboard; copy or symlink it here for the installed package.
 - `docs/linux_web_frontend.md`: Build instructions, API reference, CLI usage, and parity contract for the web backend.
+- `core/src/predator/foxhunt/`: Fox Hunt TX — `tx_driver.h/.cpp` (driver interface + process-wide registry anchored in sdrpp_core) and `replay_engine.h` (header-only IQ/tone/CW replay worker). Drivers: `source_modules/soapy_source/src/foxhunt_tx.cpp` (SoapySDR TX, Linux/RPi) and `source_modules/plutosdr_source/src/foxhunt_tx.cpp` (libiio TX, the Android path). Tab UI in `main_window.cpp` (`PREDATOR_TAB_FOXHUNT`). Test: `g++ -std=c++17 -O2 -Icore/src tests/foxhunt_replay_engine_test.cpp -o /tmp/frt && /tmp/frt`. See `docs/foxhunt.md`.
 - `docs/`: Project documentation, including API contracts and integration guides.
 
 ## Architecture decisions
@@ -119,6 +120,12 @@ short list of what's covered there:
 ### C++ Predator UI
 - **Multi-VFO Hold + Hold decoder auto-activation (#5).** Two intertwined gotchas — `predatorHoldOnNewHit` (scan-side hold) vs `Predator M<n>` (per-hit marker VFO) vs `predatorHoldManager` (persistent multi-VFO hold list); plus the two-phase pre/post tick contract that lets `HoldDecoderBinder` auto-spawn `rtl433_decoder` instances against held VFOs without racing the dsp stream destructor. Sacred call order, in-band math sharing, cross-plugin binding registry, RTL433-only scope (#5.5/#5.6 deferred), and three architect-flagged hardenings (effective-bw consistency, external-delete recovery, drop-before-existsCb ordering) all live in `docs/predator_hold.md`. Read that before touching `core/src/predator/hold_*.{h,cpp}`, `decoder_modules/rtl433_decoder/src/main.cpp`, or the hold wire-up block in `core/src/gui/main_window.cpp`.
 
+### Fox Hunt TX
+- **`OPT_BUILD_FOXHUNT` gates ALL Fox Hunt code** (tab, engine, drivers). Default ON; forced OFF when `OPT_BACKEND_WEB=ON` so predator-rfd stays RX-only. `build_linux.sh --no-foxhunt` for an RX-only GUI build; Android passes `-DOPT_BUILD_FOXHUNT=ON` in build.gradle.
+- **Local-hardware-only TX.** The Kujhad HTTP / RNS cmd.v1 / web `/api/command` / control-socket `tx.*` hard-rejects are untouched — no remote peer can reach the Fox Hunt path. ARM state is never persisted (every launch starts disarmed).
+- **Drivers live inside existing source modules** (globbed `src/*.cpp`, `#ifdef`-guarded) so no new CMake target or Gradle native target exists; the registry singleton is anchored in `tx_driver.cpp` inside sdrpp_core to avoid one-instance-per-DSO.
+- Operator is responsible for TX legality (frequency, power, station ID); CW ID is a convenience, not compliance. See `docs/foxhunt.md`.
+
 ### Non-Kraken fleet TDOA hardening + DF capability
 - **System-clock gating.** When every TDOA participant is a system-clock node (`can_do_tdoa=False`, e.g. all-RTL fleets), a solve needs ≥3 distinct hearers (`SYSTEM_CLOCK_MIN_DISTINCT`) — 2-node hyperbolas are suppressed with measurements re-merged — and the resulting confidence is hard-capped at 0.35 (`SYSTEM_CLOCK_CONF_CAP`). Mirrored in C++ via `Measurement::hardware_timed` / `kSystemClockMinDistinct` / `kSystemClockConfCap` (defaults `hardware_timed=true` keep old callers unchanged). GPS freshness is still gated at record time. See `docs/tdoa_controller.md` item 6.
 - **DF capability summary.** `GET /api/v1/nodes/df_capability` (both backends) reports `df_mode` (lob|tdoa|rssi_only|none), LOB/TDOA counts, and an operator warning; the dashboard shows a DF header pill and a fleet-panel banner. LOB-capable = hardware_code contains "kraken" or a KRAKEN_LOB detector. Offline nodes never count.
@@ -155,6 +162,7 @@ short list of what's covered there:
 - `docs/linux_web_frontend.md`
 - `docs/tdoa_controller.md`
 - `docs/predator_hold.md`
+- `docs/foxhunt.md`
 - `docs/custody_election.md`
 - `docs/stationarity_gate.md`
 - `docs/rns_commanding.md`

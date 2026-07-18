@@ -53,6 +53,7 @@ option(OPT_BUILD_RADIO "Main audio modulation decoder (AM, FM, SSB, etc...)" ON)
 option(OPT_BUILD_WEATHER_SAT_DECODER "Build the HRPT decoder module (no dependencies required)" OFF)
 
 # Misc
+option(OPT_BUILD_FOXHUNT "Build the Fox Hunt TX tab + local TX drivers (forced OFF for the headless web backend)" ON)
 option(OPT_BUILD_DISCORD_PRESENCE "Build the Discord Rich Presence module" ON)
 option(OPT_BUILD_FREQUENCY_MANAGER "Build the Frequency Manager module" ON)
 option(OPT_BUILD_RECORDER "Audio and baseband recorder" ON)
@@ -64,6 +65,16 @@ option(OPT_BUILD_SCHEDULER "Build the scheduler" OFF)
 # Other options
 option(USE_INTERNAL_LIBCORRECT "Use an internal version of libcorrect" ON)
 option(USE_BUNDLE_DEFAULTS "Set the default resource and module directories to the right ones for a MacOS .app" OFF)
+
+# Fox Hunt TX is a GUI-only, local-hardware-only feature. The headless web
+# backend (predator-rfd) keeps a strictly RX-only surface, so the flag is
+# forced OFF there regardless of what the caller passed.
+if (OPT_BACKEND_WEB)
+    set(OPT_BUILD_FOXHUNT OFF)
+endif ()
+if (OPT_BUILD_FOXHUNT)
+    add_compile_definitions(OPT_BUILD_FOXHUNT)
+endif ()
 
 # Module cmake path
 set(SDRPP_MODULE_CMAKE "${CMAKE_SOURCE_DIR}/sdrpp_module.cmake")

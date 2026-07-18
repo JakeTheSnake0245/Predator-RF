@@ -322,7 +322,10 @@ void MainWindow::init() {
         foxhuntCwIdEnabled  = cfg.value("foxhuntCwIdEnabled", false);
         foxhuntCwIdPeriodSec = std::clamp<double>(cfg.value("foxhuntCwIdPeriodSec", 600.0), 30.0, 3600.0);
         foxhuntCwWpm        = std::clamp<int>(cfg.value("foxhuntCwWpm", 20), 5, 60);
-        foxhuntDeadManSec   = std::clamp<double>(cfg.value("foxhuntDeadManSec", 600.0), 10.0, 7200.0);
+        // 0 = dead-man disabled (matches the UI field "0=off"); nonzero values
+        // are clamped to a sane 10 s floor so a typo can't create a 1 s cutoff.
+        foxhuntDeadManSec   = std::clamp<double>(cfg.value("foxhuntDeadManSec", 600.0), 0.0, 7200.0);
+        if (foxhuntDeadManSec > 0.0 && foxhuntDeadManSec < 10.0) { foxhuntDeadManSec = 10.0; }
         foxhuntSourceMode   = std::clamp<int>(cfg.value("foxhuntSourceMode", 0), 0, 2);
         foxhuntFolder       = cfg.value("foxhuntFolder", std::string(""));
         if (foxhuntFolder.empty()) {
@@ -8415,6 +8418,338 @@ void MainWindow::draw() {
                 }
             }
         }
+#ifdef OPT_BUILD_FOXHUNT
+        else if (predatorTab == PREDATOR_TAB_FOXHUNT) {
+            float fw = ImGui::GetContentRegionAvail().x;
+            auto engStatus = foxhuntEngine.status();
+            bool txRunning = foxhuntEngine.running();
+
+            auto foxhuntStopTx = [&]() {
+                foxhuntEngine.stop();               // joins worker, calls injected stopFn
+                if (foxhuntOpenDriver) { foxhuntOpenDriver->stop(); }
+            };
+
+            auto refreshFoxhuntFileList = [&]() {
+                foxhuntFileList.clear();
+                std::error_code ec;
+                for (auto& e : std::filesystem::directory_iterator(foxhuntFolder, ec)) {
+                    if (!e.is_regular_file()) { continue; }
+                    std::string ext = e.path().extension().string();
+                    for (auto& c : ext) { c = (char)std::tolower((unsigned char)c); }
+                    if (ext == ".wav" || ext == ".cf32" || ext == ".fc32" || ext == ".raw"
+                        || ext == ".cs16" || ext == ".sc16") {
+                        foxhuntFileList.push_back(e.path().string());
+                    }
+                }
+                std::sort(foxhuntFileList.begin(), foxhuntFileList.end());
+            };
+
+            // ── Legal banner ─────────────────────────────────────────────────
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.25f, 1.0f));
+            ImGui::TextWrapped("%s", T("LOCAL TX ONLY. You are responsible for the legality of every transmission (frequency, power, station ID)."));
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+
+            // ── TX Device ────────────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("TX Device"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                auto drivers = predator::foxhunt::TxDriverRegistry::instance().list();
+                if (drivers.empty()) {
+                    ImGui::TextWrapped("%s", T("No TX drivers in this build (SoapySDR / PlutoSDR modules missing)."));
+                }
+                ImGui::BeginDisabled(txRunning);
+                if (ImGui::Button(T("Refresh Devices##fox"), ImVec2(fw, 0))) {
+                    foxhuntDevices.clear();
+                    for (auto* d : drivers) {
+                        auto devs = d->enumerate();
+                        foxhuntDevices.insert(foxhuntDevices.end(), devs.begin(), devs.end());
+                    }
+                    if (foxhuntDeviceIdx >= (int)foxhuntDevices.size()) { foxhuntDeviceIdx = -1; }
+                    if (foxhuntDeviceIdx < 0 && !foxhuntDevices.empty()) { foxhuntDeviceIdx = 0; }
+                    foxhuntStatus = foxhuntDevices.empty() ? T("No TX-capable devices found") : "";
+                }
+                for (int di = 0; di < (int)foxhuntDevices.size(); di++) {
+                    auto& dev = foxhuntDevices[di];
+                    ImGui::PushID(di);
+                    bool sel = (di == foxhuntDeviceIdx);
+                    std::string label = dev.name + "  [" + dev.driver + "]";
+                    if (ImGui::RadioButton(label.c_str(), sel)) { foxhuntDeviceIdx = di; }
+                    ImGui::PopID();
+                }
+                if (foxhuntDeviceIdx >= 0 && foxhuntDeviceIdx < (int)foxhuntDevices.size()) {
+                    auto& dev = foxhuntDevices[foxhuntDeviceIdx];
+                    char rangeBuf[128];
+                    snprintf(rangeBuf, sizeof(rangeBuf), "Gain %.0f..%.0f dB", dev.minGainDb, dev.maxGainDb);
+                    ImGui::TextDisabled("%s", rangeBuf);
+                    if (dev.hasPowerEstimate) {
+                        snprintf(rangeBuf, sizeof(rangeBuf), "~%.0f dBm max output (informational)", dev.estMaxPowerDbm);
+                        ImGui::TextDisabled("%s", rangeBuf);
+                    }
+                }
+                ImGui::EndDisabled();
+            }
+
+            // ── Source ───────────────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Source"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::BeginDisabled(txRunning);
+                if (ImGui::RadioButton(T("IQ File##foxsrc"), foxhuntSourceMode == 0)) foxhuntSourceMode = 0;
+                ImGui::SameLine(0, 12.0f * style::uiScale);
+                if (ImGui::RadioButton(T("Tone##foxsrc"), foxhuntSourceMode == 1)) foxhuntSourceMode = 1;
+                ImGui::SameLine(0, 12.0f * style::uiScale);
+                if (ImGui::RadioButton(T("CW Beacon##foxsrc"), foxhuntSourceMode == 2)) foxhuntSourceMode = 2;
+
+                if (foxhuntSourceMode == 0) {
+                    ImGui::TextDisabled("%s", T("IQ Folder"));
+                    {
+                        ImGui::PushID("##fox_folder_btn");
+                        const char* prev = foxhuntFolder.empty() ? T("(tap to set folder)") : foxhuntFolder.c_str();
+                        if (ImGui::Button(prev, ImVec2(fw, 0))) {
+                            std::string* dst = &foxhuntFolder;
+                            openPendEdit(T("IQ Folder"), foxhuntFolder, [dst](std::string s) { *dst = s; });
+                        }
+                        ImGui::PopID();
+                    }
+                    double now = ImGui::GetTime();
+                    if (now - foxhuntFileListRefreshedAt > 2.0) {
+                        refreshFoxhuntFileList();
+                        foxhuntFileListRefreshedAt = now;
+                    }
+                    if (foxhuntFileList.empty()) {
+                        ImGui::TextDisabled("%s", T("No IQ files (.wav .cf32 .cs16 .raw) in folder."));
+                    }
+                    for (auto& fpath : foxhuntFileList) {
+                        std::string fname = std::filesystem::path(fpath).filename().string();
+                        ImGui::PushID(fpath.c_str());
+                        bool isLoaded = (fpath == foxhuntLoadedPath);
+                        if (ImGui::RadioButton(fname.c_str(), isLoaded) && !isLoaded) {
+                            auto loaded = predator::foxhunt::loadIQFile(fpath);
+                            if (loaded.ok()) {
+                                foxhuntLoadedFile = std::move(loaded);
+                                foxhuntLoadedPath = fpath;
+                                if (foxhuntLoadedFile.sampleRate > 0.0) {
+                                    foxhuntSampleRate = foxhuntLoadedFile.sampleRate;
+                                }
+                                foxhuntStatus = "";
+                            } else {
+                                foxhuntStatus = std::string(T("File load failed: ")) + loaded.error;
+                            }
+                        }
+                        ImGui::PopID();
+                    }
+                    if (!foxhuntLoadedPath.empty() && foxhuntLoadedFile.ok()) {
+                        char infoBuf[160];
+                        snprintf(infoBuf, sizeof(infoBuf), "%zu samples | %.0f S/s%s",
+                                 foxhuntLoadedFile.samples.size(),
+                                 foxhuntLoadedFile.sampleRate > 0.0 ? foxhuntLoadedFile.sampleRate : foxhuntSampleRate,
+                                 foxhuntLoadedFile.sampleRate > 0.0 ? "" : " (rate unknown — using manual rate)");
+                        ImGui::TextDisabled("%s", infoBuf);
+                        if (foxhuntLoadedFile.clipFraction > 0.0) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.25f, 1.0f));
+                            char clipBuf[96];
+                            snprintf(clipBuf, sizeof(clipBuf), "CLIPPING: %.2f%% of samples at full scale", foxhuntLoadedFile.clipFraction * 100.0);
+                            ImGui::TextWrapped("%s", clipBuf);
+                            ImGui::PopStyleColor();
+                        }
+                    }
+                }
+                if (foxhuntSourceMode == 2 || foxhuntCwIdEnabled) {
+                    ImGui::TextDisabled("%s", T("Callsign (CW)"));
+                    ImGui::PushID("##fox_callsign_btn");
+                    const char* csPrev = foxhuntCallsign.empty() ? T("(tap to set callsign)") : foxhuntCallsign.c_str();
+                    if (ImGui::Button(csPrev, ImVec2(fw, 0))) {
+                        std::string* dst = &foxhuntCallsign;
+                        openPendEdit(T("Callsign"), foxhuntCallsign, [dst](std::string s) { *dst = s; });
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndDisabled();
+            }
+
+            // ── TX Parameters ────────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("TX Parameters"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::BeginDisabled(txRunning);
+                drawEditDoubleButtonNumeric(T("Frequency (MHz)"), foxhuntFreqMhz, "%.4f MHz",
+                    [&](double v) { foxhuntFreqMhz = std::clamp(v, 0.1, 6000.0); });
+                {
+                    float bwKhz = (float)foxhuntBandwidthKhz;
+                    ImGui::LeftLabel(T("Bandwidth"));
+                    ImGui::SetNextItemWidth(fw * 0.55f);
+                    if (ImGui::SliderFloat("##foxbw", &bwKhz, 1.0f, 5000.0f, "%.0f kHz", ImGuiSliderFlags_Logarithmic)) {
+                        foxhuntBandwidthKhz = (double)bwKhz;
+                    }
+                }
+                if (foxhuntSourceMode != 0 || foxhuntLoadedFile.sampleRate <= 0.0) {
+                    drawEditDoubleButtonNumeric(T("Sample Rate (S/s)"), foxhuntSampleRate, "%.0f S/s",
+                        [&](double v) { foxhuntSampleRate = std::clamp(v, 100000.0, 61440000.0); });
+                }
+                ImGui::EndDisabled();
+                {
+                    // Gain stays live while transmitting (driver setGain contract).
+                    double gmin = 0.0, gmax = 60.0;
+                    if (foxhuntDeviceIdx >= 0 && foxhuntDeviceIdx < (int)foxhuntDevices.size()) {
+                        gmin = foxhuntDevices[foxhuntDeviceIdx].minGainDb;
+                        gmax = foxhuntDevices[foxhuntDeviceIdx].maxGainDb;
+                        if (gmax <= gmin) { gmax = gmin + 60.0; }
+                    }
+                    float g = (float)std::clamp(foxhuntGainDb, gmin, gmax);
+                    ImGui::LeftLabel(T("TX Gain"));
+                    ImGui::SetNextItemWidth(fw * 0.55f);
+                    if (ImGui::SliderFloat("##foxgain", &g, (float)gmin, (float)gmax, "%.1f dB")) {
+                        foxhuntGainDb = (double)g;
+                        if (txRunning && foxhuntOpenDriver) { foxhuntOpenDriver->setGain(foxhuntGainDb); }
+                    }
+                }
+                ImGui::BeginDisabled(txRunning);
+                ImGui::Checkbox(T("Repeat##fox"), &foxhuntRepeat);
+                if (foxhuntRepeat) {
+                    ImGui::SameLine(0, 12.0f * style::uiScale);
+                    ImGui::Checkbox(T("Duty Cycle##fox"), &foxhuntDutyEnabled);
+                    if (foxhuntDutyEnabled) {
+                        drawEditDoubleButtonNumeric(T("TX seconds"), foxhuntDutyOnSec, "%.0f s",
+                            [&](double v) { foxhuntDutyOnSec = std::clamp(v, 1.0, 3600.0); });
+                        drawEditDoubleButtonNumeric(T("Silent seconds"), foxhuntDutyOffSec, "%.0f s",
+                            [&](double v) { foxhuntDutyOffSec = std::clamp(v, 1.0, 3600.0); });
+                    }
+                }
+                if (foxhuntSourceMode != 2) {
+                    ImGui::Checkbox(T("Periodic CW ID##fox"), &foxhuntCwIdEnabled);
+                    if (foxhuntCwIdEnabled) {
+                        drawEditDoubleButtonNumeric(T("ID period (s)"), foxhuntCwIdPeriodSec, "%.0f s",
+                            [&](double v) { foxhuntCwIdPeriodSec = std::clamp(v, 30.0, 3600.0); });
+                    }
+                }
+                drawEditDoubleButtonNumeric(T("Dead-man timer (s, 0=off)"), foxhuntDeadManSec, "%.0f s",
+                    [&](double v) {
+                        foxhuntDeadManSec = std::clamp(v, 0.0, 7200.0);
+                        // Same floor rule as config load: 0 = off, else >= 10 s.
+                        if (foxhuntDeadManSec > 0.0 && foxhuntDeadManSec < 10.0) { foxhuntDeadManSec = 10.0; }
+                    });
+                ImGui::EndDisabled();
+            }
+
+            // ── ARM / TRANSMIT ───────────────────────────────────────────────
+            ImGui::Separator();
+            {
+                bool armed = foxhuntArmed;
+                ImGui::PushStyleColor(ImGuiCol_Text, armed ? ImVec4(1.0f, 0.35f, 0.30f, 1.0f) : ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+                if (ImGui::Checkbox(T("ARM TRANSMITTER##fox"), &armed)) {
+                    foxhuntArmed = armed;
+                    if (!armed && txRunning) { foxhuntStopTx(); }
+                }
+                ImGui::PopStyleColor();
+            }
+
+            if (!txRunning) {
+                bool deviceOk = foxhuntDeviceIdx >= 0 && foxhuntDeviceIdx < (int)foxhuntDevices.size();
+                bool sourceOk = (foxhuntSourceMode == 0) ? (foxhuntLoadedFile.ok() && !foxhuntLoadedFile.samples.empty())
+                              : (foxhuntSourceMode == 2) ? !foxhuntCallsign.empty()
+                              : true;
+                ImGui::BeginDisabled(!foxhuntArmed || !deviceOk || !sourceOk);
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.70f, 0.18f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.22f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.60f, 0.15f, 0.15f, 1.0f));
+                if (ImGui::Button(T("▶  TRANSMIT##fox"), ImVec2(fw, 0))) {
+                    auto& dev = foxhuntDevices[foxhuntDeviceIdx];
+                    predator::foxhunt::TxDriver* drv = predator::foxhunt::TxDriverRegistry::instance().byKey(dev.driver);
+                    std::string err;
+                    if (!drv) {
+                        foxhuntStatus = T("Driver no longer available");
+                    }
+                    else if (foxhuntOpenDriver && (foxhuntOpenDriver != drv || foxhuntOpenDeviceId != dev.id)) {
+                        // Switching devices: release the previously-open one first.
+                        foxhuntOpenDriver->close();
+                        foxhuntOpenDriver = nullptr;
+                        foxhuntOpenDeviceId.clear();
+                    }
+                    if (drv) {
+                        bool opened = (foxhuntOpenDriver == drv && foxhuntOpenDeviceId == dev.id);
+                        if (!opened) {
+                            opened = drv->open(dev, err);
+                            if (opened) { foxhuntOpenDriver = drv; foxhuntOpenDeviceId = dev.id; }
+                            else { foxhuntStatus = std::string(T("Open failed: ")) + err; }
+                        }
+                        double rate = (foxhuntSourceMode == 0 && foxhuntLoadedFile.sampleRate > 0.0)
+                                          ? foxhuntLoadedFile.sampleRate : foxhuntSampleRate;
+                        double gainClamped = std::clamp(foxhuntGainDb, dev.minGainDb, std::max(dev.minGainDb, dev.maxGainDb));
+                        if (opened && !drv->start(foxhuntFreqMhz * 1e6, rate, foxhuntBandwidthKhz * 1e3, gainClamped, err)) {
+                            foxhuntStatus = std::string(T("TX start failed: ")) + err;
+                            opened = false;
+                        }
+                        if (opened) {
+                            predator::foxhunt::EngineConfig ecfg;
+                            ecfg.source = (foxhuntSourceMode == 1) ? predator::foxhunt::TxSource::TONE
+                                        : (foxhuntSourceMode == 2) ? predator::foxhunt::TxSource::CW_BEACON
+                                                                   : predator::foxhunt::TxSource::FILE_IQ;
+                            if (ecfg.source == predator::foxhunt::TxSource::FILE_IQ) {
+                                ecfg.fileSamples = foxhuntLoadedFile.samples;
+                            }
+                            ecfg.sampleRate   = rate;
+                            ecfg.repeat       = foxhuntRepeat;
+                            ecfg.dutyEnabled  = foxhuntDutyEnabled;
+                            ecfg.dutyOnSec    = foxhuntDutyOnSec;
+                            ecfg.dutyOffSec   = foxhuntDutyOffSec;
+                            ecfg.callsign     = foxhuntCallsign;
+                            ecfg.cwIdEnabled  = foxhuntCwIdEnabled && foxhuntSourceMode != 2;
+                            ecfg.cwIdPeriodSec = foxhuntCwIdPeriodSec;
+                            ecfg.cwWpm        = foxhuntCwWpm;
+                            ecfg.deadManSec   = foxhuntDeadManSec;
+                            if (!foxhuntEngine.start(std::move(ecfg),
+                                    [drv](const std::complex<float>* s, int n) { return drv->write(s, n); },
+                                    [drv]() { drv->stop(); })) {
+                                foxhuntStatus = T("Engine start refused (bad config)");
+                                drv->stop();
+                            } else {
+                                foxhuntStatus = "";
+                                savePredatorState();
+                            }
+                        }
+                    }
+                }
+                ImGui::PopStyleColor(3);
+                ImGui::EndDisabled();
+                if (!foxhuntArmed) { ImGui::TextDisabled("%s", T("Flip ARM to enable transmit.")); }
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.18f, 0.55f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.65f, 0.26f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.18f, 1.0f));
+                if (ImGui::Button(T("■  STOP TX##fox"), ImVec2(fw, 0))) {
+                    foxhuntStopTx();
+                }
+                ImGui::PopStyleColor(3);
+                char liveBuf[192];
+                const char* stateStr =
+                    engStatus.state == predator::foxhunt::TxState::TRANSMITTING ? "TRANSMITTING"
+                    : engStatus.state == predator::foxhunt::TxState::DUTY_SILENT ? "SILENT (duty)"
+                    : "…";
+                snprintf(liveBuf, sizeof(liveBuf), "%s | %.0f s elapsed | %.0f s carrier", stateStr, engStatus.elapsedSec, engStatus.txSec);
+                ImGui::TextWrapped("%s", liveBuf);
+                if (engStatus.nextBurstInSec >= 0.0) {
+                    snprintf(liveBuf, sizeof(liveBuf), "Next burst in %.0f s", engStatus.nextBurstInSec);
+                    ImGui::TextDisabled("%s", liveBuf);
+                }
+                if (engStatus.nextIdInSec >= 0.0) {
+                    snprintf(liveBuf, sizeof(liveBuf), "Next CW ID in %.0f s", engStatus.nextIdInSec);
+                    ImGui::TextDisabled("%s", liveBuf);
+                }
+            }
+
+            // Terminal engine states / errors
+            if (!txRunning && engStatus.state == predator::foxhunt::TxState::STOPPED_DEADMAN) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.25f, 1.0f));
+                ImGui::TextWrapped("%s", T("Dead-man timer expired — TX stopped."));
+                ImGui::PopStyleColor();
+            }
+            if (!txRunning && engStatus.state == predator::foxhunt::TxState::STOPPED_ERROR) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.30f, 1.0f));
+                std::string emsg = std::string(T("TX error: ")) + engStatus.error;
+                ImGui::TextWrapped("%s", emsg.c_str());
+                ImGui::PopStyleColor();
+            }
+            if (!foxhuntStatus.empty()) {
+                ImGui::Spacing();
+                ImGui::TextWrapped("%s", foxhuntStatus.c_str());
+            }
+        }
+#endif
 
         applyTouchScroll();
         ImGui::EndChild();
