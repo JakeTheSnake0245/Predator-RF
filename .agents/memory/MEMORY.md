@@ -3,3 +3,4 @@
 - [C++ compile checks in Replit](cpp-compile-checks-replit.md) — stub volk/fftw3 headers to -fsyntax-only the web backend TU; compare error counts vs git baseline (4 pre-existing stub-only errors).
 - [WebView JS bridge escaping](webview-js-bridge-escaping.md) — use JSONObject.quote() for evaluateJavascript payloads; manual quote-replace is an injection surface.
 - [Field deployment gaps](field-deployment-gaps.md) — prioritized gap list from the 6-node cellular trace (no non-Kraken bearings, no fusion identity gate, no node disk persistence, no failover) + overlay/tailnet transport facts.
+- [Kujhad spectrum liveness](kujhad-spectrum-liveness.md) — never gate the local FFT snapshot/serial on the device-server toggle; overlay fallback depends on it. Change-detect peer view snaps or drags fight.

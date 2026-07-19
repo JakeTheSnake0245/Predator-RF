@@ -387,11 +387,15 @@ void MainWindow::releaseFFTBuffer(void* ctx) {
         int   n   = self->kujhadLastAcquiredSize;
         float* buf = self->kujhadLastAcquiredBuf;
 
-        // 1) Snapshot the freshly written local FFT row for the device
-        //    server, but only when the device server is actually enabled
-        //    (the controller may not be hosting). Done before any peer
-        //    overwrite below, so peers see TRUE local SDR data.
-        if (self->kujhadDeviceServerEnabled) {
+        // 1) Snapshot the freshly written local FFT row. This runs
+        //    UNCONDITIONALLY (not just when the device server is hosting):
+        //    the overlay fallback on the UI thread uses this snapshot and
+        //    the serial as its local-FFT liveness signal, so gating it on
+        //    the server toggle broke overlay on controller-only phones.
+        //    The device server merely reads the same cache when enabled.
+        //    Done before any peer overwrite below, so peers see TRUE
+        //    local SDR data.
+        {
             std::lock_guard<std::mutex> lk(self->kujhadSpectrumMtx);
             if ((int)self->kujhadSpectrumRaw.size() != n) {
                 self->kujhadSpectrumRaw.assign(n, -150.0f);
@@ -3871,6 +3875,68 @@ void MainWindow::draw() {
             kujhadMirrorBannerActive = true;
             kujhadMirrorPeerName = readJsonString(kujhadActivePeers[kujhadActivePeerIdx], "name", "peer");
             kujhadMirroredFromPeerIdx = kujhadActivePeerIdx;
+
+            // Fallback: the FFT-thread blend only runs when the LOCAL SDR
+            // is pushing rows. If the local source is stopped (or not yet
+            // started) the waterfall would freeze and the overlay would
+            // never appear. So, like mirror mode, push one row from the
+            // UI thread per new peer serial — but only while the local
+            // FFT serial is NOT advancing, so we never double-scroll a
+            // live local waterfall. The row is the cached last local raw
+            // row (or the floor when none exists) with the peer slice
+            // max-blended in at its true frequencies.
+            static uint64_t overlayLastPushedPeerSerial = 0;
+            static uint64_t overlayLastSeenLocalSerial  = 0;
+            uint64_t localSerialNow;
+            {
+                std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+                localSerialNow = kujhadSpectrumLocalSerial;
+            }
+            bool localAlive = (localSerialNow != overlayLastSeenLocalSerial);
+            overlayLastSeenLocalSerial = localSerialNow;
+            if (!localAlive && frame.serial != overlayLastPushedPeerSerial) {
+                overlayLastPushedPeerSerial = frame.serial;
+                int dst = gui::waterfall.getRawFFTSize();
+                float* buf = gui::waterfall.getFFTBuffer();
+                if (buf && dst > 0) {
+                    double lc = gui::waterfall.getCenterFrequency();
+                    double lbw = gui::waterfall.getBandwidth();
+                    {
+                        std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+                        int rawN = kujhadSpectrumHaveRaw ? (int)kujhadSpectrumRaw.size() : 0;
+                        if (rawN > 0) {
+                            for (int i = 0; i < dst; i++) {
+                                int j = (int)((double)i * (double)rawN / (double)dst);
+                                if (j >= rawN) j = rawN - 1;
+                                buf[i] = kujhadSpectrumRaw[j];
+                            }
+                        }
+                        else {
+                            std::fill(buf, buf + dst, -150.0f);
+                        }
+                    }
+                    int peerN = (int)frame.bins.size();
+                    if (peerN > 0 && lbw > 0.0 && frame.bandwidth > 0.0) {
+                        double lLo = lc - lbw / 2.0;
+                        double pLo = frame.centerFreq - frame.bandwidth / 2.0;
+                        double pHi = frame.centerFreq + frame.bandwidth / 2.0;
+                        for (int i = 0; i < dst; i++) {
+                            double f = lLo + ((double)i + 0.5) * lbw / (double)dst;
+                            if (f < pLo || f > pHi) continue;
+                            double t = (f - pLo) / frame.bandwidth * (peerN - 1);
+                            int i0 = (int)t;
+                            if (i0 < 0) i0 = 0;
+                            if (i0 > peerN - 1) i0 = peerN - 1;
+                            int i1 = std::min(i0 + 1, peerN - 1);
+                            float fr = (float)(t - i0);
+                            float pv = frame.bins[i0] * (1.0f - fr)
+                                     + frame.bins[i1] * fr;
+                            if (pv > buf[i]) buf[i] = pv;
+                        }
+                    }
+                }
+                gui::waterfall.pushFFT();
+            }
         }
         else {
             kujhadOverlayActive.store(false, std::memory_order_release);
@@ -3889,18 +3955,35 @@ void MainWindow::draw() {
             // First-frame capture: snapshot the operator's current local
             // waterfall view BEFORE we retune to the peer's center/BW,
             // so toggling mirror off can restore exactly that state.
-            if (!kujhadLocalViewSaved) {
+            bool freshMirrorEntry = !kujhadLocalViewSaved;
+            if (freshMirrorEntry) {
                 kujhadLocalSavedCenter = gui::waterfall.getCenterFrequency();
                 kujhadLocalSavedBW     = gui::waterfall.getBandwidth();
                 kujhadLocalSavedViewBW = gui::waterfall.getViewBandwidth();
                 kujhadLocalViewSaved   = true;
             }
-            // Always retune the waterfall to the peer's view so the axis
-            // labels match what we are now displaying. Cheap idempotent ops.
-            if (gui::waterfall.getCenterFrequency() != frame.centerFreq) {
+            // Retune the waterfall to the peer's view so the axis labels
+            // match what we are displaying — but ONLY when the peer's
+            // reported view actually changed. Re-applying it every frame
+            // fought the operator's drag gesture (each frame snapped the
+            // axis back to the peer's old center, so sliding to drive the
+            // peer was impossible). With change-detection, a drag moves
+            // the axis freely, requestTune() fires, and the axis settles
+            // on the peer's confirmed center when the next frame arrives.
+            static double mirrorAppliedCenter = -1.0;
+            static double mirrorAppliedBW     = -1.0;
+            if (freshMirrorEntry) {
+                // New mirror session: force the initial snap even if the
+                // peer's view hasn't changed since the last session.
+                mirrorAppliedCenter = -1.0;
+                mirrorAppliedBW     = -1.0;
+            }
+            if (frame.centerFreq != mirrorAppliedCenter) {
+                mirrorAppliedCenter = frame.centerFreq;
                 gui::waterfall.setCenterFrequency(frame.centerFreq);
             }
-            if (gui::waterfall.getBandwidth() != frame.bandwidth) {
+            if (frame.bandwidth != mirrorAppliedBW) {
+                mirrorAppliedBW = frame.bandwidth;
                 gui::waterfall.setBandwidth(frame.bandwidth);
                 gui::waterfall.setViewBandwidth(frame.bandwidth);
             }
