@@ -79,8 +79,47 @@ Enable in **Module Manager**.  Configure in the module panel:
 | Port | `8082` | krakensdr_doa WebSocket port |
 | Path | `/ws` | WebSocket path |
 | Node ID | `kraken-0` | Device ID sent when JSON `node_id` is empty |
+| Ctl Port | `8042` | krakensdr_doa remote-control HTTP API (same host) |
 
 A green `● Connected` indicator confirms the WebSocket link is live.
+
+### Remote frequency control (Kraken Control)
+
+The module panel has a **Kraken Control (RX retune)** section that drives
+the krakensdr_doa headless settings API (`core/src/predator/kraken_ctl_client.h`):
+
+```
+GET  http://<host>:8042/settings   → full settings JSON ("center_freq" in Hz)
+POST http://<host>:8042/settings   → full patched blob, "ext_upd_flag": true
+```
+
+Contract (the DOA engine rejects partial blobs):
+
+1. GET the full settings blob.
+2. Patch **only** `center_freq` + set `ext_upd_flag: true`.
+3. POST the complete blob back.
+4. Poll GET `/settings` until the read-back `center_freq` matches
+   (±1 Hz) or a 30 s timeout expires.
+
+Retune takes **several seconds** — changing `center_freq` triggers an
+automatic coherent-calibration cycle. The panel shows the full
+lifecycle: `Sending… → Calibrating… → Tune confirmed / Tune failed`,
+plus the current Kraken frequency read back every 3 s while the control
+link is on. Success is only reported after readback verification —
+never assume instant success.
+
+Panel controls:
+
+- **Start/Stop Control** — toggles the background control client
+  (config keys `krakenCtlEnabled`, `krakenCtlPort`; host is shared
+  with the WebSocket ingest setting).
+- Frequency field (MHz, IME-safe) + **Tune Kraken** — retune to the
+  entered frequency.
+- **Tune to VFO** — one-click retune to the current SDR++ VFO
+  frequency.
+
+The tune inputs are disabled while a tune is in flight. This is an
+RX-only retune of a passive DF array — no transmit path exists.
 
 ### krakensdr_source module
 
@@ -304,10 +343,14 @@ g++ -std=c++17 -O2 -Icore/src tests/kraken_lob_test.cpp \
     -o /tmp/kraken_lob_test && /tmp/kraken_lob_test
 ```
 
-14 test cases covering: well-formed message → event populated, non-`doa_result`
+20 test cases covering: well-formed message → event populated, non-`doa_result`
 type suppression, missing field suppression, invalid JSON suppression,
 confidence clamping, bearing range validation, node ID from JSON,
-config override node ID, frequency/power/SNR storage.
+config override node ID, frequency/power/SNR storage, plus the Kraken
+control client pure logic: settings patch (center_freq + ext_upd_flag,
+full-blob passthrough), non-object rejection, center_freq extraction,
+readback frequency match tolerance, HTTP response parsing, and the
+GET→patch→serialize→readback round trip.
 
 ## Known Limitations and Footguns
 
@@ -343,3 +386,13 @@ config override node ID, frequency/power/SNR storage.
    bridge) but not direct USB KrakenSDR access.  The array must run
    `krakensdr_doa` on a companion RPi reachable over Wi-Fi/LAN from the
    Android device.
+
+6. **Remote retune interrupts DOA output.**
+   POSTing a new `center_freq` (with `ext_upd_flag: true`) restarts the
+   coherent-calibration cycle — `doa_result` messages stop for several
+   seconds and any in-progress crosscut goes stale.  The control client
+   only reports success after readback verification; if the panel shows
+   `Tune failed`, check that port 8042 is reachable (firewall on the
+   KrakenSDR RPi) and that krakensdr_doa is a version that exposes the
+   headless settings API.  Only `center_freq` is controlled remotely;
+   gain and every other setting must be changed on the Kraken web UI.

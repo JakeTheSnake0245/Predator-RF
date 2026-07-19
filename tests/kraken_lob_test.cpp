@@ -27,6 +27,7 @@
 
 // Pull in the full decoder_ingest.h header (header-only library).
 #include "../core/src/predator/decoder_ingest.h"
+#include "../core/src/predator/kraken_ctl_client.h"
 
 // ── Minimal assert helpers ───────────────────────────────────────────────────
 
@@ -243,6 +244,79 @@ void test_multiple_sequential_messages() {
     }
 }
 
+// ── Kraken control client (kraken_ctl_client.h pure logic) ──────────────────
+
+void test_ctl_patch_settings_sets_freq_and_flag() {
+    nlohmann::json settings = {
+        {"center_freq", 433920000.0},
+        {"gain", 30.0},
+        {"ext_upd_flag", false},
+        {"ant_arrangement", "UCA"}
+    };
+    auto out = predator::krakenPatchSettings(settings, 868300000.0);
+    CHECK(out.is_object());
+    CHECK_NEAR(out.value("center_freq", 0.0), 868300000.0, 0.001);
+    CHECK_EQ(out.value("ext_upd_flag", false), true);
+    // All other keys pass through untouched (full-blob contract).
+    CHECK_NEAR(out.value("gain", 0.0), 30.0, 0.001);
+    CHECK_EQ(out.value("ant_arrangement", std::string()), "UCA");
+    CHECK_EQ(out.size(), settings.size());
+}
+
+void test_ctl_patch_settings_rejects_non_object() {
+    CHECK(predator::krakenPatchSettings(nlohmann::json::array(), 1e8).is_null());
+    CHECK(predator::krakenPatchSettings(nlohmann::json(), 1e8).is_null());
+    CHECK(predator::krakenPatchSettings(nlohmann::json(42), 1e8).is_null());
+}
+
+void test_ctl_settings_center_freq_extraction() {
+    nlohmann::json ok = {{"center_freq", 145500000.0}};
+    CHECK_NEAR(predator::krakenSettingsCenterFreq(ok), 145500000.0, 0.001);
+    nlohmann::json missing = {{"gain", 30.0}};
+    CHECK_NEAR(predator::krakenSettingsCenterFreq(missing), 0.0, 0.001);
+    nlohmann::json wrongType = {{"center_freq", "145.5M"}};
+    CHECK_NEAR(predator::krakenSettingsCenterFreq(wrongType), 0.0, 0.001);
+    CHECK_NEAR(predator::krakenSettingsCenterFreq(nlohmann::json()), 0.0, 0.001);
+}
+
+void test_ctl_freq_match_tolerance() {
+    CHECK(predator::krakenFreqMatches(433920000.0, 433920000.0));
+    CHECK(predator::krakenFreqMatches(433920000.5, 433920000.0));  // ≤1 Hz slack
+    CHECK(!predator::krakenFreqMatches(433920002.0, 433920000.0)); // >1 Hz off
+    CHECK(!predator::krakenFreqMatches(0.0, 433920000.0));         // no readback
+}
+
+void test_ctl_http_response_parse() {
+    std::string body;
+    int st = predator::krakenParseHttpResponse(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"center_freq\":1.0}", body);
+    CHECK_EQ(st, 200);
+    CHECK_EQ(body, "{\"center_freq\":1.0}");
+
+    st = predator::krakenParseHttpResponse("HTTP/1.1 404 Not Found\r\n\r\n", body);
+    CHECK_EQ(st, 404);
+    CHECK_EQ(body, "");
+
+    st = predator::krakenParseHttpResponse("garbage not http", body);
+    CHECK_EQ(st, 0);
+
+    st = predator::krakenParseHttpResponse("", body);
+    CHECK_EQ(st, 0);
+}
+
+void test_ctl_patch_roundtrip_through_http_body() {
+    // Simulate the full GET→patch→readback verification cycle at the
+    // pure-logic level: settings blob → patched blob → serialized → parsed
+    // back → readback freq matches.
+    nlohmann::json settings = {{"center_freq", 100e6}, {"ext_upd_flag", false}};
+    auto patched = predator::krakenPatchSettings(settings, 462562500.0);
+    std::string wire = patched.dump();
+    auto readback = nlohmann::json::parse(wire);
+    CHECK(predator::krakenFreqMatches(
+        predator::krakenSettingsCenterFreq(readback), 462562500.0));
+    CHECK_EQ(readback.value("ext_upd_flag", false), true);
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -260,6 +334,13 @@ int main() {
     test_frequency_stored_in_event();
     test_power_and_snr_stored();
     test_multiple_sequential_messages();
+
+    test_ctl_patch_settings_sets_freq_and_flag();
+    test_ctl_patch_settings_rejects_non_object();
+    test_ctl_settings_center_freq_extraction();
+    test_ctl_freq_match_tolerance();
+    test_ctl_http_response_parse();
+    test_ctl_patch_roundtrip_through_http_body();
 
     printf("\nKrakenSDR LOB decoder tests: %d passed, %d failed\n", g_pass, g_fail);
     return (g_fail > 0) ? 1 : 0;
