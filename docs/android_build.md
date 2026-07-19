@@ -256,3 +256,15 @@ desktop build. There is no transmit code path in this fork. The
 `network_sink` / `audio_sink` outputs — never the upstream
 `pluto_transmitter` or any TX module. Confirm by inspecting the
 `targets` list in `android/app/build.gradle` before publishing.
+
+## Screenshots
+
+Field captures from a Samsung S20 build (`docs/images/android/`):
+
+| | |
+|---|---|
+| ![Tactical map](images/android/tactical_map_3d.png) | 3D tactical map — fleet peer marker (`s20 [device]`), layer toggles, DF/LOB controls. Operator position redacted. |
+| ![Peer spectrum](images/android/peer_spectrum_mirror.png) | Peer spectrum mirror — controller viewing the `s20` device's live 853–860 MHz waterfall (`PEER: s20` banner). |
+| ![Hits & Events](images/android/hits_events_panel.png) | Hits & Events panel — assigned VFO routing and detected-hit queue. |
+| ![Mission Config](images/android/mission_config_modes.png) | Mission Config — search bands with the Manual / Classify / Scan / QuickScan mode selector. |
+| ![Fox Hunt TX](images/android/foxhunt_tx_tab.png) | Fox Hunt TX tab — IQ replay / tone / CW beacon source selection. |
