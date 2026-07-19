@@ -248,6 +248,10 @@ namespace backend {
         return false;
     }
 
+    bool setPeerMarkers(const std::string& peersJson) {
+        return false;
+    }
+
     bool isTouchPrimary() {
         return false;
     }

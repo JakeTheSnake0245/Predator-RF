@@ -2366,7 +2366,11 @@ void MainWindow::draw() {
 
     // Match desired vs running state for the Device server.
     {
-        bool wantRun = (predatorRole == PREDATOR_ROLE_DEVICE) && kujhadDeviceServerEnabled;
+        // Dual-role: the Device server is gated ONLY on its enable
+        // checkbox, not on the role selector, so a phone can publish its
+        // own GPS/state while ALSO polling peers as a controller. This is
+        // what lets two phones see each other on the map simultaneously.
+        bool wantRun = kujhadDeviceServerEnabled;
         if (wantRun && !kujhadServer.isRunning()) {
             // Apply current TLS settings before binding. setTlsConfig
             // returns false (and clears tlsEnabled internally) when
@@ -2452,7 +2456,9 @@ void MainWindow::draw() {
     {
         json& persistedPeers = core::configManager.conf["kujhadPeers"];
         if (!persistedPeers.is_array()) persistedPeers = json::array();
-        bool wantRun = (predatorRole == PREDATOR_ROLE_CONTROLLER);
+        // Dual-role: peer polling runs whenever peers are configured,
+        // regardless of the role selector (see Device server note above).
+        bool wantRun = true;
         // Detect change via crude content compare against active mirror.
         bool changed = (persistedPeers.size() != kujhadActivePeers.size());
         if (!changed) {
@@ -2532,6 +2538,41 @@ void MainWindow::draw() {
             if (shouldStream && !c->spectrumActive()) c->startSpectrum();
             if (!shouldStream && c->spectrumActive())  c->stopSpectrum();
         }
+        // Push reachable peers with a GPS fix to the platform map bridge
+        // (~1 Hz). On Android this lands in MainActivity.peerMarkersJson,
+        // which MapActivity forwards into the WebView peer-marker layer.
+        {
+            static double lastPeerPushTime = 0.0;
+            double nowT = ImGui::GetTime();
+            if (nowT - lastPeerPushTime >= 1.0) {
+                lastPeerPushTime = nowT;
+                json peersOut = json::array();
+                for (size_t i = 0; i < kujhadClients.size() && i < kujhadActivePeers.size(); i++) {
+                    auto& c = kujhadClients[i];
+                    if (!c) continue;
+                    predator::KujhadPeerSnapshot snap = c->snapshot();
+                    if (!snap.reachable) continue;
+                    if (!snap.gps.is_object() || !snap.gps.value("hasFix", false)) continue;
+                    json pj;
+                    pj["name"] = readJsonString(kujhadActivePeers[i], "name", "peer");
+                    pj["lat"]  = snap.gps.value("lat", 0.0);
+                    pj["lon"]  = snap.gps.value("lon", 0.0);
+                    pj["accuracy"] = snap.gps.value("accuracy", 0.0);
+                    pj["role"] = snap.identify.is_object()
+                                 ? snap.identify.value("role", std::string("?"))
+                                 : std::string("?");
+                    pj["lastSyncMs"] = snap.lastSyncMs;
+                    peersOut.push_back(pj);
+                }
+                static std::string lastPeerJson;
+                std::string cur = peersOut.dump();
+                if (cur != lastPeerJson) {
+                    lastPeerJson = cur;
+                    backend::setPeerMarkers(cur);
+                }
+            }
+        }
+
         // When the operator turns the mirror OFF (or switches active peer
         // away), drop the cached peer frame so a stale peer row cannot
         // leak into the next FFT push, reset the per-frame serial tracker
@@ -2587,8 +2628,7 @@ void MainWindow::draw() {
     bool missionPeerScanRunning = predatorScanRunning;
     bool missionPeerPlaying = playing;
     uint64_t missionPeerLastSyncMs = 0;
-    if (predatorRole == PREDATOR_ROLE_CONTROLLER
-        && kujhadActivePeerIdx >= 0
+    if (kujhadActivePeerIdx >= 0
         && kujhadActivePeerIdx < (int)kujhadClients.size()
         && kujhadClients[kujhadActivePeerIdx]
         && kujhadActivePeerIdx < (int)kujhadActivePeers.size()) {
@@ -3658,7 +3698,7 @@ void MainWindow::draw() {
     // at a time (the "Take control" target).
     std::string kujhadMirrorPeerName;
     bool kujhadMirrorBannerActive = false;
-    if (predatorRole == PREDATOR_ROLE_CONTROLLER && kujhadMirrorPeerSpectrum
+    if (kujhadMirrorPeerSpectrum
         && kujhadActivePeerIdx >= 0 && kujhadActivePeerIdx < (int)kujhadClients.size()
         && kujhadClients[kujhadActivePeerIdx]
         && kujhadActivePeerIdx < (int)kujhadActivePeers.size()) {
@@ -6026,9 +6066,13 @@ void MainWindow::draw() {
                     (predatorRole == PREDATOR_ROLE_DEVICE)
                         ? T("Device: this unit publishes its SDR state to peers and accepts RX-only commands from a Controller.")
                         : T("Controller: this unit pulls state from one or more remote Devices and can take control of any peer."));
+                ImGui::TextWrapped("%s", T("Both workflows can run at once: enable peer access below AND add peers, and two units will see each other on the map."));
             }
 
-            if (predatorRole == PREDATOR_ROLE_DEVICE) {
+            // Dual-role: both sections are always rendered. The role
+            // selector above only labels the unit's primary function
+            // (RNS advertise string); it no longer disables workflows.
+            {
                 if (ImGui::CollapsingHeader(T("Device Server"), ImGuiTreeNodeFlags_DefaultOpen)) {
                     bool enabled = kujhadDeviceServerEnabled;
                     if (ImGui::Checkbox(T("Enable peer access"), &enabled)) {
@@ -6277,7 +6321,7 @@ void MainWindow::draw() {
                     ImGui::TextWrapped("%s", T("ZeroTier and Tailscale interfaces are preferred for cross-instance traffic. Override above to publish a different host (e.g. DNS name, NAT'd IP)."));
                 }
             }
-            else { // Controller
+            { // Controller
                 // ── Pre-fill state: written by Discovered Peers "Add to fleet",
                 // consumed by the Add Peer form on the same/next frame ──────────
                 static bool rnsPreFillPending   = false;

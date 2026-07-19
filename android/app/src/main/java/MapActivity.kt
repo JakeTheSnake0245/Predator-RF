@@ -42,6 +42,7 @@ class MapActivity : AppCompatActivity() {
             if (!polling) return
             pollExecutor.execute {
                 fetchAndPushTracks()
+                pushPeerMarkers()
                 mainHandler.postDelayed(this, POLL_INTERVAL_MS)
             }
         }
@@ -220,18 +221,39 @@ class MapActivity : AppCompatActivity() {
             val root   = JSONObject(body)
             pollCursor = root.optLong("cursor", pollCursor)
             val tracks = root.optJSONArray("tracks") ?: return
-            // Escape single quotes so the JS string literal is safe.
-            val json = tracks.toString().replace("'", "\\'")
+            // JSONObject.quote() yields a fully-escaped double-quoted JS
+            // string literal (handles quotes AND backslashes), so no
+            // payload in track names can break out of the literal.
+            val jsLiteral = JSONObject.quote(tracks.toString())
             mainHandler.post {
                 if (mapReady) {
                     mapView.evaluateJavascript(
-                        "window.PredatorRFMap && window.PredatorRFMap.updateTracks('$json');",
+                        "window.PredatorRFMap && window.PredatorRFMap.updateTracks($jsLiteral);",
                         null
                     )
                 }
             }
         } catch (_: Exception) {
             // Network error — silently retry on next interval.
+        }
+    }
+
+    // Kujhad fleet peers come straight from the native layer (no backend
+    // required): MainActivity.peerMarkersJson is updated by C++ via JNI
+    // whenever controller peer snapshots change. Push it to the WebView
+    // peer-marker layer on every poll tick.
+    private fun pushPeerMarkers() {
+        // JSONObject.quote() produces a fully-escaped double-quoted JS
+        // string literal — safe against quotes, backslashes, and any
+        // injection payloads riding in peer-controlled names.
+        val jsLiteral = JSONObject.quote(MainActivity.peerMarkersJson)
+        mainHandler.post {
+            if (mapReady) {
+                mapView.evaluateJavascript(
+                    "window.PredatorRFMap && window.PredatorRFMap.updatePeers($jsLiteral);",
+                    null
+                )
+            }
         }
     }
 }

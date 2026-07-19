@@ -71,6 +71,15 @@ Every keyboard-editable field must remain visible above the floating IME
   sdrpp_server_source, recorder, radio, kraken_lob_decoder, scheduler).
   NEVER add a raw `ImGui::Input*` in menu/module UI — use the IME wrappers.
 
+### Kujhad dual-role (phone-to-phone mutual visibility)
+The Role selector (Device/Controller) is a LABEL, not a workflow gate: the
+Device server runs whenever "Enable peer access" is on, and per-peer
+controller clients run whenever peers are configured — in ANY role. Mission
+peer takeover ("Take control") and spectrum mirroring are likewise un-gated
+from role. Both Kujhad tab sections (Device Server + Controller peers) render
+unconditionally. For two phones to see each other: each enables peer access
+AND adds the other as a peer. Role still selects the RNS advertise string.
+
 ### Cross-cutting
 - The Replit environment only serves an informational landing page and interactive UI mockup (`server.py`). It does **not** run the Android build, the Python backend, or `predator-rfd`.
 - `X-Kujhad-Key` header is required for authentication on all `/v1/*` Kujhad API calls.
@@ -96,6 +105,12 @@ short list of what's covered there:
 - Warm-restart SIGABRT in `ImGui_ImplOpenGL3_Init` and the defensive teardown in `backend::init()`.
 - DSD-FME decoder freeze (4 root causes) and the `flog::warn` / NDK `long long` vs `int64_t` gotcha.
 - `usbReceiver` leak in `MainActivity.onDestroy`.
+- Fleet peer markers on the tactical map: C++ pushes reachable-peer GPS JSON
+  (~1 Hz, change-gated) via `backend::setPeerMarkers()` →
+  `MainActivity.updatePeerMarkers()` (JNI) → `MainActivity.peerMarkersJson`
+  companion static → `MapActivity` poll loop → WebView
+  `PredatorRFMap.updatePeers()` (`_fleet_peers` amber layer in
+  `root/res/maps/index.html`). No Python backend involved — works phone-only.
 
 ### C++ Predator UI
 - **Multi-VFO Hold + Hold decoder auto-activation (#5).** Two intertwined gotchas — `predatorHoldOnNewHit` (scan-side hold) vs `Predator M<n>` (per-hit marker VFO) vs `predatorHoldManager` (persistent multi-VFO hold list); plus the two-phase pre/post tick contract that lets `HoldDecoderBinder` auto-spawn `rtl433_decoder` instances against held VFOs without racing the dsp stream destructor. Sacred call order, in-band math sharing, cross-plugin binding registry, RTL433-only scope (#5.5/#5.6 deferred), and three architect-flagged hardenings (effective-bw consistency, external-delete recovery, drop-before-existsCb ordering) all live in `docs/predator_hold.md`. Read that before touching `core/src/predator/hold_*.{h,cpp}`, `decoder_modules/rtl433_decoder/src/main.cpp`, or the hold wire-up block in `core/src/gui/main_window.cpp`.

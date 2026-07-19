@@ -71,6 +71,10 @@ private val usbReceiver = object : BroadcastReceiver() {
 }
 
 class MainActivity : NativeActivity() {
+    companion object {
+        @JvmStatic @Volatile var peerMarkersJson: String = "[]"
+    }
+
     private val TAG : String = "Predator RF";
     public var usbManager : UsbManager? = null;
     public var SDR_device : UsbDevice? = null;
@@ -818,6 +822,14 @@ class MainActivity : NativeActivity() {
         runOnUiThread {
             startActivity(Intent(this, MapActivity::class.java))
         }
+    }
+
+    // Called from native (backend::setPeerMarkers) with a JSON array of
+    // fleet-peer markers. MapActivity polls this static and forwards it
+    // into the WebView peer layer. @Volatile: written from the native
+    // render thread, read from MapActivity's poll loop.
+    fun updatePeerMarkers(json: String) {
+        peerMarkersJson = json
     }
 
     // ── Storage Access Framework bridge ─────────────────────────────────

@@ -16,6 +16,9 @@ namespace backend {
     void setMouseScreenPos(double x, double y);
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix);
     bool openMapView();
+    // Publish fleet-peer markers (JSON array of {name,lat,lon,accuracy,role,
+    // lastSyncMs}) to the platform map view. No-op on desktop backends.
+    bool setPeerMarkers(const std::string& peersJson);
 
     float getNativeUiScale();
     bool isTouchPrimary();

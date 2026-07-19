@@ -1,4 +1,5 @@
 - [Android native module wiring](android-native-module-wiring.md) — a native module needs BOTH top-level CMake add_subdirectory AND an explicit entry in android/app/build.gradle externalNativeBuild targets, or it silently never ships in the APK.
 - [asyncio loop scheduling (Py3.11)](asyncio-loop-scheduling-py311.md) — don't call asyncio.get_event_loop() from sync code; it raises when no loop runs. Capture get_running_loop() lazily and skip gracefully.
 - [C++ compile checks in Replit](cpp-compile-checks-replit.md) — stub volk/fftw3 headers to -fsyntax-only the web backend TU; compare error counts vs git baseline (4 pre-existing stub-only errors).
+- [WebView JS bridge escaping](webview-js-bridge-escaping.md) — use JSONObject.quote() for evaluateJavascript payloads; manual quote-replace is an injection surface.
 - [Field deployment gaps](field-deployment-gaps.md) — prioritized gap list from the 6-node cellular trace (no non-Kraken bearings, no fusion identity gate, no node disk persistence, no failover) + overlay/tailnet transport facts.

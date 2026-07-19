@@ -806,6 +806,7 @@ bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
 }
 
 bool openMapView() { return false; }
+bool setPeerMarkers(const std::string& peersJson) { return false; }
 float getNativeUiScale() { return 1.0f; }
 bool isTouchPrimary() { return false; }
 int getImeBottomInset() { return 0; }
