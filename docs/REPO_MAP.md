@@ -71,6 +71,20 @@ Every keyboard-editable field must remain visible above the floating IME
   sdrpp_server_source, recorder, radio, kraken_lob_decoder, scheduler).
   NEVER add a raw `ImGui::Input*` in menu/module UI — use the IME wrappers.
 
+### Kujhad peer spectrum: mirror-drive + in-place overlay
+`kujhadPeerViewMode` (persisted; 0 off / 1 mirror / 2 overlay; legacy
+`kujhadMirrorPeerSpectrum` bool migrates to 1). Mirror = exclusive full-row
+substitution AND tune gestures drive the peer via async
+`KujhadControllerClient::requestTune()` (atomic latest-wins, worker thread
+flushes tune.set at most every 250 ms) — local SDR/config untouched while
+driving. Overlay = FFT worker max-blends peer bins into only the local-row
+slice overlapping the peer's span (geometry cached under kujhadSpectrumMtx by
+the UI thread; FFT thread never touches waterfall getters); tuning stays
+local; overlay disarms after 3 s without a new frame serial so stale peer
+energy is never shown as live. `kujhadActiveClientPtr` raw pointer is safe
+because clients are only destroyed in the same-thread reconcile block that
+re-derives it each frame.
+
 ### Kujhad dual-role (phone-to-phone mutual visibility)
 The Role selector (Device/Controller) is a LABEL, not a workflow gate: the
 Device server runs whenever "Enable peer access" is on, and per-peer

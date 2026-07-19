@@ -293,6 +293,11 @@ private:
     double kujhadLocalSavedBW     = 0.0;
     double kujhadLocalSavedViewBW = 0.0;
     bool kujhadMirrorPeerSpectrum = false;
+    // Peer view mode: 0 = off, 1 = mirror (exclusive full-row substitution),
+    // 2 = overlay (peer bins blended in-place at their true frequency span
+    // on top of the live local waterfall). kujhadMirrorPeerSpectrum stays
+    // as the legacy persisted alias for mode 1.
+    int kujhadPeerViewMode = 0;
     int kujhadMirroredFromPeerIdx = -1;
     uint64_t kujhadLastPeerSpectrumSerial = 0;
     // Atomic gate read by the FFT worker thread: when true, releaseFFTBuffer
@@ -302,6 +307,12 @@ private:
     // peer view is selected, so the displayed waterfall is deterministic
     // peer-only rather than a flicker between local and peer rows.
     std::atomic<bool> kujhadMirrorActive{false};
+    // Overlay-mode gate for the FFT worker: when true, releaseFFTBuffer
+    // max-blends the cached peer bins into ONLY the slice of the local row
+    // whose frequency range overlaps the peer frame's span, leaving the
+    // rest of the local spectrum untouched. Mutually exclusive with
+    // kujhadMirrorActive.
+    std::atomic<bool> kujhadOverlayActive{false};
     // Raw pointer to the "Take control" peer's controller client, refreshed
     // every frame in the reconcile block (nulled before any client is
     // destroyed there, same thread). Lets early-frame tune paths route
@@ -312,6 +323,15 @@ private:
     // thread to consume. Lives under kujhadSpectrumMtx alongside the
     // local snapshot fields above; FFT thread reads it every tick.
     std::vector<float> kujhadPeerCachedBins;
+    // Frequency geometry for overlay blending, cached under
+    // kujhadSpectrumMtx alongside the bins: the peer frame's span and the
+    // local raw row's span (the UI thread snapshots the waterfall
+    // center/bandwidth here so the FFT thread never touches the waterfall
+    // getters).
+    double kujhadPeerCachedCenter = 0.0;
+    double kujhadPeerCachedBW     = 0.0;
+    double kujhadLocalRowCenter   = 0.0;
+    double kujhadLocalRowBW       = 0.0;
     uint64_t kujhadPeerCachedSerial = 0;
     // Peer overlay arrays cached from the most recent mirrored spectrum
     // frame. Read by the UI thread to paint hit/target markers and

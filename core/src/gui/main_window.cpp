@@ -273,6 +273,9 @@ void MainWindow::init() {
         kujhadSpectrumIntervalMs.store(std::clamp<int>(cfg.value("kujhadSpectrumIntervalMs", 200), 50, 5000), std::memory_order_relaxed);
         kujhadSpectrumBins.store(std::clamp<int>(cfg.value("kujhadSpectrumBins", 256), 32, 1024), std::memory_order_relaxed);
         kujhadMirrorPeerSpectrum = cfg.value("kujhadMirrorPeerSpectrum", false);
+        // Migration: older configs only have the mirror bool.
+        kujhadPeerViewMode = std::clamp<int>(
+            cfg.value("kujhadPeerViewMode", kujhadMirrorPeerSpectrum ? 1 : 0), 0, 2);
         kujhadTlsEnabled = cfg.value("kujhadTlsEnabled", false);
         kujhadTlsCertPath = cfg.value("kujhadTlsCertPath", std::string(""));
         kujhadTlsKeyPath = cfg.value("kujhadTlsKeyPath", std::string(""));
@@ -428,6 +431,37 @@ void MainWindow::releaseFFTBuffer(void* ctx) {
                 std::fill(buf, buf + n, -150.0f);
             }
         }
+
+        // 3) IN-PLACE peer overlay: blend the cached peer bins into ONLY
+        //    the slice of the local row whose frequencies fall inside the
+        //    peer frame's span. max() blend keeps both pictures visible
+        //    when the spans overlap; bins outside the peer span are pure
+        //    local data. If the spans are disjoint nothing changes (the
+        //    UI shows a hint instead).
+        else if (self->kujhadOverlayActive.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(self->kujhadSpectrumMtx);
+            int peerN = (int)self->kujhadPeerCachedBins.size();
+            double lc = self->kujhadLocalRowCenter, lbw = self->kujhadLocalRowBW;
+            double pc = self->kujhadPeerCachedCenter, pbw = self->kujhadPeerCachedBW;
+            if (peerN > 0 && lbw > 0.0 && pbw > 0.0) {
+                double lLo = lc - lbw / 2.0;
+                double pLo = pc - pbw / 2.0;
+                double pHi = pc + pbw / 2.0;
+                for (int i = 0; i < n; i++) {
+                    double f = lLo + ((double)i + 0.5) * lbw / (double)n;
+                    if (f < pLo || f > pHi) continue;
+                    double t = (f - pLo) / pbw * (peerN - 1);
+                    int   i0 = (int)t;
+                    if (i0 < 0) i0 = 0;
+                    if (i0 > peerN - 1) i0 = peerN - 1;
+                    int   i1 = std::min(i0 + 1, peerN - 1);
+                    float fr = (float)(t - i0);
+                    float pv = self->kujhadPeerCachedBins[i0] * (1.0f - fr)
+                             + self->kujhadPeerCachedBins[i1] * fr;
+                    if (pv > buf[i]) buf[i] = pv;
+                }
+            }
+        }
     }
     if (self) {
         self->kujhadLastAcquiredBuf  = nullptr;
@@ -516,9 +550,14 @@ void MainWindow::draw() {
             }
             gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency() + vfo->generalOffset);
             gui::freqSelect.frequencyChanged = false;
-            core::configManager.acquire();
-            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
-            core::configManager.release(true);
+            // While driving a peer, do NOT persist the offset locally —
+            // the axis is showing peer frequencies, and writing them into
+            // local config would clobber the operator's local VFO setup.
+            if (!kujhadPeerDrive) {
+                core::configManager.acquire();
+                core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+                core::configManager.release(true);
+            }
         }
     }
 
@@ -949,6 +988,7 @@ void MainWindow::draw() {
         core::configManager.conf["kujhadSpectrumIntervalMs"] = kujhadSpectrumIntervalMs.load(std::memory_order_relaxed);
         core::configManager.conf["kujhadSpectrumBins"] = kujhadSpectrumBins.load(std::memory_order_relaxed);
         core::configManager.conf["kujhadMirrorPeerSpectrum"] = kujhadMirrorPeerSpectrum;
+        core::configManager.conf["kujhadPeerViewMode"] = kujhadPeerViewMode;
         core::configManager.conf["kujhadTlsEnabled"] = kujhadTlsEnabled;
         core::configManager.conf["kujhadTlsCertPath"] = kujhadTlsCertPath;
         core::configManager.conf["kujhadTlsKeyPath"] = kujhadTlsKeyPath;
@@ -2568,7 +2608,7 @@ void MainWindow::draw() {
         // can only display one mirrored peer at a time. Bandwidth is
         // capped at the device's spectrum cadence, but this also keeps
         // the link cost tied to a single connection.
-        bool wantMirror = wantRun && kujhadMirrorPeerSpectrum
+        bool wantMirror = wantRun && (kujhadPeerViewMode != 0)
                           && kujhadActivePeerIdx >= 0
                           && kujhadActivePeerIdx < (int)kujhadClients.size()
                           && kujhadClients[kujhadActivePeerIdx];
@@ -2623,6 +2663,7 @@ void MainWindow::draw() {
         // this restore the waterfall would stay tuned to the peer's
         // last frame, defeating the source-switch contract.
         if (!wantMirror) {
+            kujhadOverlayActive.store(false, std::memory_order_release);
             bool wasMirroring = kujhadMirrorActive.exchange(false, std::memory_order_release);
             if (wasMirroring && kujhadLocalViewSaved) {
                 if (gui::waterfall.getCenterFrequency() != kujhadLocalSavedCenter) {
@@ -3739,7 +3780,64 @@ void MainWindow::draw() {
     // at a time (the "Take control" target).
     std::string kujhadMirrorPeerName;
     bool kujhadMirrorBannerActive = false;
-    if (kujhadMirrorPeerSpectrum
+    // Overlay mode (kujhadPeerViewMode == 2): do NOT retune the local
+    // waterfall — just cache the peer frame plus its frequency span and
+    // the local row's span, and arm the FFT-thread overlay blend. The
+    // local spectrum keeps scrolling; the peer's bins appear in-place at
+    // their true frequencies wherever the two spans overlap.
+    if (kujhadPeerViewMode == 2
+        && kujhadActivePeerIdx >= 0 && kujhadActivePeerIdx < (int)kujhadClients.size()
+        && kujhadClients[kujhadActivePeerIdx]
+        && kujhadActivePeerIdx < (int)kujhadActivePeers.size()) {
+        // Leaving mirror for overlay: restore the pre-mirror view once.
+        bool wasMirroring = kujhadMirrorActive.exchange(false, std::memory_order_release);
+        if (wasMirroring && kujhadLocalViewSaved) {
+            gui::waterfall.setCenterFrequency(kujhadLocalSavedCenter);
+            if (kujhadLocalSavedBW > 0.0) gui::waterfall.setBandwidth(kujhadLocalSavedBW);
+            if (kujhadLocalSavedViewBW > 0.0) gui::waterfall.setViewBandwidth(kujhadLocalSavedViewBW);
+            kujhadLocalViewSaved = false;
+        }
+        auto& client = kujhadClients[kujhadActivePeerIdx];
+        predator::KujhadSpectrumFrame frame;
+        // Staleness gate: only keep blending while fresh frames arrive.
+        // If the serial stops advancing for >3 s (link drop, peer paused)
+        // the overlay is disarmed so old peer energy can't masquerade as
+        // a live picture — tactical displays must fail visible, not stale.
+        static uint64_t overlayLastSerial   = 0;
+        static double   overlayLastFreshT   = -1.0;
+        bool gotFrame = client->latestSpectrum(frame) && !frame.bins.empty() && frame.bandwidth > 0.0;
+        double nowOverlayT = ImGui::GetTime();
+        if (gotFrame && frame.serial != overlayLastSerial) {
+            overlayLastSerial = frame.serial;
+            overlayLastFreshT = nowOverlayT;
+        }
+        bool fresh = gotFrame && overlayLastFreshT >= 0.0
+                     && (nowOverlayT - overlayLastFreshT) <= 3.0;
+        if (fresh) {
+            {
+                std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+                kujhadPeerCachedBins   = frame.bins;
+                kujhadPeerCachedSerial = frame.serial;
+                kujhadPeerCachedCenter = frame.centerFreq;
+                kujhadPeerCachedBW     = frame.bandwidth;
+                kujhadLocalRowCenter   = gui::waterfall.getCenterFrequency();
+                kujhadLocalRowBW       = gui::waterfall.getBandwidth();
+                // Overlays (hits/bands/targets) stay peer-side in overlay
+                // mode; local markers keep painting normally.
+            }
+            kujhadOverlayActive.store(true, std::memory_order_release);
+            kujhadMirrorBannerActive = true;
+            kujhadMirrorPeerName = readJsonString(kujhadActivePeers[kujhadActivePeerIdx], "name", "peer");
+            kujhadMirroredFromPeerIdx = kujhadActivePeerIdx;
+        }
+        else {
+            kujhadOverlayActive.store(false, std::memory_order_release);
+        }
+    }
+    else if (kujhadPeerViewMode != 2) {
+        kujhadOverlayActive.store(false, std::memory_order_release);
+    }
+    if (kujhadPeerViewMode == 1
         && kujhadActivePeerIdx >= 0 && kujhadActivePeerIdx < (int)kujhadClients.size()
         && kujhadClients[kujhadActivePeerIdx]
         && kujhadActivePeerIdx < (int)kujhadActivePeers.size()) {
@@ -6664,14 +6762,38 @@ void MainWindow::draw() {
                 }
 
                 if (ImGui::CollapsingHeader(T("View Source"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                    bool mirror = kujhadMirrorPeerSpectrum;
-                    if (ImGui::Checkbox(T("Mirror active peer spectrum"), &mirror)) {
-                        kujhadMirrorPeerSpectrum = mirror;
+                    int viewMode = kujhadPeerViewMode;
+                    if (ImGui::Combo(T("Peer view##kujhad_view"), &viewMode,
+                                     "Off (local only)\0Mirror peer (exclusive)\0Overlay peer in place\0")) {
+                        kujhadPeerViewMode = viewMode;
+                        kujhadMirrorPeerSpectrum = (viewMode == 1); // legacy alias
                         savePredatorState();
                     }
-                    ImGui::TextDisabled("%s", mirror
-                        ? T("Local waterfall shows PEER spectrum. Tuning gestures now DRIVE THE PEER (tune.set), not the local SDR.")
-                        : T("Local waterfall shows LOCAL SDR spectrum."));
+                    if (kujhadPeerViewMode == 1) {
+                        ImGui::TextDisabled("%s", T("Local waterfall shows PEER spectrum. Tuning gestures DRIVE THE PEER (tune.set), not the local SDR."));
+                    }
+                    else if (kujhadPeerViewMode == 2) {
+                        ImGui::TextDisabled("%s", T("Peer bins are blended in-place at their true frequencies on top of the LOCAL spectrum. Tuning stays local."));
+                        // Warn when the peer span is outside the local row
+                        // so an all-local-looking waterfall isn't mistaken
+                        // for a dead stream.
+                        double pc = 0.0, pbw = 0.0, lc = 0.0, lbw = 0.0;
+                        {
+                            std::lock_guard<std::mutex> lk(kujhadSpectrumMtx);
+                            pc = kujhadPeerCachedCenter; pbw = kujhadPeerCachedBW;
+                            lc = kujhadLocalRowCenter;   lbw = kujhadLocalRowBW;
+                        }
+                        if (pbw > 0.0 && lbw > 0.0
+                            && (pc + pbw / 2.0 < lc - lbw / 2.0 || pc - pbw / 2.0 > lc + lbw / 2.0)) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+                            ImGui::TextWrapped("%s %.3f MHz — %s", T("Peer is tuned to"), pc / 1e6,
+                                               T("outside your local span. Retune locally to see the overlay."));
+                            ImGui::PopStyleColor();
+                        }
+                    }
+                    else {
+                        ImGui::TextDisabled("%s", T("Local waterfall shows LOCAL SDR spectrum."));
+                    }
                     if (kujhadActivePeerIdx >= 0 && kujhadActivePeerIdx < (int)kujhadClients.size()
                         && kujhadClients[kujhadActivePeerIdx]) {
                         auto& client = kujhadClients[kujhadActivePeerIdx];
@@ -6681,7 +6803,7 @@ void MainWindow::draw() {
                                     T("Stream"), streaming ? "live" : "idle",
                                     (unsigned long long)frames, T("frames"));
                     }
-                    else if (mirror) {
+                    else if (kujhadPeerViewMode != 0) {
                         ImGui::TextDisabled("%s", T("Select 'Take control' on a peer to start the spectrum stream."));
                     }
                 }
