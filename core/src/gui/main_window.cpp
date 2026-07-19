@@ -497,10 +497,21 @@ void MainWindow::draw() {
         }
     }
 
+    // While mirroring a peer's spectrum, tune gestures DRIVE THE PEER:
+    // they are forwarded as async tune.set commands instead of touching
+    // the local SDR or persisted local frequency. The mirrored frames
+    // coming back then re-sync the waterfall axis to the peer's actual
+    // center, closing the loop.
+    bool kujhadPeerDrive = kujhadMirrorActive.load(std::memory_order_acquire)
+                           && (kujhadActiveClientPtr != nullptr);
+
     // Handle VFO movement
     if (vfo != NULL) {
         if (vfo->centerOffsetChanged) {
-            if (tuningMode == tuner::TUNER_MODE_CENTER) {
+            if (kujhadPeerDrive) {
+                kujhadActiveClientPtr->requestTune(gui::waterfall.getCenterFrequency() + vfo->generalOffset);
+            }
+            else if (tuningMode == tuner::TUNER_MODE_CENTER) {
                 tuner::tune(tuner::TUNER_MODE_CENTER, gui::waterfall.selectedVFO, gui::waterfall.getCenterFrequency() + vfo->generalOffset);
             }
             gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency() + vfo->generalOffset);
@@ -523,33 +534,56 @@ void MainWindow::draw() {
     // Handle change in selected frequency
     if (gui::freqSelect.frequencyChanged) {
         gui::freqSelect.frequencyChanged = false;
-        tuner::tune(tuningMode, gui::waterfall.selectedVFO, gui::freqSelect.frequency);
-        if (vfo != NULL) {
-            vfo->centerOffsetChanged = false;
-            vfo->lowerOffsetChanged = false;
-            vfo->upperOffsetChanged = false;
+        if (kujhadPeerDrive) {
+            // Route to the peer; do NOT tune the local SDR or persist
+            // the peer's frequency into local config.
+            kujhadActiveClientPtr->requestTune(gui::freqSelect.frequency);
+            if (vfo != NULL) {
+                vfo->centerOffsetChanged = false;
+                vfo->lowerOffsetChanged = false;
+                vfo->upperOffsetChanged = false;
+            }
         }
-        core::configManager.acquire();
-        core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
-        if (vfo != NULL) {
-            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+        else {
+            tuner::tune(tuningMode, gui::waterfall.selectedVFO, gui::freqSelect.frequency);
+            if (vfo != NULL) {
+                vfo->centerOffsetChanged = false;
+                vfo->lowerOffsetChanged = false;
+                vfo->upperOffsetChanged = false;
+            }
+            core::configManager.acquire();
+            core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
+            if (vfo != NULL) {
+                core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+            }
+            core::configManager.release(true);
         }
-        core::configManager.release(true);
     }
 
     // Handle dragging the frequency scale
     if (gui::waterfall.centerFreqMoved) {
         gui::waterfall.centerFreqMoved = false;
-        sigpath::sourceManager.tune(gui::waterfall.getCenterFrequency());
-        if (vfo != NULL) {
-            gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency() + vfo->generalOffset);
+        if (kujhadPeerDrive) {
+            kujhadActiveClientPtr->requestTune(gui::waterfall.getCenterFrequency());
+            if (vfo != NULL) {
+                gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency() + vfo->generalOffset);
+            }
+            else {
+                gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency());
+            }
         }
         else {
-            gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency());
+            sigpath::sourceManager.tune(gui::waterfall.getCenterFrequency());
+            if (vfo != NULL) {
+                gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency() + vfo->generalOffset);
+            }
+            else {
+                gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency());
+            }
+            core::configManager.acquire();
+            core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
+            core::configManager.release(true);
         }
-        core::configManager.acquire();
-        core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
-        core::configManager.release(true);
     }
 
     int _fftHeight = gui::waterfall.getFFTHeight();
@@ -2522,6 +2556,13 @@ void MainWindow::draw() {
             }
             while (events.size() > 200) events.erase(events.end() - 1);
         }
+        // Refresh the active-client raw pointer AFTER reconcile so it can
+        // never dangle: clients are only destroyed above on this same
+        // thread, and the pointer is re-derived every frame.
+        kujhadActiveClientPtr = (kujhadActivePeerIdx >= 0
+                                 && kujhadActivePeerIdx < (int)kujhadClients.size())
+                                ? kujhadClients[kujhadActivePeerIdx].get() : nullptr;
+
         // Spectrum subscription follows the active peer + mirror toggle.
         // Only the selected peer's stream is opened, since the controller
         // can only display one mirrored peer at a time. Bandwidth is
@@ -6629,7 +6670,7 @@ void MainWindow::draw() {
                         savePredatorState();
                     }
                     ImGui::TextDisabled("%s", mirror
-                        ? T("Local waterfall shows PEER spectrum. Tuner controls still affect the local SDR.")
+                        ? T("Local waterfall shows PEER spectrum. Tuning gestures now DRIVE THE PEER (tune.set), not the local SDR.")
                         : T("Local waterfall shows LOCAL SDR spectrum."));
                     if (kujhadActivePeerIdx >= 0 && kujhadActivePeerIdx < (int)kujhadClients.size()
                         && kujhadClients[kujhadActivePeerIdx]) {

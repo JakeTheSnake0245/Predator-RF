@@ -1532,6 +1532,15 @@ public:
 
     // Send a typed command. Synchronous, blocking — meant for UI-thread
     // calls in response to operator action. Returns ok + error message.
+    // Async peer retune: the GUI thread stores the latest requested
+    // center frequency here (latest-wins overwrite, never blocks); the
+    // worker thread sends tune.set at most every 250 ms. Used to DRIVE
+    // the peer while its spectrum is mirrored locally.
+    void requestTune(double frequencyHz) {
+        pendingTuneHz_.store(frequencyHz, std::memory_order_release);
+        tunePending_.store(true, std::memory_order_release);
+    }
+
     bool sendCommand(const std::string& commandClass, const std::string& action,
                      const kujhad_json& args, std::string& errOut) {
         kujhad_json body;
@@ -1620,8 +1629,25 @@ private:
                     } catch (...) {}
                 }
             }
-            // Sleep ~1s between polls but exit promptly on stop.
+            // Sleep ~1s between polls but exit promptly on stop. The
+            // 50 ms tick doubles as the flush point for pending async
+            // tune requests (see requestTune) so mirror-drive retunes
+            // land within ~50-300 ms of the gesture instead of waiting
+            // for the next poll cycle.
             for (int i = 0; i < 20 && !stopFlag_.load(); i++) {
+                if (tunePending_.load(std::memory_order_acquire)) {
+                    auto tnow = std::chrono::steady_clock::now();
+                    bool due = (lastTuneSent_ == std::chrono::steady_clock::time_point::min())
+                        || (std::chrono::duration_cast<std::chrono::milliseconds>(tnow - lastTuneSent_).count() >= 250);
+                    if (due) {
+                        tunePending_.store(false, std::memory_order_release);
+                        double hz = pendingTuneHz_.load(std::memory_order_acquire);
+                        kujhad_json args; args["frequencyHz"] = hz;
+                        std::string err;
+                        sendCommand("tune", "set", args, err);
+                        lastTuneSent_ = tnow;
+                    }
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
@@ -1930,6 +1956,12 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> stopFlag_{false};
     std::thread worker_;
+
+    // Pending async tune.set request (see requestTune). lastTuneSent_ is
+    // worker-thread-only, no lock needed.
+    std::atomic<bool> tunePending_{false};
+    std::atomic<double> pendingTuneHz_{0.0};
+    std::chrono::steady_clock::time_point lastTuneSent_ = std::chrono::steady_clock::time_point::min();
 
     mutable std::mutex snapMtx_;
     KujhadPeerSnapshot snap_;

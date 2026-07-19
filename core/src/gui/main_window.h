@@ -20,6 +20,8 @@
 
 #define WINDOW_FLAGS ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
 
+namespace predator { class KujhadControllerClient; }
+
 class MainWindow {
 public:
     void init();
@@ -300,6 +302,12 @@ private:
     // peer view is selected, so the displayed waterfall is deterministic
     // peer-only rather than a flicker between local and peer rows.
     std::atomic<bool> kujhadMirrorActive{false};
+    // Raw pointer to the "Take control" peer's controller client, refreshed
+    // every frame in the reconcile block (nulled before any client is
+    // destroyed there, same thread). Lets early-frame tune paths route
+    // gestures to the peer while mirroring, via requestTune() (async,
+    // never blocks the GUI).
+    predator::KujhadControllerClient* kujhadActiveClientPtr = nullptr;
     // Latest peer frame copied from the controller worker for the FFT
     // thread to consume. Lives under kujhadSpectrumMtx alongside the
     // local snapshot fields above; FFT thread reads it every tick.
