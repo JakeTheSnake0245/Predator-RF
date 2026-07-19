@@ -26,3 +26,5 @@ standard SDR++ module includes like `module.h`, `signal_path/*`, `imgui.h`).
 `_DELETE_INSTANCE_` may be declared with either `void*` or
 `ModuleManager::Instance*` — both are ABI-compatible because the loader
 `dlsym`-casts uniformly. Not a correctness concern.
+
+**Also:** core/CMakeLists.txt uses file(GLOB_RECURSE) for sdrpp_core sources. Any NEW .cpp under core/src/ links only after a CMake reconfigure — incremental Gradle builds keep the stale source list and fail with "undefined symbol". Fix: touch core/CMakeLists.txt (forces reconfigure) whenever a task adds a core .cpp, or have the user delete android/app/.cmake.

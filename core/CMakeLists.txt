@@ -10,6 +10,11 @@ add_definitions(-DIS_MACOS_BUNDLE)
 endif (USE_BUNDLE_DEFAULTS)
 
 # Main code
+# NOTE: file(GLOB_RECURSE) captures the source list at CMake CONFIGURE time.
+# When a new .cpp is added under src/ (e.g. predator/kraken_tune_bus.cpp),
+# incremental Android/Gradle builds will NOT reconfigure on their own and the
+# link fails with "undefined symbol". Touching THIS file (any edit) forces a
+# reconfigure and fixes it. Last touched: 2026-07-19 (kraken_tune_bus.cpp).
 file(GLOB_RECURSE SRC "src/*.cpp" "src/*.c")
 
 add_definitions(-DSDRPP_IS_CORE)
