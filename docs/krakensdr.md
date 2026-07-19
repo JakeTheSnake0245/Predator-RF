@@ -121,6 +121,42 @@ Panel controls:
 The tune inputs are disabled while a tune is in flight. This is an
 RX-only retune of a passive DF array — no transmit path exists.
 
+### One-click DF tasking (Hits list + Android map)
+
+Beyond the module panel, two operator surfaces can task the Kraken via
+the process-global **tune bus** (`core/src/predator/kraken_tune_bus.h`,
+implementation in sdrpp_core so every plugin shares one instance; the
+kraken_lob_decoder registers a tune handler + status provider on
+construct, mirroring `native_decoder_registry`):
+
+- **Hits list** (`main_window.cpp`, "Detected Hits"): every hit row
+  grows a **Task Kraken DF** button when a kraken module is loaded.
+  Pressing it retunes the array to the hit frequency; the row shows the
+  live lifecycle line (`sending… → calibrating… → tuned & confirmed /
+  failed`, matched by requested frequency ±1 Hz).
+- **Android map** (`root/res/maps/index.html` + `MapActivity.kt`):
+  tapping an emitter dot opens a popup with a **Tune Kraken** button
+  (only rendered when the `window.PredatorNative` WebView bridge
+  exists, i.e. inside the APK — the dashboard iframe never shows it).
+  The request flows WebView JS → `MainActivity.pendingKrakenTuneHz`
+  static → `backend::pollKrakenTuneRequest()` (JNI, drained once per
+  render frame in `main_window.cpp`) → tune bus. Lifecycle status flows
+  back `backend::setKrakenTuneStatus()` → `MainActivity.
+  krakenTuneStatusJson` → MapActivity's 1 s pusher (JSONObject.quote
+  escaping) → `PredatorRFMap.updateKrakenStatus()` → popup status line.
+
+Tune-bus footguns:
+
+- The bus tune handler **auto-starts the control client** (and persists
+  `krakenCtlEnabled`) if it isn't running, using the saved host/port —
+  the operator does not need to pre-arm "Start Control".
+- `trackDotGeoJSON` carries a raw `freq_hz` property specifically for
+  tasking; the `freq_mhz` label string is display-only (3 decimals →
+  kHz precision loss).
+- Desktop (GLFW) and web backends stub `pollKrakenTuneRequest()` /
+  `setKrakenTuneStatus()` to no-ops; map tasking is Android-only. The
+  Hits-list button works on every backend.
+
 ### krakensdr_source module
 
 Displays an information panel in the source selector explaining the

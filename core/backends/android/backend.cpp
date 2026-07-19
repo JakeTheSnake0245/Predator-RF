@@ -367,6 +367,71 @@ namespace backend {
         return (jni_return == JNI_OK);
     }
 
+    // Drain a pending Kraken retune request set by the map WebView
+    // (MapActivity → MainActivity.pendingKrakenTuneHz). Returns Hz, or
+    // 0.0 when nothing is pending / on any JNI failure.
+    double pollKrakenTuneRequest() {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return 0.0; }
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return 0.0; }
+
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz == NULL) {
+            java_vm->DetachCurrentThread();
+            return 0.0;
+        }
+
+        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "pollKrakenTuneRequest", "()D");
+        if (method_id == NULL) {
+            java_vm->DetachCurrentThread();
+            return 0.0;
+        }
+
+        double freqHz = java_env->CallDoubleMethod(app->activity->clazz, method_id);
+        java_vm->DetachCurrentThread();
+        return freqHz;
+    }
+
+    // Publish the Kraken tune lifecycle snapshot JSON to MainActivity so
+    // MapActivity's poll loop can forward it into the map WebView.
+    bool setKrakenTuneStatus(const std::string& statusJson) {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return false; }
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return false; }
+
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "updateKrakenTuneStatus", "(Ljava/lang/String;)V");
+        if (method_id == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jstring jstr = java_env->NewStringUTF(statusJson.c_str());
+        if (jstr == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+        java_env->CallVoidMethod(app->activity->clazz, method_id, jstr);
+        java_env->DeleteLocalRef(jstr);
+        jni_return = java_vm->DetachCurrentThread();
+        return (jni_return == JNI_OK);
+    }
+
     int renderLoop() {
         while (true) {
             int out_events;

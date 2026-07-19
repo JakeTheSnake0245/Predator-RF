@@ -59,6 +59,7 @@
 
 #include "../../../core/src/predator/decoder_ingest.h"
 #include "../../../core/src/predator/kraken_ctl_client.h"
+#include "../../../core/src/predator/kraken_tune_bus.h"
 #include "../../../core/src/predator/native_decoder_registry.h"
 #include <gui/widgets/ime_scroll.h>
 
@@ -128,12 +129,45 @@ public:
             ctlClient_->start(hostBuf_, ctlPort_);
         }
 
+        // Register with the process-global Kraken tune bus so external
+        // surfaces (Hits list "Task Kraken DF" button, map emitter-marker
+        // taps bridged from the Android WebView) can one-click retune the
+        // array. Auto-starts the control client on first use so the
+        // operator doesn't need to pre-arm "Start Control".
+        predator::registerKrakenTuner(this,
+            [this](double freqHz) -> bool {
+                if (freqHz <= 0.0) return false;
+                if (!ctlClient_->isRunning()) {
+                    ctlEnabled_ = true;
+                    ctlClient_->start(hostBuf_, ctlPort_);
+                    saveConfig();
+                }
+                bool ok = ctlClient_->requestTune(freqHz);
+                if (ok) {
+                    lastBusTuneHz_ = freqHz;
+                    tuneFreqMHz_   = freqHz / 1e6;   // mirror into the panel field
+                    flog::info("[KrakenLOB] bus tune request → {} Hz", (int64_t)freqHz);
+                }
+                return ok;
+            },
+            [this]() -> predator::KrakenTuneSnapshot {
+                predator::KrakenTuneSnapshot s;
+                s.running     = ctlClient_->isRunning();
+                s.reachable   = ctlClient_->isReachable();
+                s.state       = (int)ctlClient_->tuneState();
+                s.status      = ctlClient_->statusString();
+                s.currentHz   = ctlClient_->currentFreqHz();
+                s.requestedHz = lastBusTuneHz_;
+                return s;
+            });
+
         gui::menu.registerEntry(name_, drawMenuStatic, this, this);
         flog::info("[KrakenLOB] module instance '{}' constructed", name_);
     }
 
     ~KrakenLobDecoderModule() {
         gui::menu.removeEntry(name_);
+        predator::unregisterKrakenTuner(this);
         ctlClient_->stop();
         ingester_->stop();
         predator::unregisterNativeDecoder(this);
@@ -328,6 +362,9 @@ private:
     bool ctlEnabled_ = false;
     int  ctlPort_ = 8042;
     double tuneFreqMHz_ = 0.0;
+    // Last frequency requested through the tune bus (Hz); surfaces in the
+    // bus snapshot so callers can match feedback to their own request.
+    double lastBusTuneHz_ = 0.0;
 
     char hostBuf_[256]   = "127.0.0.1";
     char pathBuf_[128]   = "/ws";

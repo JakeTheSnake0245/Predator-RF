@@ -252,6 +252,14 @@ namespace backend {
         return false;
     }
 
+    double pollKrakenTuneRequest() {
+        return 0.0;
+    }
+
+    bool setKrakenTuneStatus(const std::string& statusJson) {
+        return false;
+    }
+
     bool isTouchPrimary() {
         return false;
     }

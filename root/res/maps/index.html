@@ -783,6 +783,9 @@
                         emitter_id: t.emitter_id,
                         threat_level: t.threat_level || 'unknown',
                         freq_mhz: t.primary_frequency ? (t.primary_frequency / 1e6).toFixed(3) : '',
+                        // Raw Hz for the "Tune Kraken" popup action — the
+                        // display string above loses precision.
+                        freq_hz: t.primary_frequency || 0,
                         nominated: t.is_nominated_target ? 1 : 0,
                     },
                     geometry: { type: 'Point', coordinates: [t.estimated_lon, t.estimated_lat] }
@@ -863,6 +866,104 @@
                     'text-font': ['literal', ['Noto Sans Regular']],
                     'text-size': 11, 'text-offset': [0, 1.3], 'text-anchor': 'top' },
                 paint: { 'text-color': '#f2a733', 'text-halo-color': '#0b0e0a', 'text-halo-width': 1.2 } });
+
+            // ── Emitter tap → Kraken DF tasking popup ──
+            // Tapping an emitter dot opens a popup with the track details
+            // and (when running inside the Android app, where the
+            // window.PredatorNative bridge exists) a one-tap "Tune Kraken"
+            // button that retunes the DF array to the track's frequency.
+            // Lifecycle feedback (calibrating/confirmed) streams back in
+            // through PredatorRFMap.updateKrakenStatus() below.
+            map.on('click', '_emitter_dots_layer', (e) => {
+                const f = e.features && e.features[0];
+                if (!f) return;
+                openEmitterPopup(f.geometry.coordinates.slice(), f.properties || {});
+            });
+            map.on('mouseenter', '_emitter_dots_layer', () => { map.getCanvas().style.cursor = 'pointer'; });
+            map.on('mouseleave', '_emitter_dots_layer', () => { map.getCanvas().style.cursor = ''; });
+        }
+
+        /* ── Kraken DF tasking popup ── */
+        let krakenPopup = null;          // the open MapLibre popup (if any)
+        let krakenPopupFreqHz = 0;       // freq of the track in the open popup
+        let lastKrakenStatus = null;     // last status object from native
+
+        // Build the popup DOM safely — all track fields go in through
+        // textContent (never innerHTML) since emitter ids ride on RF data.
+        function openEmitterPopup(lngLat, props) {
+            const freqHz = Number(props.freq_hz) || 0;
+            krakenPopupFreqHz = freqHz;
+
+            const root = document.createElement('div');
+            root.style.cssText = 'font-family:monospace;font-size:12px;color:#d7e4d9;min-width:170px;';
+
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:bold;margin-bottom:2px;';
+            title.textContent = props.emitter_id || 'emitter';
+            root.appendChild(title);
+
+            const detail = document.createElement('div');
+            detail.style.cssText = 'color:#9fb8a3;margin-bottom:6px;';
+            detail.textContent = (props.freq_mhz ? props.freq_mhz + ' MHz' : 'freq n/a') +
+                '  [' + (props.threat_level || 'unknown') + ']' +
+                (Number(props.nominated) ? '  ★ nominated' : '');
+            root.appendChild(detail);
+
+            const canTune = freqHz > 0 && window.PredatorNative &&
+                typeof window.PredatorNative.tuneKraken === 'function';
+            if (canTune) {
+                const btn = document.createElement('button');
+                btn.textContent = 'Tune Kraken to ' + (freqHz / 1e6).toFixed(4) + ' MHz';
+                btn.style.cssText = 'width:100%;padding:6px 8px;background:#1d2b1f;color:#d7e4d9;' +
+                    'border:1px solid #4a6b4e;border-radius:4px;font-family:monospace;font-size:12px;';
+                btn.addEventListener('click', () => {
+                    try { window.PredatorNative.tuneKraken(freqHz); } catch (err) { return; }
+                    btn.disabled = true;
+                    btn.textContent = 'Tasking Kraken…';
+                });
+                root.appendChild(btn);
+            }
+
+            // Status line — filled by updateKrakenStatus() pushes.
+            const status = document.createElement('div');
+            status.id = '_kraken_popup_status';
+            status.style.cssText = 'margin-top:6px;min-height:14px;color:#9fb8a3;';
+            root.appendChild(status);
+
+            if (krakenPopup) { try { krakenPopup.remove(); } catch (e) {} }
+            krakenPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '260px' })
+                .setLngLat(lngLat)
+                .setDOMContent(root)
+                .addTo(map);
+            krakenPopup.on('close', () => { krakenPopup = null; krakenPopupFreqHz = 0; });
+            renderKrakenPopupStatus();
+        }
+
+        // Paint the lifecycle line inside the open popup from the last
+        // status push. State codes mirror KrakenTuneState in the C++ app:
+        // 0 idle, 1 sending, 2 calibrating, 3 confirmed, 4 failed.
+        function renderKrakenPopupStatus() {
+            if (!krakenPopup) return;
+            const el = document.getElementById('_kraken_popup_status');
+            if (!el) return;
+            const s = lastKrakenStatus;
+            if (!s || !s.available) {
+                el.style.color = '#9fb8a3';
+                el.textContent = s ? 'Kraken control offline' : '';
+                return;
+            }
+            // Only show tune lifecycle when it refers to this popup's track.
+            const mine = krakenPopupFreqHz > 0 && s.requestedHz > 0 &&
+                Math.abs(s.requestedHz - krakenPopupFreqHz) <= 1;
+            switch (mine ? s.state : 0) {
+                case 1: el.style.color = '#d8c96a'; el.textContent = '⟳ sending retune…'; break;
+                case 2: el.style.color = '#d8c96a'; el.textContent = '⟳ Kraken calibrating…'; break;
+                case 3: el.style.color = '#83d099'; el.textContent = '✓ Kraken tuned & confirmed'; break;
+                case 4: el.style.color = '#ff6b5e'; el.textContent = '✗ tune failed — ' + (s.status || 'see app'); break;
+                default:
+                    el.style.color = '#9fb8a3';
+                    el.textContent = s.running ? (s.status || 'Kraken control ready') : 'Kraken control idle';
+            }
         }
 
         map.on('load', () => {
@@ -989,6 +1090,18 @@
                     map.getSource('_lob_crosscut').setData(tracksToLOBCrosscut(tracks));
                     map.getSource('_emitter_dots').setData(trackDotGeoJSON(tracks));
                 } catch(e) {}
+            },
+
+            // Kraken tune lifecycle feedback pushed from MapActivity every
+            // second (only on change): {available,running,reachable,state,
+            // status,freqHz,requestedHz}. Updates the open emitter popup.
+            updateKrakenStatus(statusJson) {
+                let s;
+                try { s = typeof statusJson === 'string' ? JSON.parse(statusJson) : statusJson; }
+                catch(e) { return; }
+                if (!s || typeof s !== 'object') return;
+                lastKrakenStatus = s;
+                renderKrakenPopupStatus();
             }
         };
     </script>

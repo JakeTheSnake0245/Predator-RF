@@ -73,6 +73,14 @@ private val usbReceiver = object : BroadcastReceiver() {
 class MainActivity : NativeActivity() {
     companion object {
         @JvmStatic @Volatile var peerMarkersJson: String = "[]"
+        // Kraken DF tasking bridge: MapActivity's WebView JS interface
+        // writes a requested retune frequency here; the native render loop
+        // drains it via pollKrakenTuneRequest() (JNI, once per frame).
+        @JvmStatic @Volatile var pendingKrakenTuneHz: Double = 0.0
+        // Latest Kraken tune lifecycle snapshot JSON, pushed from native
+        // (backend::setKrakenTuneStatus) and polled by MapActivity to
+        // surface calibrating/confirmed feedback in the map popup.
+        @JvmStatic @Volatile var krakenTuneStatusJson: String = "{}"
     }
 
     private val TAG : String = "Predator RF";
@@ -830,6 +838,24 @@ class MainActivity : NativeActivity() {
     // render thread, read from MapActivity's poll loop.
     fun updatePeerMarkers(json: String) {
         peerMarkersJson = json
+    }
+
+    // Called from native (backend::pollKrakenTuneRequest) once per render
+    // frame. Returns the pending map-requested Kraken retune frequency in
+    // Hz and clears it, or 0.0 when nothing is pending. A racing second
+    // tap between read and clear can be lost — acceptable, the operator
+    // just taps again.
+    fun pollKrakenTuneRequest(): Double {
+        val hz = pendingKrakenTuneHz
+        if (hz > 0.0) pendingKrakenTuneHz = 0.0
+        return hz
+    }
+
+    // Called from native (backend::setKrakenTuneStatus) with the Kraken
+    // tune lifecycle snapshot JSON. @Volatile: written from the native
+    // render thread, read from MapActivity's status loop.
+    fun updateKrakenTuneStatus(json: String) {
+        krakenTuneStatusJson = json
     }
 
     // ── Storage Access Framework bridge ─────────────────────────────────

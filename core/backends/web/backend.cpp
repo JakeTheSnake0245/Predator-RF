@@ -807,6 +807,8 @@ bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
 
 bool openMapView() { return false; }
 bool setPeerMarkers(const std::string& peersJson) { return false; }
+double pollKrakenTuneRequest() { return 0.0; }
+bool setKrakenTuneStatus(const std::string& statusJson) { return false; }
 float getNativeUiScale() { return 1.0f; }
 bool isTouchPrimary() { return false; }
 int getImeBottomInset() { return 0; }

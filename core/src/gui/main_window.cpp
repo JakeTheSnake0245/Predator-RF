@@ -44,6 +44,7 @@
 #include "../predator/kujhad_fleet.h"
 #include "../predator/kujhad_rns.h"
 #include "../predator/native_decoder_registry.h"
+#include "../predator/kraken_tune_bus.h"
 #include "../predator/hold_binding_registry.h"
 #include "../predator/cot_reporter.h"
 #include <ctime>
@@ -1926,6 +1927,47 @@ void MainWindow::draw() {
         if (anyAdded) {
             while (events.size() > 200) events.erase(events.end() - 1);
             savePredatorEvents(events);
+        }
+    }
+
+    // -------- Kraken DF tasking bridge (map ↔ kraken_lob_decoder) --------
+    // The Android map WebView (root/res/maps/index.html) lets the operator
+    // tap an emitter marker and hit "Tune Kraken". MapActivity stashes the
+    // frequency in a MainActivity static; we drain it here once per frame
+    // and hand it to the tune bus. In the other direction we push the tune
+    // lifecycle snapshot (sending → calibrating → confirmed / failed) back
+    // to the platform so the map popup shows live feedback. Throttled to
+    // ~1 Hz and only re-sent on change to keep the JNI hop cheap.
+    {
+        double mapTuneHz = backend::pollKrakenTuneRequest();
+        if (mapTuneHz > 0.0) {
+            if (predator::requestKrakenTune(mapTuneHz)) {
+                flog::info("Map Kraken tasking: retune request {} Hz accepted", (int64_t)mapTuneHz);
+            }
+            else {
+                flog::warn("Map Kraken tasking: retune request {} Hz rejected (no tuner or busy)", (int64_t)mapTuneHz);
+            }
+        }
+
+        static double      lastKrakenStatusPush = 0.0;
+        static std::string lastKrakenStatusJson;
+        double nowClock = (double)std::time(nullptr);
+        if (nowClock - lastKrakenStatusPush >= 1.0) {
+            lastKrakenStatusPush = nowClock;
+            predator::KrakenTuneSnapshot snap = predator::krakenTuneSnapshot();
+            json st;
+            st["available"]   = snap.available;
+            st["running"]     = snap.running;
+            st["reachable"]   = snap.reachable;
+            st["state"]       = snap.state;
+            st["status"]      = snap.status;
+            st["freqHz"]      = snap.currentHz;
+            st["requestedHz"] = snap.requestedHz;
+            std::string stStr = st.dump();
+            if (stStr != lastKrakenStatusJson) {
+                lastKrakenStatusJson = stStr;
+                backend::setKrakenTuneStatus(stStr);
+            }
         }
     }
 
@@ -4577,6 +4619,40 @@ void MainWindow::draw() {
                             // Silent rejection on dup/cap is acceptable —
                             // the operator sees the Held panel count not
                             // change and can inspect from the Hits tab.
+                        }
+                        // ── One-click Kraken DF tasking ────────────────────
+                        // Only shown when a kraken_lob_decoder instance has
+                        // registered with the tune bus. Retunes the array to
+                        // this hit's frequency; lifecycle feedback (sending →
+                        // calibrating → confirmed / failed) is drawn inline
+                        // under the button row for the hit that was tasked.
+                        if (predator::krakenTunerAvailable()) {
+                            ImGui::SameLine();
+                            if (ImGui::Button(T("Task Kraken DF"), ImVec2(halfWidth, 0))) {
+                                predator::requestKrakenTune(hitFrequency);
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("%s", T("Retune the KrakenSDR DF array to this hit and start collecting bearings"));
+                            }
+                            predator::KrakenTuneSnapshot ksnap = predator::krakenTuneSnapshot();
+                            bool thisHitTasked = ksnap.requestedHz > 0.0 &&
+                                std::abs(ksnap.requestedHz - hitFrequency) <= 1.0;
+                            if (thisHitTasked && ksnap.state != 0) {
+                                ImGui::Dummy(ImVec2(14.0f * style::uiScale, 0.0f));
+                                ImGui::SameLine();
+                                ImVec4 kcol;
+                                const char* klabel;
+                                switch (ksnap.state) {
+                                case 1:  kcol = ImVec4(0.9f, 0.8f, 0.3f, 1.0f); klabel = T("Kraken: sending retune...");    break;
+                                case 2:  kcol = ImVec4(0.9f, 0.8f, 0.3f, 1.0f); klabel = T("Kraken: calibrating...");       break;
+                                case 3:  kcol = ImVec4(0.3f, 0.9f, 0.4f, 1.0f); klabel = T("Kraken: tuned & confirmed");    break;
+                                default: kcol = ImVec4(0.95f, 0.4f, 0.35f, 1.0f); klabel = T("Kraken: tune failed");        break;
+                                }
+                                ImGui::TextColored(kcol, "%s", klabel);
+                                if (!ksnap.status.empty() && ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("%s", ksnap.status.c_str());
+                                }
+                            }
                         }
                         ImGui::Separator();
                         ImGui::PopID();

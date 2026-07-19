@@ -20,6 +20,18 @@ namespace backend {
     // lastSyncMs}) to the platform map view. No-op on desktop backends.
     bool setPeerMarkers(const std::string& peersJson);
 
+    // Kraken DF tasking bridge (platform map view → kraken_lob_decoder).
+    // pollKrakenTuneRequest() returns a pending retune frequency in Hz
+    // requested from the platform map view (emitter-marker tap) and clears
+    // it, or 0.0 when nothing is pending. Polled once per render frame.
+    // Returns 0.0 on backends without a platform map (desktop / GLFW / web).
+    double pollKrakenTuneRequest();
+    // Publish the Kraken tune lifecycle snapshot (JSON object of
+    // {available,running,reachable,state,status,freqHz,requestedHz}) back
+    // to the platform map view so the operator sees calibrating/confirmed
+    // feedback where they tapped. No-op on desktop backends.
+    bool setKrakenTuneStatus(const std::string& statusJson);
+
     float getNativeUiScale();
     bool isTouchPrimary();
     int renderLoop();

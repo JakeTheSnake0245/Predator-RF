@@ -8,6 +8,7 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -52,6 +53,50 @@ class MapActivity : AppCompatActivity() {
         // Read from shared prefs / BuildConfig; fall back to localhost.
         private const val BACKEND_BASE = "http://127.0.0.1:5259"
         private const val POLL_INTERVAL_MS = 5_000L
+        // Kraken tune lifecycle feedback wants ~1 s latency, much faster
+        // than the 5 s track poll, so it runs on its own runnable.
+        private const val KRAKEN_STATUS_INTERVAL_MS = 1_000L
+    }
+
+    // Kraken tune status pusher — forwards MainActivity.krakenTuneStatusJson
+    // (written by native via JNI) into the WebView every second while the
+    // map is open, but only when the JSON actually changed.
+    private var lastKrakenStatusPushed = ""
+    private val krakenStatusRunnable = object : Runnable {
+        override fun run() {
+            if (!polling) return
+            val statusJson = MainActivity.krakenTuneStatusJson
+            if (statusJson != lastKrakenStatusPushed && mapReady) {
+                lastKrakenStatusPushed = statusJson
+                // JSONObject.quote() → fully-escaped JS string literal;
+                // never inline raw JSON into evaluateJavascript.
+                val jsLiteral = JSONObject.quote(statusJson)
+                mapView.evaluateJavascript(
+                    "window.PredatorRFMap && window.PredatorRFMap.updateKrakenStatus($jsLiteral);",
+                    null
+                )
+            }
+            mainHandler.postDelayed(this, KRAKEN_STATUS_INTERVAL_MS)
+        }
+    }
+
+    // Exposed to the map WebView as window.PredatorNative. The map popup's
+    // "Tune Kraken" button calls tuneKraken(freqHz); the native render loop
+    // drains the pending value through MainActivity.pollKrakenTuneRequest().
+    inner class PredatorNativeBridge {
+        @JavascriptInterface
+        fun tuneKraken(freqHz: Double) {
+            if (freqHz.isFinite() && freqHz > 0.0) {
+                MainActivity.pendingKrakenTuneHz = freqHz
+            }
+        }
+
+        @JavascriptInterface
+        fun krakenAvailable(): Boolean {
+            // Cheap availability probe for the popup: native pushes
+            // {"available":true,...} once a kraken module registers.
+            return MainActivity.krakenTuneStatusJson.contains("\"available\":true")
+        }
     }
 
     private val locationListener = object : LocationListener {
@@ -97,6 +142,8 @@ class MapActivity : AppCompatActivity() {
         mapView.settings.builtInZoomControls = false
         mapView.settings.displayZoomControls = false
         mapView.webChromeClient = WebChromeClient()
+        // Kraken DF tasking bridge: map popup → native render loop.
+        mapView.addJavascriptInterface(PredatorNativeBridge(), "PredatorNative")
         mapView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 mapReady = true
@@ -199,12 +246,15 @@ class MapActivity : AppCompatActivity() {
     private fun startTrackPolling() {
         if (polling) return
         polling = true
+        lastKrakenStatusPushed = ""   // force a status re-push on reopen
         mainHandler.post(pollRunnable)
+        mainHandler.post(krakenStatusRunnable)
     }
 
     private fun stopTrackPolling() {
         polling = false
         mainHandler.removeCallbacks(pollRunnable)
+        mainHandler.removeCallbacks(krakenStatusRunnable)
     }
 
     private fun fetchAndPushTracks() {

@@ -12,7 +12,7 @@ detail HERE and (if it's a new top-level area) one index line in `replit.md`.
 - `core/src/predator/decoder_ingest.h`: Header-only receive-only decoder ingestion base class.
 - `decoder_modules/rtl433_decoder/`: Native rtl_433 ISM decoder module.
 - `core/src/gui/style.cpp`: Contains `applyTouchFriendlyTweaks()` for Android UI adjustments. Base font glyph range adds Misc-Symbols (U+2600..U+26FF) for the gear icon (U+2699) used by the Hits page per-marker action sheet.
-- `decoder_modules/kraken_lob_decoder/`: KrakenSDR LOB decoder module — WebSocket bridge to krakensdr_doa, plus remote RX retune panel. See `docs/krakensdr.md`.
+- `decoder_modules/kraken_lob_decoder/`: KrakenSDR LOB decoder module — WebSocket bridge to krakensdr_doa, plus remote RX retune panel. Registers with the tune bus (`core/src/predator/kraken_tune_bus.h`) so the Hits list and Android map can one-click task the DF array. See `docs/krakensdr.md`.
 - `core/src/predator/kraken_ctl_client.h`: Header-only Kraken control client — GET/patch/POST full settings blob (`center_freq` + `ext_upd_flag`) on port 8042 with readback-verified sending→calibrating→confirmed lifecycle.
 - `source_modules/krakensdr_source/`: KrakenSDR source informational panel module.
 - `backend/models/lob_measurement.py`: LOBMeasurement dataclass — one bearing observation from one KrakenSDR node.
