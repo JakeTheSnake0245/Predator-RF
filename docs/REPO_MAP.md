@@ -167,3 +167,36 @@ short list of what's covered there:
 - `docs/signal_repository.md`: Signal repository API, schema, fingerprinter feature set, REST routes.
 - `docs/correlation_engine.md`: CorrelationEngine rule API, firing logic, known-target response, FleetStateManager event ring, IQCaptureService.
 
+
+### Phase 3 field-usability additions (main_window.cpp)
+- **A1/A2 arrow markers:** two frequency-pinned arrows placed by tapping the
+  spectrum. Buttons live in the control bar next to the tuning-mode buttons:
+  tap = arm (next spectrum tap places; waterfall tuning is locked while
+  armed so the tap can't drag the VFO), long-hold ~0.6 s = toggle off/on.
+  Ghost lines on both FFT and waterfall (drawn in the Waterfall child right
+  before `EndChild`, reusing the overlay-geometry vars), Δ readout at the far
+  right of the control bar. Persisted as `predatorArrowOn1/2` +
+  `predatorArrowFreq1/2` — all four are in `core.cpp defConfig` (mandatory;
+  keys missing from defConfig get wiped on every restart).
+- **Fill-from-back frequency entry:** `openPendEditFreq` /
+  `drawEditFreqButton` — digits accumulate right-to-left in Hz
+  (cash-register style) with a live MHz preview. Used by Band Start/Stop,
+  Target/Exclude frequency, Kujhad tune.set, Baseline Start/Stop.
+- **QR Pairing (Kujhad Device side):** "QR Pairing" CollapsingHeader.
+  Generate → name popup (updates `kujhadDeviceName`) → picks the best
+  interface from `kujhadEnumerateInterfaces()` (ZT > TS > LAN; override via
+  `kujhadAdvertiseAddress`), auto-allowlists the overlay CIDR into
+  `kujhadPlainHttpAllowCidrs` when TLS is off, and renders a QR (vendored
+  Nayuki `qrcodegen` in `core/src/predator/qr/`) of
+  `{"v":1,"t":"kujhad-pair","name","host","port","key","cidr"}`. Port
+  defaults to 41947 (`kujhadDeviceListenPort` defConfig). Controller side:
+  "Paste pairing code" button above the Add Peer form fills
+  name/host/port/API-key from that JSON.
+  Gotchas: the pairing payload CONTAINS the API key by design (screen-to-
+  camera is the trust boundary); `KujhadInterfaceCandidate.cidr` is derived
+  from `ifa_netmask` in `kujhad_fleet.h`; deferred `openPendEdit` callbacks
+  must NOT capture the frame-local `T()` translation lambda — use plain
+  string literals; `qrcodegen.cpp` is picked up by core's
+  `file(GLOB_RECURSE)` so a fresh CMake configure is required after pulling
+  (stale build dirs won't see the new file → linker errors on
+  `qrcodegen::QrCode`).

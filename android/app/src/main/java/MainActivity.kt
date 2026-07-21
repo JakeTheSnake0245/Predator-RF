@@ -50,18 +50,15 @@ private val usbReceiver = object : BroadcastReceiver() {
         if (ACTION_USB_PERMISSION == intent.action) {
             synchronized(this) {
                 var _this = context as MainActivity;
-                _this.SDR_device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                    _this.SDR_conn = _this.usbManager!!.openDevice(_this.SDR_device);
-                    
-                    // Save SDR info
-                    _this.SDR_VID = _this.SDR_device!!.getVendorId();
-                    _this.SDR_PID = _this.SDR_device!!.getProductId()
-                    _this.SDR_FD = _this.SDR_conn!!.getFileDescriptor();
+                val dev: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                if (dev != null && intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                    // MUST NOT unregister here: with several USB devices
+                    // attached (HackRF + RTL dongles + GPS puck) Android
+                    // fires one grant broadcast per device; unregistering
+                    // after the first one silently dropped every later
+                    // device, which is why only one SDR ever showed up.
+                    _this.openAndTrackUsbDevice(dev)
                 }
-                
-                // Whatever the hell this does
-                context.unregisterReceiver(this);
 
                 // Hide again the system bars
                 _this.hideSystemBars();
@@ -90,6 +87,61 @@ class MainActivity : NativeActivity() {
     public var SDR_VID : Int = -1;
     public var SDR_PID : Int = -1;
     public var SDR_FD : Int = -1;
+
+    // ── Multi-device USB tracking ────────────────────────────────────────
+    // The legacy SDR_FD/SDR_VID/SDR_PID single slot can only remember ONE
+    // granted device. Field kits attach several (HackRF + RTL dongles +
+    // GPS): whichever grant landed last overwrote the slot, so the native
+    // side could never find the HackRF by vid/pid. These parallel lists
+    // keep every granted device; native getDeviceFD() walks them via the
+    // usbDev*() JNI accessors below. The legacy slot is still updated for
+    // compatibility.
+    private val usbDevNames = ArrayList<String>()
+    private val usbDevConns = ArrayList<UsbDeviceConnection>()
+    private val usbDevVids  = ArrayList<Int>()
+    private val usbDevPids  = ArrayList<Int>()
+
+    @Synchronized
+    public fun openAndTrackUsbDevice(dev: UsbDevice) {
+        val mgr = usbManager ?: return
+        val name = dev.deviceName
+        val existing = usbDevNames.indexOf(name)
+        if (existing >= 0) {
+            // Re-attach of a known device node: the old fd is stale. Close
+            // and drop it, then re-open below.
+            try { usbDevConns[existing].close() } catch (e: Exception) {}
+            usbDevNames.removeAt(existing)
+            usbDevConns.removeAt(existing)
+            usbDevVids.removeAt(existing)
+            usbDevPids.removeAt(existing)
+        }
+        // openDevice CAN return null (device yanked mid-grant, kernel
+        // refused). The old code did SDR_conn!!.getFileDescriptor() and
+        // crashed the whole app with a Kotlin NPE right after the
+        // permission dialog — never trust the connection to exist.
+        val conn = try { mgr.openDevice(dev) } catch (e: Exception) { null }
+        if (conn == null) {
+            Log.w(TAG, "openDevice failed for $name (vid=0x${"%04x".format(dev.vendorId)} pid=0x${"%04x".format(dev.productId)})")
+            return
+        }
+        usbDevNames.add(name)
+        usbDevConns.add(conn)
+        usbDevVids.add(dev.vendorId)
+        usbDevPids.add(dev.productId)
+        // Keep legacy single-slot fields for old native callers.
+        SDR_device = dev
+        SDR_conn = conn
+        SDR_VID = dev.vendorId
+        SDR_PID = dev.productId
+        SDR_FD = conn.fileDescriptor
+        Log.i(TAG, "USB tracked: $name vid=0x${"%04x".format(dev.vendorId)} pid=0x${"%04x".format(dev.productId)} fd=${conn.fileDescriptor} (${usbDevNames.size} total)")
+    }
+
+    // JNI accessors used by backend::getDeviceFD (native side).
+    @Synchronized public fun usbDevCount(): Int = usbDevNames.size
+    @Synchronized public fun usbDevVid(i: Int): Int = if (i in 0 until usbDevVids.size) usbDevVids[i] else -1
+    @Synchronized public fun usbDevPid(i: Int): Int = if (i in 0 until usbDevPids.size) usbDevPids[i] else -1
+    @Synchronized public fun usbDevFd(i: Int): Int = if (i in 0 until usbDevConns.size) usbDevConns[i].fileDescriptor else -1
     public var gpsLat : Double = 0.0;
     public var gpsLon : Double = 0.0;
     public var gpsAccuracyMeters : Float = 0.0f;
@@ -249,6 +301,23 @@ class MainActivity : NativeActivity() {
         powerManager!!.addThermalStatusListener(thermalListener!!)
     }
 
+    // The receiver used to unregister itself after the FIRST permission
+    // grant, so it must be (re)registered before every request. It now
+    // stays registered for the activity's lifetime; this guard keeps the
+    // registration idempotent across onCreate + hot-plug paths.
+    private var usbReceiverRegistered = false
+    @Synchronized
+    private fun registerUsbReceiverOnce() {
+        if (usbReceiverRegistered) return
+        val filter = IntentFilter(ACTION_USB_PERMISSION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(usbReceiver, filter)
+        }
+        usbReceiverRegistered = true
+    }
+
     /**
      * Request USB permission for one device. Same flow as the cold-start
      * loop in onCreate, factored out so onNewIntent can reuse it.
@@ -257,24 +326,13 @@ class MainActivity : NativeActivity() {
         val mgr = usbManager ?: return
         if (mgr.hasPermission(dev)) {
             // Already granted — open immediately.
-            SDR_device = dev
-            SDR_conn = mgr.openDevice(dev)
-            if (SDR_conn != null) {
-                SDR_VID = dev.vendorId
-                SDR_PID = dev.productId
-                SDR_FD  = SDR_conn!!.fileDescriptor
-            }
+            openAndTrackUsbDevice(dev)
             return
         }
         val pi = PendingIntent.getBroadcast(this, 0,
             Intent(ACTION_USB_PERMISSION).setPackage(packageName),
             PendingIntent.FLAG_MUTABLE)
-        val filter = IntentFilter(ACTION_USB_PERMISSION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(usbReceiver, filter)
-        }
+        registerUsbReceiverOnce()
         mgr.requestPermission(dev, pi)
     }
 
@@ -303,18 +361,18 @@ class MainActivity : NativeActivity() {
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager;
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager;
         val permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(ACTION_USB_PERMISSION).setPackage(packageName), PendingIntent.FLAG_MUTABLE)
-        val filter = IntentFilter(ACTION_USB_PERMISSION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        }
-        else {
-            registerReceiver(usbReceiver, filter)
-        }
+        registerUsbReceiverOnce()
 
         // Get permission for all USB devices (cold-start enumeration).
+        // Already-granted devices are opened immediately; the rest go
+        // through the permission dialog and land in usbReceiver.
         val devList = usbManager!!.getDeviceList();
         for ((_, dev) in devList) {
-            usbManager!!.requestPermission(dev, permissionIntent);
+            if (usbManager!!.hasPermission(dev)) {
+                openAndTrackUsbDevice(dev)
+            } else {
+                usbManager!!.requestPermission(dev, permissionIntent);
+            }
         }
 
         // Start the on-device Python backend (RNS + TDOA + HTTP API) before

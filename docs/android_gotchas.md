@@ -346,6 +346,36 @@ guards — `pauseRendering` alone does not cover every teardown ordering.
 
 ---
 
+## Single-slot USB tracking made every SDR but one invisible
+
+Three intertwined MainActivity.kt bugs, all fixed together (July 2026):
+
+1. **One `SDR_FD/SDR_VID/SDR_PID` slot for ALL USB devices.** With a
+   field kit attached (HackRF + RTL dongles + GPS puck), whichever
+   permission grant landed LAST overwrote the slot. A source module
+   asking `backend::getDeviceFD(vid, pid, HACKRF_VIDPIDS)` then got -1
+   (vid/pid filter mismatch) and the device "never showed up" in its
+   list even though the OS had granted access.
+2. **`usbReceiver` unregistered itself after the FIRST grant.** The
+   cold-start loop requests permission for every attached device;
+   Android fires one broadcast per grant, but only the first was ever
+   received — all later devices were silently dropped.
+3. **`SDR_conn!!.getFileDescriptor()` NPE crash.** `openDevice()` can
+   return null (device yanked mid-grant, kernel refusal); the `!!`
+   crashed the whole app right after the permission dialog — this is
+   the "tap refresh / re-grant and the app dies" report from the field.
+
+**Fix:** MainActivity keeps parallel lists of ALL granted devices
+(`usbDevNames/Conns/Vids/Pids`, deduped by device node, stale entries
+re-opened on re-attach) exposed via `usbDevCount()/usbDevVid(i)/
+usbDevPid(i)/usbDevFd(i)`; `backend::getDeviceFD()` walks that list and
+matches by vid/pid, falling back to the legacy single slot. The
+receiver stays registered for the activity lifetime
+(`registerUsbReceiverOnce()`), and every `openDevice()` is null-checked.
+Do not reintroduce a "grab the one fd" shortcut anywhere.
+
+---
+
 ## HackRF start SIGSEGV inside `libusb_wrap_sys_device`
 
 Logcat stack: `libusb_wrap_sys_device+136` → `hackrf_open_by_fd+96` →

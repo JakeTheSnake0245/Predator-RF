@@ -233,7 +233,16 @@ namespace ImGui {
         bool mouseClicked = ImGui::ButtonBehavior(ImRect(fftAreaMin, wfMax), GetID("WaterfallID"), &mouseHovered, &mouseHeld,
                                                   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_PressedOnClick);
 
-        mouseInFFTResize = (dragOrigin.x > widgetPos.x && dragOrigin.x < widgetPos.x + widgetSize.x && dragOrigin.y >= widgetPos.y + newFFTAreaHeight - (2.0f * style::uiScale) && dragOrigin.y <= widgetPos.y + newFFTAreaHeight + (2.0f * style::uiScale));
+        // Divider grab half-height. 2 dp is fine with a mouse pointer but
+        // impossible to hit with a fingertip — field feedback. On touch
+        // builds widen it to 12 dp each side; VFO drags near the divider
+        // are protected by the hold delay below.
+#ifdef __ANDROID__
+        const float resizeGrabHalf = 12.0f * style::uiScale;
+#else
+        const float resizeGrabHalf = 2.0f * style::uiScale;
+#endif
+        mouseInFFTResize = (dragOrigin.x > widgetPos.x && dragOrigin.x < widgetPos.x + widgetSize.x && dragOrigin.y >= widgetPos.y + newFFTAreaHeight - resizeGrabHalf && dragOrigin.y <= widgetPos.y + newFFTAreaHeight + resizeGrabHalf);
         mouseInFreq = IS_IN_AREA(dragOrigin, freqAreaMin, freqAreaMax);
         mouseInFFT = IS_IN_AREA(dragOrigin, fftAreaMin, fftAreaMax);
         mouseInWaterfall = IS_IN_AREA(dragOrigin, wfMin, wfMax);
@@ -271,10 +280,25 @@ namespace ImGui {
         // If the mouse was clicked anywhere in the waterfall, check if the resize was clicked
         if (mouseInFFTResize) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+#ifdef __ANDROID__
+            // Touch: the wider grab zone overlaps normal spectrum drags, so
+            // require a short HOLD (finger down, barely moving) before the
+            // divider engages. A quick swipe through the zone still pans /
+            // tunes as usual.
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !fftResizeSelect
+                && ImGui::GetIO().MouseDownDuration[ImGuiMouseButton_Left] > 0.35f
+                && fabsf(drag.x) < 8.0f * style::uiScale
+                && fabsf(drag.y) < 8.0f * style::uiScale) {
+                fftResizeSelect = true;
+                targetFound = true;
+            }
+            if (fftResizeSelect) { targetFound = true; }
+#else
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 fftResizeSelect = true;
                 targetFound = true;
             }
+#endif
         }
 
         // If mouse was clicked inside the central part, check what was clicked
@@ -815,6 +839,24 @@ namespace ImGui {
         window->DrawList->AddRect(widgetPos, widgetEndPos, IM_COL32(50, 50, 50, 255), 0.0, 0, style::uiScale);
         window->DrawList->AddLine(ImVec2(widgetPos.x, freqAreaMax.y), ImVec2(widgetPos.x + widgetSize.x, freqAreaMax.y), IM_COL32(50, 50, 50, 255), style::uiScale);
 
+#ifdef __ANDROID__
+        // Always-visible FFT/waterfall divider handle for touch: a thicker
+        // bar with a centered grip so the operator can SEE where to press-
+        // and-hold to resize (matches the widened grab zone + hold delay in
+        // processInputs()). Highlight while resizing.
+        {
+            float divY = widgetPos.y + FFTAreaHeight;
+            ImU32 barCol = fftResizeSelect ? ImGui::GetColorU32(ImGuiCol_SeparatorActive) : IM_COL32(90, 90, 90, 255);
+            window->DrawList->AddLine(ImVec2(widgetPos.x, divY), ImVec2(widgetPos.x + widgetSize.x, divY), barCol, 3.0f * style::uiScale);
+            float cx = widgetPos.x + widgetSize.x * 0.5f;
+            float gripHalf = 18.0f * style::uiScale;
+            window->DrawList->AddRectFilled(ImVec2(cx - gripHalf, divY - 2.5f * style::uiScale),
+                                            ImVec2(cx + gripHalf, divY + 2.5f * style::uiScale),
+                                            fftResizeSelect ? ImGui::GetColorU32(ImGuiCol_SeparatorActive) : IM_COL32(140, 140, 140, 255),
+                                            2.0f * style::uiScale);
+        }
+#endif
+
         if (!gui::mainWindow.lockWaterfallControls) {
             inputHandled = false;
             InputHandlerArgs args;
@@ -867,6 +909,7 @@ namespace ImGui {
     void WaterFall::pushFFT() {
         if (rawFFTs == NULL) { return; }
         std::lock_guard<std::recursive_mutex> lck(latestFFTMtx);
+        fftPushCount++;
         double offsetRatio = viewOffset / (wholeBandwidth / 2.0);
         int drawDataSize = (viewBandwidth / wholeBandwidth) * rawFFTSize;
         int drawDataStart = (((double)rawFFTSize / 2.0) * (offsetRatio + 1)) - (drawDataSize / 2);

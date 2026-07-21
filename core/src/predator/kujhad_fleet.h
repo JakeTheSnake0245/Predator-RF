@@ -130,6 +130,7 @@ inline std::vector<std::string> kujhadSplitCidrList(const std::string& s) {
 struct KujhadInterfaceCandidate {
     std::string name;
     std::string address;
+    std::string cidr; // network in CIDR form ("100.64.0.0/10"), from the iface netmask
     bool isLoopback = false;
     bool isZerotier = false;
     bool isTailscale = false;
@@ -151,6 +152,20 @@ inline std::vector<KujhadInterfaceCandidate> kujhadEnumerateInterfaces() {
         c.name = it->ifa_name ? it->ifa_name : "";
         c.address = buf;
         c.isLoopback = (c.address.rfind("127.", 0) == 0);
+        // Derive the interface's network in CIDR form from its netmask
+        // so pairing flows can allowlist the whole overlay subnet.
+        if (it->ifa_netmask && it->ifa_netmask->sa_family == AF_INET) {
+            sockaddr_in* nm = (sockaddr_in*)it->ifa_netmask;
+            uint32_t mask = ntohl(nm->sin_addr.s_addr);
+            int prefix = 0;
+            uint32_t m = mask;
+            while (m & 0x80000000u) { prefix++; m <<= 1; }
+            uint32_t netAddr = ntohl(sa->sin_addr.s_addr) & mask;
+            char netBuf[INET_ADDRSTRLEN] = {0};
+            uint32_t netBe = htonl(netAddr);
+            inet_ntop(AF_INET, &netBe, netBuf, sizeof(netBuf));
+            c.cidr = std::string(netBuf) + "/" + std::to_string(prefix);
+        }
         // ZeroTier interfaces are typically named "zt..." with /24 inside
         // managed networks; Tailscale interfaces are typically "tailscale0"
         // or "utun*" on macOS with 100.64.0.0/10 CGNAT addresses.

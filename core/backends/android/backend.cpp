@@ -720,15 +720,52 @@ namespace backend {
             return -1;
 
         jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL)
+        if (native_activity_clazz == NULL) {
+            java_vm->DetachCurrentThread();
             return -1;
+        }
 
+        // Preferred path: walk MainActivity's multi-device USB list so a
+        // module can find ITS device by vid/pid even when several USB
+        // devices are attached (HackRF + RTL dongles + GPS puck). The old
+        // single-slot SDR_FD field only remembered the last-granted device,
+        // which made every other SDR invisible to its source module.
+        jmethodID count_mid = java_env->GetMethodID(native_activity_clazz, "usbDevCount", "()I");
+        jmethodID vid_mid = java_env->GetMethodID(native_activity_clazz, "usbDevVid", "(I)I");
+        jmethodID pid_mid = java_env->GetMethodID(native_activity_clazz, "usbDevPid", "(I)I");
+        jmethodID fd_mid = java_env->GetMethodID(native_activity_clazz, "usbDevFd", "(I)I");
+        if (count_mid && vid_mid && pid_mid && fd_mid) {
+            int count = java_env->CallIntMethod(app->activity->clazz, count_mid);
+            for (int i = 0; i < count; i++) {
+                int dvid = java_env->CallIntMethod(app->activity->clazz, vid_mid, (jint)i);
+                int dpid = java_env->CallIntMethod(app->activity->clazz, pid_mid, (jint)i);
+                bool match = allowedVidPids.empty();
+                for (auto const& vp : allowedVidPids) {
+                    if (vp.vid == dvid && vp.pid == dpid) { match = true; break; }
+                }
+                if (!match) { continue; }
+                int dfd = java_env->CallIntMethod(app->activity->clazz, fd_mid, (jint)i);
+                if (dfd < 0) { continue; }
+                vid = dvid;
+                pid = dpid;
+                java_vm->DetachCurrentThread();
+                return dfd;
+            }
+        }
+        else if (java_env->ExceptionCheck()) {
+            java_env->ExceptionClear();
+        }
+
+        // Legacy fallback: single-slot fields (kept for older MainActivity
+        // builds and as a safety net).
         jfieldID fd_field_id = java_env->GetFieldID(native_activity_clazz, "SDR_FD", "I");
         jfieldID vid_field_id = java_env->GetFieldID(native_activity_clazz, "SDR_VID", "I");
         jfieldID pid_field_id = java_env->GetFieldID(native_activity_clazz, "SDR_PID", "I");
         
-        if (!fd_field_id || !vid_field_id || !pid_field_id)
+        if (!fd_field_id || !vid_field_id || !pid_field_id) {
+            java_vm->DetachCurrentThread();
             return -1;
+        }
 
         int fd = java_env->GetIntField(app->activity->clazz, fd_field_id);
         vid = java_env->GetIntField(app->activity->clazz, vid_field_id);

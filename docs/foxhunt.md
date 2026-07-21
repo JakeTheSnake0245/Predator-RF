@@ -46,9 +46,17 @@ regulations. Before ARMing:
   - `source_modules/soapy_source/src/foxhunt_tx.cpp` — SoapySDR TX
     (Linux/RPi: HackRF, Pluto via Soapy, etc.).
   - `source_modules/plutosdr_source/src/foxhunt_tx.cpp` — libiio TX
-    (**the Android path** — the Android sdr-kit ships libiio/libad9361 but
+    (Android network path — the Android sdr-kit ships libiio/libad9361 but
     not SoapySDR).
-  Both files are picked up by the modules' `file(GLOB src/*.cpp)` and are
+  - `source_modules/hackrf_source/src/foxhunt_tx.cpp` — libhackrf TX
+    (**the Android USB path**: Soapy is OFF on Android, so before this
+    driver a HackRF plugged into the phone could not be selected in the
+    Fox Hunt tab). Ring-buffered `hackrf_start_tx` callback; underruns pad
+    silence; TX VGA 0–47 dB, RF amp forced off; Android fd re-acquired via
+    `backend::getDeviceFD` at open() time (never cached — stale fds
+    segfault in libusb). Device is single-user: stop the HackRF RX source
+    before opening TX.
+  These files are picked up by the modules' `file(GLOB src/*.cpp)` and are
   fully `#ifdef OPT_BUILD_FOXHUNT`-guarded, so no CMakeLists changes were
   needed inside the modules and no new build.gradle target exists.
 - UI: `Fox Hunt TX` tab in `core/src/gui/main_window.cpp`

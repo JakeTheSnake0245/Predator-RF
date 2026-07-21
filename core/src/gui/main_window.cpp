@@ -42,6 +42,7 @@
 #include <backend.h>
 #include "../predator/decoder_ingest.h"
 #include "../predator/kujhad_fleet.h"
+#include "../predator/qr/qrcodegen.hpp"
 #include "../predator/kujhad_rns.h"
 #include "../predator/native_decoder_registry.h"
 #include "../predator/kraken_tune_bus.h"
@@ -504,12 +505,22 @@ struct BaselineBin {
     double mx  = -1e9;
 };
 
+// Cross-tab "jump right to a section" target (field feedback: shortcuts must
+// land on the section, not just the tab). 0 = none, 1 = System > Source &
+// Device, 2 = Mission tab top.
+static int predatorJumpSection = 0;
+
 void MainWindow::draw() {
     ImGui::Begin("Main", NULL, WINDOW_FLAGS);
     ImVec4 textCol = ImGui::GetStyleColorVec4(ImGuiCol_Text);
 #ifdef __ANDROID__
     ImGuiStyle& imguiStyle = ImGui::GetStyle();
     imguiStyle.TouchExtraPadding = ImVec2(7.0f * style::uiScale, 7.0f * style::uiScale);
+    // Field feedback: buttons too small/finicky with sweaty fingers. Taller
+    // frame padding fattens every button / combo / input across the app.
+    imguiStyle.FramePadding = ImVec2(std::max(imguiStyle.FramePadding.x, 10.0f * style::uiScale),
+                                     std::max(imguiStyle.FramePadding.y, 9.0f * style::uiScale));
+    imguiStyle.ScrollbarSize = std::max(imguiStyle.ScrollbarSize, 20.0f * style::uiScale);
 #endif
 
     ImGui::WaterfallVFO* vfo = NULL;
@@ -846,6 +857,12 @@ void MainWindow::draw() {
         // instead of full QWERTY while this edit is up. Reset when the
         // popup closes so the next text field gets QWERTY again.
         bool                              numeric = false;
+        // Frequency fill-from-back mode (field feedback: typing long Hz
+        // strings as "xxxxxxxxxxx" is error-prone). The operator types raw
+        // digits which fill in from the Hz end, and a live preview shows
+        // the value working its way up to the decimal point in
+        // "xxxx.xxxxxx MHz" format.
+        bool                              freqMode = false;
         char                              buf[256] = {};
         char                              label[128] = {};
         std::function<void(std::string)>  onAccept;
@@ -886,6 +903,7 @@ void MainWindow::draw() {
         pendEdit.open          = true;
         pendEdit.setFocus      = true;
         pendEdit.numeric       = false;
+        pendEdit.freqMode      = false;
         // Defer the actual OpenPopup until we're at the root ID stack
         // (see comment on openRequested above). Until this fix every
         // drawEditButton click queued a popup ID nobody could find,
@@ -904,6 +922,33 @@ void MainWindow::draw() {
         pendEdit.open          = true;
         pendEdit.setFocus      = true;
         pendEdit.numeric       = true;
+        pendEdit.freqMode      = false;
+        pendEdit.openRequested = true;
+    };
+
+    // Frequency variant: numeric keyboard + fill-from-back digit entry.
+    // The callback receives the value in Hz as a plain digit string.
+    auto openPendEditFreq = [&](const char* label, double currentHz,
+                                std::function<void(double)> cb) {
+        snprintf(pendEdit.label, sizeof(pendEdit.label), "%s", label);
+        if (currentHz > 0.0) {
+            snprintf(pendEdit.buf, sizeof(pendEdit.buf), "%.0f", currentHz);
+        }
+        else {
+            pendEdit.buf[0] = 0;
+        }
+        pendEdit.onAccept = [cb = std::move(cb)](std::string text) {
+            // Keep digits only; interpret as Hz.
+            std::string digits;
+            for (char c : text) { if (c >= '0' && c <= '9') digits += c; }
+            if (digits.empty()) { return; }
+            if (digits.size() > 12) { digits = digits.substr(digits.size() - 12); }
+            cb(std::strtod(digits.c_str(), nullptr));
+        };
+        pendEdit.open          = true;
+        pendEdit.setFocus      = true;
+        pendEdit.numeric       = true;
+        pendEdit.freqMode      = true;
         pendEdit.openRequested = true;
     };
 
@@ -955,6 +1000,21 @@ void MainWindow::draw() {
                     cb(next);
                 }
             });
+        }
+    };
+
+    // Frequency field: preview shows "xxxx.xxxxxx MHz"; tapping opens the
+    // fill-from-back numeric popup. Callback gets the new value in Hz.
+    auto drawEditFreqButton = [&](const char* label, double valueHz,
+                                  std::function<void(double)> cb) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%.6f MHz", valueHz / 1e6);
+        ImGui::TextDisabled("%s", label);
+        ImGui::PushID(label);
+        bool clicked = ImGui::Button(buf, ImVec2(ImGui::GetContentRegionAvail().x, 0));
+        ImGui::PopID();
+        if (clicked) {
+            openPendEditFreq(label, valueHz, std::move(cb));
         }
     };
 
@@ -3666,9 +3726,16 @@ void MainWindow::draw() {
     float waterfallWidth = std::max<float>(winSize.x - railWidth - (3.0f * pad), 120.0f * style::uiScale);
     float railX = winSize.x - railWidth - pad;  // anchor to right edge; immune to any waterfallWidth clamping
     float overlayMinWidth = std::min<float>(320.0f * style::uiScale, waterfallWidth);
-    float overlayMaxWidth = std::max<float>(overlayMinWidth, waterfallWidth - (28.0f * style::uiScale));
 #ifdef __ANDROID__
-    float overlayPreferredWidth = waterfallWidth * 0.78f;
+    float overlayMaxWidth = std::max<float>(overlayMinWidth, waterfallWidth);
+#else
+    float overlayMaxWidth = std::max<float>(overlayMinWidth, waterfallWidth - (28.0f * style::uiScale));
+#endif
+#ifdef __ANDROID__
+    // Field feedback: right tabs were truncated and hard to use. Go full
+    // screen over the spectrum area (the right rail stays visible so the
+    // operator can still switch tabs or close back to the spectrum).
+    float overlayPreferredWidth = waterfallWidth;
 #else
     float overlayPreferredWidth = (float)menuWidth;
 #endif
@@ -3692,11 +3759,46 @@ void MainWindow::draw() {
     ImGui::TextUnformatted("Predator RF");
 
     ImGui::SameLine();
-    const char* liveStateLabel = playing ? T("LIVE") : (sourceName.empty() ? T("NOT READY") : T("READY"));
-    ImVec4 liveStateColor = playing ? ImVec4(0.42f, 0.78f, 0.48f, 1.0f) : (sourceName.empty() ? ImVec4(0.83f, 0.42f, 0.32f, 1.0f) : ImVec4(0.64f, 0.71f, 0.41f, 1.0f));
+    // SDR status badge with real state variance (field feedback: it used to
+    // sit light-green "READY" no matter what). States:
+    //   NO SDR    (red)    - no source module selected
+    //   READY     (yellow) - source selected but not started
+    //   LIVE      (green)  - running and FFT frames are flowing
+    //   STALLED   (orange) - running but no FFT frames for >2.5s (USB died,
+    //                        permission lost, stream wedged)
+    static uint64_t lastFFTPushCount = 0;
+    static double lastFFTPushTime = 0.0;
+    {
+        uint64_t cnt = gui::waterfall.getFFTPushCount();
+        double now = ImGui::GetTime();
+        if (cnt != lastFFTPushCount) {
+            lastFFTPushCount = cnt;
+            lastFFTPushTime = now;
+        }
+    }
+    bool fftFlowing = (ImGui::GetTime() - lastFFTPushTime) < 2.5;
+    const char* liveStateLabel;
+    ImVec4 liveStateColor;
+    if (sourceName.empty()) {
+        liveStateLabel = T("NO SDR");
+        liveStateColor = ImVec4(0.83f, 0.42f, 0.32f, 1.0f);
+    }
+    else if (!playing) {
+        liveStateLabel = T("READY");
+        liveStateColor = ImVec4(0.78f, 0.72f, 0.35f, 1.0f);
+    }
+    else if (fftFlowing) {
+        liveStateLabel = T("LIVE");
+        liveStateColor = ImVec4(0.42f, 0.78f, 0.48f, 1.0f);
+    }
+    else {
+        liveStateLabel = T("STALLED");
+        liveStateColor = ImVec4(0.87f, 0.55f, 0.25f, 1.0f);
+    }
     if (drawBadge(liveStateLabel, liveStateColor) && !(playButtonLocked && !playing)) {
         if (sourceName.empty() && !playing) {
             predatorTab = PREDATOR_TAB_SYSTEM;
+            predatorJumpSection = 1;
             showMenu = true;
             savePredatorState();
         }
@@ -3708,6 +3810,7 @@ void MainWindow::draw() {
     ImGui::SameLine();
     if (drawBadge(sourceName.empty() ? T("Select SDR") : sourceName.c_str(), ImVec4(0.73f, 0.70f, 0.45f, 1.0f))) {
         predatorTab = PREDATOR_TAB_SYSTEM;
+        predatorJumpSection = 1;
         showMenu = true;
         savePredatorState();
     }
@@ -3802,14 +3905,95 @@ void MainWindow::draw() {
         }
         ImGui::PopID();
     }
+    // ── A1/A2 operator arrow markers ─────────────────────────────────────
+    // Field feature: two frequency arrows the operator drops by tapping the
+    // spectrum. Tap A1/A2 to ARM (next spectrum tap places it), long-hold
+    // (~0.6s) to toggle the arrow off/on. Ghost lines show on both spectrum
+    // views; the far right of this row shows the A1↔A2 frequency delta.
+    static bool   predatorArrowOn[2]   = { false, false };
+    static double predatorArrowFreq[2] = { 0.0, 0.0 };
+    static int    predatorArrowArmed   = -1;
+    static bool   predatorArrowHoldFired[2] = { false, false };
+    static bool   predatorArrowLoaded  = false;
+    if (!predatorArrowLoaded) {
+        predatorArrowLoaded = true;
+        core::configManager.acquire();
+        predatorArrowOn[0]   = readJsonBool(core::configManager.conf, "predatorArrowOn1", false);
+        predatorArrowOn[1]   = readJsonBool(core::configManager.conf, "predatorArrowOn2", false);
+        predatorArrowFreq[0] = readJsonDouble(core::configManager.conf, "predatorArrowFreq1", 0.0);
+        predatorArrowFreq[1] = readJsonDouble(core::configManager.conf, "predatorArrowFreq2", 0.0);
+        core::configManager.release();
+    }
+    auto saveArrowMarkers = [&]() {
+        core::configManager.acquire();
+        core::configManager.conf["predatorArrowOn1"]   = predatorArrowOn[0];
+        core::configManager.conf["predatorArrowOn2"]   = predatorArrowOn[1];
+        core::configManager.conf["predatorArrowFreq1"] = predatorArrowFreq[0];
+        core::configManager.conf["predatorArrowFreq2"] = predatorArrowFreq[1];
+        core::configManager.release(true);
+    };
+    for (int ai = 0; ai < 2; ai++) {
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(origY);
+        bool armed = (predatorArrowArmed == ai);
+        ImVec4 btnCol = armed              ? ImVec4(0.85f, 0.55f, 0.15f, 1.0f)
+                      : predatorArrowOn[ai] ? (ai == 0 ? ImVec4(0.70f, 0.35f, 0.12f, 1.0f) : ImVec4(0.15f, 0.42f, 0.68f, 1.0f))
+                                            : ImVec4(0.22f, 0.25f, 0.22f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, btnCol);
+        char aLbl[8];
+        snprintf(aLbl, sizeof(aLbl), "A%d", ai + 1);
+        bool aClicked = ImGui::Button(aLbl, ImVec2(44.0f * style::uiScale, 36.0f * style::uiScale));
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemActive() && !predatorArrowHoldFired[ai]
+            && ImGui::GetIO().MouseDownDuration[ImGuiMouseButton_Left] > 0.6f) {
+            // Long hold: toggle the arrow off/on without placing.
+            predatorArrowHoldFired[ai] = true;
+            predatorArrowOn[ai] = !predatorArrowOn[ai];
+            if (!predatorArrowOn[ai] && predatorArrowArmed == ai) { predatorArrowArmed = -1; }
+            saveArrowMarkers();
+        }
+        if (aClicked) {
+            if (predatorArrowHoldFired[ai]) {
+                predatorArrowHoldFired[ai] = false;  // release after long hold: swallow the click
+            }
+            else {
+                // Tap: arm (or disarm) placement — next spectrum tap drops the arrow.
+                predatorArrowArmed = (predatorArrowArmed == ai) ? -1 : ai;
+            }
+        }
+        if (!ImGui::IsItemActive() && !aClicked) { predatorArrowHoldFired[ai] = false; }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", T("Tap: arm, then tap the spectrum to place.\nLong hold: toggle arrow off/on."));
+        }
+    }
     ImGui::SameLine();
     ImGui::SetCursorPosY(origY + (5.0f * style::uiScale));
-    ImGui::TextDisabled("Select a right-side tab to overlay controls on the spectrum.");
+    if (predatorArrowArmed >= 0) {
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.30f, 1.0f), "%s A%d",
+                           T("Tap the spectrum to place"), predatorArrowArmed + 1);
+    }
+    else {
+        ImGui::TextDisabled("Select a right-side tab to overlay controls on the spectrum.");
+    }
+    if (predatorArrowOn[0] && predatorArrowOn[1] && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0) {
+        char deltaTxt[64];
+        double deltaHz = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
+        if (deltaHz >= 1e6)      snprintf(deltaTxt, sizeof(deltaTxt), "\xCE\x94 %.6f MHz", deltaHz / 1e6);
+        else if (deltaHz >= 1e3) snprintf(deltaTxt, sizeof(deltaTxt), "\xCE\x94 %.3f kHz", deltaHz / 1e3);
+        else                     snprintf(deltaTxt, sizeof(deltaTxt), "\xCE\x94 %.0f Hz", deltaHz);
+        ImGui::SameLine();
+        float deltaW = ImGui::CalcTextSize(deltaTxt).x;
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - deltaW - (16.0f * style::uiScale)));
+        ImGui::SetCursorPosY(origY + (5.0f * style::uiScale));
+        ImGui::TextColored(ImVec4(0.60f, 0.90f, 0.60f, 1.0f), "%s", deltaTxt);
+    }
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
 
-    lockWaterfallControls = showMenu;
+    // Placement mode also locks normal waterfall tuning so the placement tap
+    // cannot simultaneously drag the VFO.
+    lockWaterfallControls = showMenu || (predatorArrowArmed >= 0);
 
     ImGui::SetCursorPos(ImVec2(pad, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.04f, 0.98f));
@@ -4238,6 +4422,61 @@ void MainWindow::draw() {
                 }
             }
         }
+
+        // ── A1/A2 arrow markers: placement + ghost lines ──────────────
+        // Pinned to *frequency*, so they track retunes and zooms. The
+        // placement tap is only accepted inside the FFT or waterfall
+        // rects — taps on the frequency scale, scrollbars, or overlay
+        // panels never place an arrow.
+        if (fftW > 1.0f && highF > lowF) {
+            ImDrawList* adl = ImGui::GetWindowDrawList();
+            // Ownership gate: this code runs inside the "Waterfall" child,
+            // so IsWindowHovered() is only true when the click is actually
+            // owned by the waterfall — clicks landing on the overlay panel,
+            // right rail, popups, or scrollbars hover THOSE windows and are
+            // rejected even if their coordinates overlap the spectrum rects.
+            if (predatorArrowArmed >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+                && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+                ImVec2 mp = ImGui::GetMousePos();
+                bool inFFT = (mp.x >= fMin.x && mp.x <= fMax.x && mp.y >= fMin.y && mp.y <= fMax.y);
+                bool inWF  = (mp.x >= wMin.x && mp.x <= wMax.x && mp.y >= wMin.y && mp.y <= wMax.y);
+                if (inFFT || inWF) {
+                    int idx = predatorArrowArmed;
+                    predatorArrowFreq[idx] = lowF + ((double)(mp.x - fMin.x) / (double)fftW) * (highF - lowF);
+                    predatorArrowOn[idx]   = true;
+                    predatorArrowArmed     = -1;
+                    saveArrowMarkers();
+                }
+            }
+            for (int ai = 0; ai < 2; ai++) {
+                if (!predatorArrowOn[ai]) continue;
+                double af = predatorArrowFreq[ai];
+                if (af < lowF || af > highF) continue;
+                float ax = fMin.x + (float)((af - lowF) / (highF - lowF)) * fftW;
+                ImU32 solidCol = (ai == 0) ? IM_COL32(255, 130,  40, 235) : IM_COL32( 70, 180, 255, 235);
+                ImU32 ghostCol = (ai == 0) ? IM_COL32(255, 130,  40,  90) : IM_COL32( 70, 180, 255,  90);
+                // Ghost line on the FFT view + ghost line on the waterfall.
+                adl->AddLine(ImVec2(ax, fMin.y), ImVec2(ax, fMax.y), ghostCol, 2.0f * style::uiScale);
+                if (wMax.y > wMin.y) {
+                    adl->AddLine(ImVec2(ax, wMin.y), ImVec2(ax, wMax.y), ghostCol, 2.0f * style::uiScale);
+                }
+                // Downward arrowhead + label at the top of the FFT view.
+                float ahW = 7.0f * style::uiScale;
+                float ahH = 10.0f * style::uiScale;
+                float ahY = fMin.y + 2.0f * style::uiScale;
+                adl->AddTriangleFilled(ImVec2(ax - ahW, ahY), ImVec2(ax + ahW, ahY),
+                                       ImVec2(ax, ahY + ahH), solidCol);
+                char aTag[16];
+                snprintf(aTag, sizeof(aTag), "A%d", ai + 1);
+                ImVec2 tagSz = ImGui::CalcTextSize(aTag);
+                float tagX = ax - tagSz.x * 0.5f;
+                if (tagX < fMin.x) tagX = fMin.x;
+                if (tagX + tagSz.x > fMax.x) tagX = fMax.x - tagSz.x;
+                float tagY = ahY + ahH + 2.0f * style::uiScale;
+                adl->AddRectFilled(ImVec2(tagX - 2, tagY - 1), ImVec2(tagX + tagSz.x + 2, tagY + tagSz.y + 1), IM_COL32(0, 0, 0, 170));
+                adl->AddText(ImVec2(tagX, tagY), solidCol, aTag);
+            }
+        }
     }
 
     ImGui::EndChild();
@@ -4249,8 +4488,13 @@ void MainWindow::draw() {
         ImGui::BeginChild("PredatorOverlay", ImVec2(overlayWidth, contentHeight), true);
         ImGui::TextUnformatted(tabTitles[predatorTab]);
         ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - (38.0f * style::uiScale));
-        if (ImGui::Button("X", ImVec2(26.0f * style::uiScale, 26.0f * style::uiScale))) {
+#ifdef __ANDROID__
+        float closeBtnSize = 44.0f * style::uiScale;  // finger-sized close target
+#else
+        float closeBtnSize = 26.0f * style::uiScale;
+#endif
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - closeBtnSize - (12.0f * style::uiScale));
+        if (ImGui::Button("X", ImVec2(closeBtnSize, closeBtnSize))) {
             showMenu = false;
             savePredatorState();
         }
@@ -4265,20 +4509,18 @@ void MainWindow::draw() {
             if (ImGui::CollapsingHeader(T("Band Plan"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 bandplanmenu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader(T("Current Mission Mode"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::TextUnformatted(missionModes[predatorMissionMode]);
-                ImGui::TextWrapped("%s", missionModeDescriptions[predatorMissionMode]);
-            }
             if (ImGui::CollapsingHeader(T("Mission Run"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 drawMissionRunControls();
             }
             if (ImGui::CollapsingHeader(T("Quick Actions"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Button(T("Open SDR / Settings"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     predatorTab = PREDATOR_TAB_SYSTEM;
+                    predatorJumpSection = 1;
                     savePredatorState();
                 }
                 if (ImGui::Button(T("Open Mission Config"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     predatorTab = PREDATOR_TAB_MISSION;
+                    predatorJumpSection = 2;
                     savePredatorState();
                 }
             }
@@ -5879,6 +6121,10 @@ void MainWindow::draw() {
             }
         }
         else if (predatorTab == PREDATOR_TAB_MISSION) {
+            if (predatorJumpSection == 2) {
+                ImGui::SetScrollY(0.0f);
+                predatorJumpSection = 0;
+            }
             static char newBandName[64] = "New Band";
             static double newBandStart = 150000000.0;
             static double newBandStop = 170000000.0;
@@ -6078,9 +6324,9 @@ void MainWindow::draw() {
                     [&](std::string nextName) {
                         snprintf(newBandName, sizeof(newBandName), "%s", nextName.c_str());
                     });
-                drawEditDoubleButton(T("Band Start Hz"), newBandStart, "%.0f",
+                drawEditFreqButton(T("Band Start"), newBandStart,
                     [&](double nextStart) { newBandStart = nextStart; });
-                drawEditDoubleButton(T("Band Stop Hz"), newBandStop, "%.0f",
+                drawEditFreqButton(T("Band Stop"), newBandStop,
                     [&](double nextStop) { newBandStop = nextStop; });
                 float stepBtnW = (fw - 4.0f * style::uiScale) * 0.5f;
                 if (ImGui::Button("- 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart -= 1e6; newBandStop -= 1e6; }
@@ -6141,7 +6387,7 @@ void MainWindow::draw() {
                     updated.push_back(row);
                     commitTargets(updated);
                 }
-                drawEditDoubleButton(T("Target Hz"), newTargetFreq, "%.0f",
+                drawEditFreqButton(T("Target Frequency"), newTargetFreq,
                     [&](double nextFreq) { newTargetFreq = nextFreq; });
                 drawEditDoubleButton(T("Target Bandwidth Hz"), newTargetBandwidth, "%.0f",
                     [&](double nextBw) { newTargetBandwidth = nextBw; });
@@ -6196,7 +6442,7 @@ void MainWindow::draw() {
                     updated.push_back(row);
                     commitExcludes(updated);
                 }
-                drawEditDoubleButton(T("Exclude Hz"), newExcludeFreq, "%.0f",
+                drawEditFreqButton(T("Exclude Frequency"), newExcludeFreq,
                     [&](double nextFreq) { newExcludeFreq = nextFreq; });
                 drawEditDoubleButton(T("Exclude Bandwidth Hz"), newExcludeBandwidth, "%.0f",
                     [&](double nextBw) { newExcludeBandwidth = nextBw; });
@@ -6295,6 +6541,23 @@ void MainWindow::draw() {
                 bool scanUxChanged = false;
                 scanUxChanged |= ImGui::Checkbox(T("Hold on New Hit"), &predatorHoldOnNewHit);
                 scanUxChanged |= ImGui::Checkbox(T("Suppress Duplicate Hits"), &predatorSuppressDuplicateHits);
+                // Field feedback: Scan + QuickScan stacked markers on the
+                // same signal at slightly different offsets. This width is
+                // the "same signal" merge window — any new hit within +/-
+                // this bandwidth of an existing hit updates it instead of
+                // planting a second marker.
+                {
+                    int clusterEdit = (int)std::max<double>(hitClusterHz, 100.0);
+                    drawEditIntButton(T("Hit Merge Bandwidth (Hz)"), clusterEdit,
+                        [](int nextCluster) {
+                            core::configManager.acquire();
+                            core::configManager.conf["predatorHitClusterHz"] = (double)std::clamp<int>(nextCluster, 100, 10000000);
+                            core::configManager.release(true);
+                        });
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("Hits within this bandwidth of an existing hit are merged into it\ninstead of creating an overlapping marker. Widen for FM voice\n(~12500), narrow for tight digital channels."));
+                    }
+                }
                 drawEditIntButton(T("Duplicate Window (s)"), predatorDuplicateHitWindowSec,
                     [this](int nextWindow) {
                         predatorDuplicateHitWindowSec = std::clamp<int>(nextWindow, 1, 600);
@@ -6618,6 +6881,117 @@ void MainWindow::draw() {
                     }
                     ImGui::TextWrapped("%s", T("ZeroTier and Tailscale interfaces are preferred for cross-instance traffic. Override above to publish a different host (e.g. DNS name, NAT'd IP)."));
                 }
+
+                // ── QR Pairing ──────────────────────────────────────────
+                // One-tap pairing: asks for a node name, picks the best
+                // overlay (ZeroTier/Tailscale) interface from the scan,
+                // allowlists that overlay's CIDR for plain HTTP (when TLS
+                // is off), and renders a QR code with everything a
+                // controller needs to add this node: name, host, port
+                // (41947 by default) and the API key.
+                if (ImGui::CollapsingHeader(T("QR Pairing"))) {
+                    static std::string pairPayload;
+                    static std::string pairStatus;
+                    static std::vector<std::vector<bool>> pairModules;
+                    if (ImGui::Button(T("Generate Pairing QR"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        openPendEdit(T("Node Name"), kujhadDeviceName, [this](std::string nextName) {
+                            if (!nextName.empty()) {
+                                kujhadDeviceName = nextName;
+                                core::configManager.acquire();
+                                core::configManager.conf["kujhadDeviceName"] = kujhadDeviceName;
+                                core::configManager.release(true);
+                            }
+                            // Pick the best interface from the scan —
+                            // enumerate is already sorted ZT > TS > LAN.
+                            auto pairCands = predator::kujhadEnumerateInterfaces();
+                            std::string host = kujhadAdvertiseAddress;
+                            std::string overlayCidr;
+                            bool overlayIface = false;
+                            if (!pairCands.empty()) {
+                                if (host.empty()) host = pairCands.front().address;
+                                overlayCidr  = pairCands.front().cidr;
+                                overlayIface = pairCands.front().isZerotier || pairCands.front().isTailscale;
+                            }
+                            pairStatus.clear();
+                            if (host.empty()) {
+                                pairStatus = "No usable interface found — connect the overlay VPN first.";
+                                pairPayload.clear();
+                                pairModules.clear();
+                                return;
+                            }
+                            // When TLS is off, plain HTTP is loopback-only
+                            // unless the overlay CIDR is allowlisted; do
+                            // that automatically for ZT/TS interfaces so
+                            // the paired controller can actually connect.
+                            if (!kujhadTlsEnabled && overlayIface && !overlayCidr.empty()
+                                && kujhadPlainHttpAllowCidrs.find(overlayCidr) == std::string::npos) {
+                                if (!kujhadPlainHttpAllowCidrs.empty()) kujhadPlainHttpAllowCidrs += ", ";
+                                kujhadPlainHttpAllowCidrs += overlayCidr;
+                                kujhadServer.setPlainHttpAllowlist(
+                                    predator::kujhadSplitCidrList(kujhadPlainHttpAllowCidrs));
+                                core::configManager.acquire();
+                                core::configManager.conf["kujhadPlainHttpAllowCidrs"] = kujhadPlainHttpAllowCidrs;
+                                core::configManager.release(true);
+                                pairStatus = std::string("Allowlisted overlay CIDR: ") + overlayCidr;
+                            }
+                            json pj;
+                            pj["v"]    = 1;
+                            pj["t"]    = "kujhad-pair";
+                            pj["name"] = kujhadDeviceName;
+                            pj["host"] = host;
+                            pj["port"] = kujhadDeviceListenPort;
+                            pj["key"]  = kujhadApiKey;
+                            if (!overlayCidr.empty()) pj["cidr"] = overlayCidr;
+                            pairPayload = pj.dump();
+                            pairModules.clear();
+                            try {
+                                auto qr = qrcodegen::QrCode::encodeText(pairPayload.c_str(),
+                                                                        qrcodegen::QrCode::Ecc::MEDIUM);
+                                int qn = qr.getSize();
+                                pairModules.assign(qn, std::vector<bool>(qn, false));
+                                for (int qy = 0; qy < qn; qy++) {
+                                    for (int qx = 0; qx < qn; qx++) {
+                                        pairModules[qy][qx] = qr.getModule(qx, qy);
+                                    }
+                                }
+                            }
+                            catch (const std::exception& e) {
+                                pairStatus = std::string("QR encode failed: ") + e.what();
+                            }
+                        });
+                    }
+                    if (!pairModules.empty()) {
+                        int qn = (int)pairModules.size();
+                        float quiet = 4.0f; // quiet-zone modules around the symbol
+                        float availW = ImGui::GetContentRegionAvail().x;
+                        float target = std::min(availW, 280.0f * style::uiScale);
+                        float cell = std::max(1.0f, floorf(target / (float)(qn + (int)(quiet * 2.0f))));
+                        float side = cell * (qn + quiet * 2.0f);
+                        ImVec2 qOrigin = ImGui::GetCursorScreenPos();
+                        qOrigin.x += std::max(0.0f, (availW - side) * 0.5f);
+                        ImDrawList* qdl = ImGui::GetWindowDrawList();
+                        qdl->AddRectFilled(qOrigin, ImVec2(qOrigin.x + side, qOrigin.y + side), IM_COL32(255, 255, 255, 255));
+                        for (int qy = 0; qy < qn; qy++) {
+                            for (int qx = 0; qx < qn; qx++) {
+                                if (!pairModules[qy][qx]) continue;
+                                float px = qOrigin.x + (quiet + qx) * cell;
+                                float py = qOrigin.y + (quiet + qy) * cell;
+                                qdl->AddRectFilled(ImVec2(px, py), ImVec2(px + cell, py + cell), IM_COL32(0, 0, 0, 255));
+                            }
+                        }
+                        ImGui::Dummy(ImVec2(side, side + 4.0f * style::uiScale));
+                        ImGui::TextWrapped("%s", T("Scan from the controller, or copy the pairing text below into the controller's \"Paste pairing code\" box."));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.70f, 0.25f, 1.0f));
+                        ImGui::TextWrapped("%s", T("The pairing code contains this node's API key — only show it to trusted operators."));
+                        ImGui::PopStyleColor();
+                        ImGui::PushTextWrapPos();
+                        ImGui::TextDisabled("%s", pairPayload.c_str());
+                        ImGui::PopTextWrapPos();
+                    }
+                    if (!pairStatus.empty()) {
+                        ImGui::TextWrapped("%s", pairStatus.c_str());
+                    }
+                }
             }
             { // Controller
                 // ── Pre-fill state: written by Discovered Peers "Add to fleet",
@@ -6763,6 +7137,34 @@ void MainWindow::draw() {
                         rnsPreFillPending  = false;
                     }
 
+                    // Pairing-code paste: fills the whole form (name, host,
+                    // port, API key) from the JSON payload generated by a
+                    // device's "QR Pairing" section. This is the manual
+                    // counterpart to scanning the QR with a camera.
+                    static std::string kujhadPairPasteStatus;
+                    if (ImGui::Button(T("Paste pairing code"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        openPendEdit(T("Pairing code (JSON)"), std::string(""), [](std::string pasted) {
+                            kujhadPairPasteStatus.clear();
+                            try {
+                                json pj = json::parse(pasted);
+                                if (pj.value("t", std::string("")) != "kujhad-pair") {
+                                    kujhadPairPasteStatus = "Not a Kujhad pairing code.";
+                                    return;
+                                }
+                                snprintf(kujhadAddPeerName, sizeof(kujhadAddPeerName), "%s", pj.value("name", std::string("")).c_str());
+                                snprintf(kujhadAddPeerHost, sizeof(kujhadAddPeerHost), "%s", pj.value("host", std::string("")).c_str());
+                                snprintf(kujhadAddPeerKey,  sizeof(kujhadAddPeerKey),  "%s", pj.value("key",  std::string("")).c_str());
+                                kujhadAddPeerPort = std::clamp<int>(pj.value("port", 41947), 1, 65535);
+                                kujhadPairPasteStatus = "Pairing code loaded — review below, then Add peer.";
+                            }
+                            catch (...) {
+                                kujhadPairPasteStatus = "Could not parse pairing code (expected the JSON text under the QR).";
+                            }
+                        });
+                    }
+                    if (!kujhadPairPasteStatus.empty()) {
+                        ImGui::TextWrapped("%s", kujhadPairPasteStatus.c_str());
+                    }
                     drawEditButton(T("Name"), std::string(kujhadAddPeerName),
                         [](std::string nextName) {
                             snprintf(kujhadAddPeerName, sizeof(kujhadAddPeerName), "%s", nextName.c_str());
@@ -6974,7 +7376,7 @@ void MainWindow::draw() {
                     else {
                         auto& client = kujhadClients[kujhadActivePeerIdx];
                         static double cmdFreq = 433920000.0;
-                        drawEditDoubleButton(T("Frequency Hz"), cmdFreq, "%.0f",
+                        drawEditFreqButton(T("Frequency"), cmdFreq,
                             [](double nextFreq) { cmdFreq = nextFreq; });
                         if (ImGui::Button(T("Send tune.set"))) {
                             std::string err;
@@ -8326,16 +8728,21 @@ void MainWindow::draw() {
                 }
                 ImGui::TextWrapped("%s", chineseUi ? "\u8a9e\u8a00\u5207\u63db\u6703\u7acb\u5373\u5957\u7528\u65bc Predator RF \u4efb\u52d9\u4ecb\u9762\u3002" : "Language changes apply immediately to the Predator RF mission interface.");
             }
-            if (ImGui::CollapsingHeader(T("Source & Device"), ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (predatorJumpSection == 1) { ImGui::SetNextItemOpen(true); }
+            bool srcDevOpen = ImGui::CollapsingHeader(T("Source & Device"), ImGuiTreeNodeFlags_DefaultOpen);
+            if (predatorJumpSection == 1) {
+                ImGui::SetScrollHereY(0.0f);
+                predatorJumpSection = 0;
+            }
+            if (srcDevOpen) {
                 sourcemenu::draw(NULL);
             }
             if (ImGui::CollapsingHeader(T("Audio / Sinks"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 sinkmenu::draw(NULL);
             }
-            if (ImGui::CollapsingHeader(T("Display & Band Plan"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                displaymenu::draw(NULL);
-                bandplanmenu::draw(NULL);
-            }
+            // NOTE: Display & Band Plan intentionally NOT duplicated here —
+            // they live in the Spectrum tab (field feedback: System tab had
+            // too many redundant fields).
             if (ImGui::CollapsingHeader(T("Appearance"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 thememenu::draw(NULL);
                 vfo_color_menu::draw(NULL);
@@ -8496,6 +8903,28 @@ void MainWindow::draw() {
                 }
             }
 
+            if (ImGui::CollapsingHeader(T("Recording Locations"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextWrapped("%s", T("Where signal recordings are saved. %ROOT% expands to the app data folder."));
+                ImGui::TextDisabled("%s", T("Voice recordings"));
+                drawEditButton(T("Voice Path"), voiceOutputPath,
+                    [](std::string nextPath) {
+                        if (nextPath.empty()) { nextPath = "%ROOT%/voice"; }
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorVoiceOutputPath"] = nextPath;
+                        core::configManager.release(true);
+                    });
+                ImGui::TextDisabled("%s", T("Data / decoder output"));
+                drawEditButton(T("Data Path"), dataOutputPath,
+                    [](std::string nextPath) {
+                        if (nextPath.empty()) { nextPath = "%ROOT%/data"; }
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDataOutputPath"] = nextPath;
+                        core::configManager.release(true);
+                    });
+                ImGui::TextDisabled("%s", T("Resolved folders"));
+                ImGui::TextWrapped("%s", voiceFolderSelect.expandString(voiceOutputPath).c_str());
+                ImGui::TextWrapped("%s", dataFolderSelect.expandString(dataOutputPath).c_str());
+            }
             if (ImGui::CollapsingHeader(T("Session Export"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 drawEditButton(T("Note"), std::string(sessionNoteBuf),
                     [](std::string nextNote) {
@@ -8566,34 +8995,28 @@ void MainWindow::draw() {
                     ImGui::PopID();
                 }
                 // Start / Stop Hz — use popup so the keyboard doesn't cover the field
-                ImGui::TextDisabled("%s", T("Start Hz"));
+                ImGui::TextDisabled("%s", T("Start"));
                 {
                     ImGui::PushID("##bl_range_start_btn");
                     double* startDst = &blNewRangeStart;
                     char startPreview[48];
-                    snprintf(startPreview, sizeof(startPreview), "%.0f Hz", blNewRangeStart);
+                    snprintf(startPreview, sizeof(startPreview), "%.6f MHz", blNewRangeStart / 1e6);
                     if (ImGui::Button(startPreview, ImVec2(hw, 0))) {
-                        char initStr[48]; snprintf(initStr, sizeof(initStr), "%.0f", blNewRangeStart);
-                        openPendEdit(T("Start Frequency (Hz)"), std::string(initStr),
-                            [startDst](std::string s) {
-                                try { *startDst = std::stod(s); } catch (...) {}
-                            });
+                        openPendEditFreq(T("Start Frequency"), blNewRangeStart,
+                            [startDst](double nextHz) { *startDst = nextHz; });
                     }
                     ImGui::PopID();
                 }
                 ImGui::SameLine(0, 4.0f * style::uiScale);
-                ImGui::TextDisabled("%s", T("Stop Hz"));
+                ImGui::TextDisabled("%s", T("Stop"));
                 {
                     ImGui::PushID("##bl_range_stop_btn");
                     double* stopDst = &blNewRangeStop;
                     char stopPreview[48];
-                    snprintf(stopPreview, sizeof(stopPreview), "%.0f Hz", blNewRangeStop);
+                    snprintf(stopPreview, sizeof(stopPreview), "%.6f MHz", blNewRangeStop / 1e6);
                     if (ImGui::Button(stopPreview, ImVec2(hw, 0))) {
-                        char initStr[48]; snprintf(initStr, sizeof(initStr), "%.0f", blNewRangeStop);
-                        openPendEdit(T("Stop Frequency (Hz)"), std::string(initStr),
-                            [stopDst](std::string s) {
-                                try { *stopDst = std::stod(s); } catch (...) {}
-                            });
+                        openPendEditFreq(T("Stop Frequency"), blNewRangeStop,
+                            [stopDst](double nextHz) { *stopDst = nextHz; });
                     }
                     ImGui::PopID();
                 }
@@ -9190,12 +9613,21 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
+#ifdef __ANDROID__
+    // Touch: rail scrolls vertically and every tab button keeps a minimum
+    // finger-sized height instead of shrinking to fit (field feedback).
+    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true);
+#else
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+#endif
 
     float tabAvailH = ImGui::GetContentRegionAvail().y;
     float tabSpacingY = ImGui::GetStyle().ItemSpacing.y;
     float tabBtnH = std::floor((tabAvailH - (tabSpacingY * (float)(PREDATOR_TAB_COUNT - 1))) / (float)PREDATOR_TAB_COUNT);
     tabBtnH = std::max(tabBtnH, 1.0f);
+#ifdef __ANDROID__
+    tabBtnH = std::max(tabBtnH, 56.0f * style::uiScale);
+#endif
 
     for (int i = 0; i < PREDATOR_TAB_COUNT; i++) {
         bool activeTab = (predatorTab == i);
@@ -9299,6 +9731,21 @@ void MainWindow::draw() {
         ImGuiInputTextFlags textFlags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll;
         if (pendEdit.numeric) { textFlags |= ImGuiInputTextFlags_CharsDecimal; }
         bool submitted = ImGui::InputText("##pend_edit_text", pendEdit.buf, sizeof(pendEdit.buf), textFlags);
+        if (pendEdit.freqMode) {
+            // Fill-from-back live preview: digits typed so far are the
+            // least-significant Hz digits, shown working their way up to
+            // the decimal point in xxxx.xxxxxx MHz format.
+            std::string digits;
+            for (const char* p = pendEdit.buf; *p; p++) {
+                if (*p >= '0' && *p <= '9') digits += *p;
+            }
+            if (digits.size() > 12) { digits = digits.substr(digits.size() - 12); }
+            double hz = digits.empty() ? 0.0 : std::strtod(digits.c_str(), nullptr);
+            char preview[64];
+            snprintf(preview, sizeof(preview), "= %.6f MHz", hz / 1e6);
+            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%s", preview);
+            ImGui::TextDisabled("%s", T("Digits fill from the Hz end toward the decimal point."));
+        }
         ImGui::Spacing();
         float bw2 = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
         if (submitted || ImGui::Button(T("OK##pend_edit_ok"), ImVec2(bw2, 0))) {

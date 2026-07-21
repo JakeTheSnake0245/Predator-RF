@@ -90,6 +90,11 @@ namespace ImGui {
         float* getFFTBuffer();
         void pushFFT();
 
+        // Monotonic count of FFT frames pushed since startup. Used by the
+        // status badge to tell "source running and producing samples" apart
+        // from "source claims to run but the stream stalled".
+        uint64_t getFFTPushCount() { return fftPushCount; }
+
         inline void doZoom(int offset, int width, int outWidth, float* data, float* out) {
             // NOTE: REMOVE THAT SHIT, IT'S JUST A HACKY FIX
             if (offset < 0) {
@@ -319,6 +324,7 @@ namespace ImGui {
         float* smoothingBuf = NULL;
         int currentFFTLine = 0;
         int fftLines = 0;
+        uint64_t fftPushCount = 0;
 
         uint32_t* waterfallFb;
 

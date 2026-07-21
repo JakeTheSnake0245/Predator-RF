@@ -207,6 +207,17 @@ int sdrpp_main(int argc, char* argv[]) {
 #endif
     defConfig["moduleInstances"]["SpyServer Source"]["module"] = "spyserver_source";
     defConfig["moduleInstances"]["SpyServer Source"]["enabled"] = true;
+    // Predator fleet sources. predator_node_source registers the
+    // "Predator Node" cockpit source; krakensdr_source registers the
+    // "KrakenSDR" stub entry. Both are safe no-ops until configured.
+    defConfig["moduleInstances"]["Predator Node Source"]["module"] = "predator_node_source";
+    defConfig["moduleInstances"]["Predator Node Source"]["enabled"] = true;
+    defConfig["moduleInstances"]["KrakenSDR Source"]["module"] = "krakensdr_source";
+    defConfig["moduleInstances"]["KrakenSDR Source"]["enabled"] = true;
+    // Kraken LOB decoder ships disabled: the operator flips it on in
+    // Module Manager once the krakensdr_doa Pi is reachable (docs/krakensdr.md).
+    defConfig["moduleInstances"]["Kraken LOB Decoder"]["module"] = "kraken_lob_decoder";
+    defConfig["moduleInstances"]["Kraken LOB Decoder"]["enabled"] = false;
 
     defConfig["moduleInstances"]["Audio Sink"] = "audio_sink";
     defConfig["moduleInstances"]["Network Sink"] = "network_sink";
@@ -297,6 +308,51 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["kujhadSpectrumIntervalMs"] = 200;
     defConfig["kujhadSpectrumBins"] = 256;
     defConfig["kujhadMirrorPeerSpectrum"] = false;
+    // CRITICAL: every config key the UI persists MUST also exist in
+    // defConfig. The "Remove unused elements" pass below erases any
+    // key not present here on EVERY startup — keys persisted by the
+    // UI but missing from this list silently reset on each app
+    // restart (this bit the Kujhad CIDR allowlist, TLS settings,
+    // CoT, Fox Hunt, and decoder-bridge settings in the field).
+    defConfig["kujhadPeerViewMode"] = 0;
+    defConfig["kujhadTlsEnabled"] = false;
+    defConfig["kujhadTlsCertPath"] = "";
+    defConfig["kujhadTlsKeyPath"] = "";
+    defConfig["kujhadPlainHttpAllowCidrs"] = "";
+    // A1/A2 operator arrow markers (spectrum ghost lines + delta readout).
+    defConfig["predatorArrowOn1"] = false;
+    defConfig["predatorArrowOn2"] = false;
+    defConfig["predatorArrowFreq1"] = 0.0;
+    defConfig["predatorArrowFreq2"] = 0.0;
+    defConfig["predatorDecoderBridges"] = json::object();
+    // TAK CoT reporting (main_window.cpp readJson* load sites).
+    defConfig["cotEnabled"] = false;
+    defConfig["cotUseUdp"] = true;
+    defConfig["cotHost"] = "239.2.3.1";
+    defConfig["cotPort"] = 6969;
+    defConfig["cotUid"] = "";
+    defConfig["cotCallsign"] = "Predator RF";
+    defConfig["cotChatRoom"] = "All Chat Rooms";
+    defConfig["cotSensorMode"] = true;
+    defConfig["cotSaIntervalSec"] = 30.0;
+    // Fox Hunt TX tab (persisted under OPT_BUILD_FOXHUNT builds; keys
+    // must exist unconditionally so a non-foxhunt build doesn't erase
+    // a foxhunt build's saved settings when sharing a config).
+    defConfig["foxhuntFreqMhz"] = 146.565;
+    defConfig["foxhuntBandwidthKhz"] = 200.0;
+    defConfig["foxhuntGainDb"] = 0.0;
+    defConfig["foxhuntSampleRate"] = 1000000.0;
+    defConfig["foxhuntRepeat"] = false;
+    defConfig["foxhuntDutyEnabled"] = false;
+    defConfig["foxhuntDutyOnSec"] = 10.0;
+    defConfig["foxhuntDutyOffSec"] = 20.0;
+    defConfig["foxhuntCallsign"] = "";
+    defConfig["foxhuntCwIdEnabled"] = false;
+    defConfig["foxhuntCwIdPeriodSec"] = 600.0;
+    defConfig["foxhuntCwWpm"] = 20;
+    defConfig["foxhuntDeadManSec"] = 600.0;
+    defConfig["foxhuntSourceMode"] = 0;
+    defConfig["foxhuntFolder"] = "";
     defConfig["showMenu"] = true;
     defConfig["showWaterfall"] = true;
 #ifdef __ANDROID__
@@ -362,11 +418,22 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "rtl_tcp_source.so";
     core::configManager.conf["modules"][modCount++] = "sdrpp_server_source.so";
     core::configManager.conf["modules"][modCount++] = "spyserver_source.so";
+    // CRITICAL: every native module listed in android/app/build.gradle
+    // externalNativeBuild targets must ALSO be listed here, or the .so
+    // ships in the APK but is never dlopen'd — the module silently
+    // doesn't exist at runtime (no Kraken integration UI, decoder
+    // bridges that can never bind, sources missing from the list).
+    core::configManager.conf["modules"][modCount++] = "spectran_http_source.so";
+    core::configManager.conf["modules"][modCount++] = "predator_node_source.so";
+    core::configManager.conf["modules"][modCount++] = "krakensdr_source.so";
 
     core::configManager.conf["modules"][modCount++] = "network_sink.so";
     core::configManager.conf["modules"][modCount++] = "audio_sink.so";
 
     core::configManager.conf["modules"][modCount++] = "m17_decoder.so";
+    core::configManager.conf["modules"][modCount++] = "rtl433_decoder.so";
+    core::configManager.conf["modules"][modCount++] = "dsdfme_decoder.so";
+    core::configManager.conf["modules"][modCount++] = "kraken_lob_decoder.so";
     core::configManager.conf["modules"][modCount++] = "meteor_demodulator.so";
     core::configManager.conf["modules"][modCount++] = "radio.so";
 
@@ -390,6 +457,21 @@ int sdrpp_main(int argc, char* argv[]) {
     }
     if (!core::configManager.conf["moduleInstances"].contains("File Source")) {
         core::configManager.conf["moduleInstances"]["File Source"] = defConfig["moduleInstances"]["File Source"];
+    }
+    // Repair pass for configs written before the Predator fleet /
+    // Kraken instances existed: the "missing elements" fixup below
+    // only repairs top-level keys, so nested moduleInstances entries
+    // must be back-filled explicitly or existing installs never see
+    // the new sources/decoders.
+    const char* predatorRepairInstances[] = {
+        "Predator Node Source",
+        "KrakenSDR Source",
+        "Kraken LOB Decoder"
+    };
+    for (auto name : predatorRepairInstances) {
+        if (!core::configManager.conf["moduleInstances"].contains(name)) {
+            core::configManager.conf["moduleInstances"][name] = defConfig["moduleInstances"][name];
+        }
     }
 #endif
 
