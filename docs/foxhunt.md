@@ -6,6 +6,36 @@ is deliberately local-only: the Kujhad HTTP, RNS `cmd.v1`, web `/api/command`,
 and `predator-rfctl` control-socket `tx.*` hard-rejects are all untouched — no
 remote peer can ever reach this code path.
 
+## Remote Fox Hunt (networked beacon tasking)
+
+Distinct from the local Fox Hunt TX tab above. Remote Fox Hunt lets a
+controller task a *specific fleet node* to run a fox-hunt CW beacon for a
+sanctioned ham-club hunt, over the existing fleet transports.
+
+- **Command class `foxbeacon`** (actions `start`/`stop`). It is deliberately
+  **NOT** a `tx.*` class, so every existing `tx.*` hard-reject (Kujhad HTTP,
+  RNS `cmd.v1`, web `/api/command`, control socket) stays intact — no jamming
+  or arbitrary TX is reachable. `foxbeacon` is allowlisted at the Kujhad HTTP
+  dispatch (`kujhad_fleet.h`) and in the RNS `cmd.v1` allowlist
+  (`backend/rns/cmd.py`).
+- **Per-node opt-in, default OFF.** A node only obeys `foxbeacon` when its
+  operator ticks *"Accept Remote Fox Hunt tasking"* in the Device Server
+  section (config key `remoteFoxHuntEnabled`, persisted). Otherwise the Kujhad
+  dispatch returns 403. The flag is advertised in the node identify payload
+  (`hwProfile.remoteFoxHunt` / top-level `remoteFoxHunt`) so a controller can
+  see which peers accept it.
+- **Execution** is `MainWindow::applyRemoteFoxBeacon(start, args, err)`
+  (`main_window.cpp`), which drives the same `foxhuntEngine` + `TxDriverRegistry`
+  as the local tab, forcing `TxSource::CW_BEACON`. Args (`frequencyHz`,
+  `sampleRate`, `bandwidthHz`, `gainDb`, `callsign`, `cwWpm`) override the
+  node's configured `foxhunt*` values as fallbacks. The whole body is under
+  `#ifdef OPT_BUILD_FOXHUNT`; a non-Fox-Hunt build returns false with
+  "node not built with Fox Hunt support".
+- **Legal responsibility is unchanged** — the transmitting node's operator is
+  still solely responsible for licence, power, band plan, and station ID. A
+  `foxbeacon` with no callsign (node has none configured, none in args) is
+  refused by the engine because CW_BEACON requires a callsign.
+
 ## Legal responsibility
 
 **The operator is solely responsible for legality of any transmission.**

@@ -833,6 +833,12 @@ public:
     void setEventsProvider(std::function<kujhad_json(uint64_t since)> fn) { eventsProvider_ = std::move(fn); }
     void setCommandHandler(CommandHandler fn)     { commandHandler_   = std::move(fn); }
     void setSpectrumProvider(SpectrumProvider fn) { spectrumProvider_ = std::move(fn); }
+    // Opt-in gate for networked Remote Fox Hunt beacon tasking. Default OFF:
+    // a node ignores foxbeacon.* commands until its operator explicitly
+    // enables it for a sanctioned event. This is NOT a tx.* class, so the
+    // hard tx.* reject (jamming/EW) below is untouched by this switch.
+    void setRemoteFoxHuntEnabled(bool en) { remoteFoxHuntEnabled_.store(en); }
+    bool remoteFoxHuntEnabled() const { return remoteFoxHuntEnabled_.load(); }
     // Bound floor of 50ms (20 fps) keeps a runaway operator from saturating
     // the link; default 200ms (5 fps) is enough for situational awareness.
     void setSpectrumIntervalMs(int ms) {
@@ -1332,8 +1338,18 @@ private:
                 res.status = 403;
                 res.body = "{\"ok\":false,\"error\":\"tx commands disabled (RX-only build)\"}";
             }
+            // Remote Fox Hunt beacon tasking is the single networked transmit
+            // path, and it is deliberately NOT a tx.* class (jamming/EW stays
+            // rejected above). It is only honoured when the node operator has
+            // opted in via setRemoteFoxHuntEnabled(true); otherwise 403.
+            else if (cmd.commandClass == "foxbeacon" && !remoteFoxHuntEnabled_.load()) {
+                rejectedCommands_++;
+                res.status = 403;
+                res.body = "{\"ok\":false,\"error\":\"remote fox hunt not enabled on this node\"}";
+            }
             else if (cmd.commandClass != "tune" && cmd.commandClass != "scan" &&
-                     cmd.commandClass != "mission" && cmd.commandClass != "identify") {
+                     cmd.commandClass != "mission" && cmd.commandClass != "identify" &&
+                     cmd.commandClass != "foxbeacon") {
                 res.status = 400;
                 res.body = "{\"ok\":false,\"error\":\"unknown command class\"}";
             }
@@ -1402,6 +1418,7 @@ private:
     SpectrumProvider spectrumProvider_;
     std::atomic<int> spectrumIntervalMs_{200};
     std::atomic<int> activeSpectrumStreams_{0};
+    std::atomic<bool> remoteFoxHuntEnabled_{false};
 };
 
 // ---------------------------------------------------------------------------

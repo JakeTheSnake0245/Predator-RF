@@ -133,6 +133,7 @@ short list of what's covered there:
 ### Fox Hunt TX
 - **`OPT_BUILD_FOXHUNT` gates ALL Fox Hunt code** (tab, engine, drivers). Default ON; forced OFF when `OPT_BACKEND_WEB=ON` so predator-rfd stays RX-only. `build_linux.sh --no-foxhunt` for an RX-only GUI build; Android passes `-DOPT_BUILD_FOXHUNT=ON` in build.gradle.
 - **Local-hardware-only TX.** The Kujhad HTTP / RNS cmd.v1 / web `/api/command` / control-socket `tx.*` hard-rejects are untouched — no remote peer can reach the Fox Hunt path. ARM state is never persisted (every launch starts disarmed).
+- **Remote Fox Hunt (networked beacon)** — distinct from the local tab. Command class `foxbeacon` (NOT `tx.*`, so all tx.* rejects stay intact), per-node opt-in `remoteFoxHuntEnabled` (default OFF, config-persisted, advertised in identify as `remoteFoxHunt`). Kujhad dispatch returns 403 unless opted-in; execution via `MainWindow::applyRemoteFoxBeacon` (CW_BEACON, under OPT_BUILD_FOXHUNT). Controller buttons in the Kujhad peer command panel; node opt-in checkbox in Device Server section. See `docs/foxhunt.md`.
 - **Drivers live inside existing source modules** (globbed `src/*.cpp`, `#ifdef`-guarded) so no new CMake target or Gradle native target exists; the registry singleton is anchored in `tx_driver.cpp` inside sdrpp_core to avoid one-instance-per-DSO.
 - Operator is responsible for TX legality (frequency, power, station ID); CW ID is a convenience, not compliance. See `docs/foxhunt.md`.
 
@@ -200,6 +201,49 @@ short list of what's covered there:
   `file(GLOB_RECURSE)` so a fresh CMake configure is required after pulling
   (stale build dirs won't see the new file → linker errors on
   `qrcodegen::QrCode`).
+
+### Diablo touch-gesture parity (RX/analysis surfaces only)
+- **Clean extension point:** spectrum gestures are added via a handler bound to
+  `gui::waterfall.onInputProcess` (`MainWindow::spectrumInputHandlerFn`, bound in
+  `init()`), NOT by editing the upstream `WaterFall::processInputs`. The handler
+  fires from inside `WaterFall::draw()` and receives `InputHandlerArgs` (FFT /
+  waterfall rects + `lowFreq`/`pixelToFreqRatio`), so it can compute the tapped
+  frequency. Setting `gui::waterfall.inputHandled = true` consumes the input so
+  the default drag/retune does NOT also run for the same gesture.
+- **Detect-then-defer split (mandatory):** the handler is a bound static fn — it
+  canNOT see the marker/tune lambdas (`tunePredatorFrequency`, `routeHitToVfo`,
+  `assignedMarkerCount`, `openPendEdit`, `saveMissionConfig`, `savePredatorHits`),
+  which are all locals inside `MainWindow::draw()`. So the handler only records
+  intent on member flags (`gesturePlaceMarkerFreq`, `gestureRecenterFreq`,
+  `gestureMarkerMenuVfo`); the actual mutation is consumed right after
+  `gui::waterfall.draw()` in `draw()` where those lambdas are in scope.
+- **Spectrum gestures:** double-tap = place a Predator marker at the tapped freq
+  (Manual/Classify only; scan modes own their own marker assignment); long-press
+  over a `Predator M<n>` VFO = Marker Menu popup (Name / Target / Exclude /
+  Remove Marker / Remove All Markers); long-press on empty spectrum = recenter/
+  tune to that freq. Long-press uses the existing idiom (`MouseDownDuration >
+  0.45 s` + `GetMouseDragDelta` stationary), one-shot latched via
+  `gestureHoldFired` (reset when the finger lifts).
+- **Marker Menu callbacks:** the Name action defers into an `openPendEdit`
+  callback that runs a frame later — it must NOT capture `draw()`-local lambdas
+  (e.g. `readJsonDouble`) or the frame-local `hits` vector; it re-acquires config
+  and edits `predatorHits` by frequency match directly. Target/Exclude mutate the
+  frame-local `targets`/`excludes` + `saveMissionConfig` inline (safe, same
+  frame). Every Predator marker is backed by a hit row (`routeVfo == "Predator
+  M<n>"`), so the menu resolves its target hit by `routeVfo`.
+- **Network tree hold menu:** long-press a talkgroup `TreeNode` opens a Tree
+  Actions popup (Rename / Target / Exclude / Place Marker / Select) that reuses
+  the existing `applyNetworkAction(key, "target"|"exclude"|"marker", alias)` and
+  the `predatorNetworkAliases` config. Latched per-row via the unique `treeUid`
+  into `gestureHoldLatch` (`ImGui::GetItemID` is unavailable in this ImGui vendor
+  drop, so an int latch keyed on the row uid is used instead).
+- **Out of C++ scope (documented, not faked):** (1) DF/Map pan/zoom/pinch/
+  tap-two-points is handled by the Android-native `MapActivity.kt`, not the C++
+  `drawMapTab` placeholder. (2) Events "customize columns" has no anchor — the
+  Event Log is a flat text list filtered by the `predatorEventFilter` combo, not
+  an `ImGui` table with column headers, so there is no header to long-press.
+  (3) Pinch-zoom needs true multi-touch; ImGui here receives touch as a single
+  mouse, so the reference's hold-to-zoom alternative would be the path if added.
 
 ## Field-feedback round 4 (July 2026): layout, arrows polish, offline analysis
 

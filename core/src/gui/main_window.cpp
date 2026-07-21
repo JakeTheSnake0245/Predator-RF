@@ -117,6 +117,13 @@ void MainWindow::init() {
     vfoCreatedHandler.ctx = this;
     sigpath::vfoManager.onVfoCreated.bindHandler(&vfoCreatedHandler);
 
+    // Predator spectrum gesture handler (double-tap place marker, long-press
+    // marker menu, long-press empty recenter). Bound to the waterfall's input
+    // event so upstream WaterFall::processInputs is left untouched.
+    spectrumInputHandler.handler = spectrumInputHandlerFn;
+    spectrumInputHandler.ctx = this;
+    gui::waterfall.onInputProcess.bindHandler(&spectrumInputHandler);
+
     flog::info("Loading modules");
 
     // Load modules from /module directory
@@ -237,7 +244,23 @@ void MainWindow::init() {
     gui::waterfall.setFFTHeight(fftHeight);
 
     predatorMissionMode = std::clamp<int>((int)core::configManager.conf["predatorMissionMode"], PREDATOR_MODE_MANUAL, PREDATOR_MODE_QUICKSCAN);
+    predatorMission = std::clamp<int>((int)core::configManager.conf["predatorMission"], (int)PREDATOR_MISSION_RECON, (int)PREDATOR_MISSION_FOXHUNT);
+    missionTrayOpen = core::configManager.conf.value("missionTrayOpen", false);
     predatorTab = std::clamp<int>((int)core::configManager.conf["predatorTab"], (int)PREDATOR_TAB_SPECTRUM, (int)PREDATOR_TAB_LAST);
+    // Mission Config is no longer a right-rail tab — it lives in the left
+    // tray. If a saved session had it selected, fall back to Spectrum and
+    // open the tray so the operator lands on the same controls.
+    if (predatorTab == PREDATOR_TAB_MISSION) {
+        predatorTab = PREDATOR_TAB_SPECTRUM;
+        missionTrayOpen = true;
+    }
+#ifdef OPT_BUILD_FOXHUNT
+    // The Transmit view only exists in the Fox Hunt TX mission; don't restore
+    // it as the active tab when the saved mission is RX Recon.
+    if (predatorTab == PREDATOR_TAB_FOXHUNT && predatorMission != PREDATOR_MISSION_FOXHUNT) {
+        predatorTab = PREDATOR_TAB_SPECTRUM;
+    }
+#endif
     predatorQuickFilter = std::clamp<int>((int)core::configManager.conf["predatorQuickFilter"], 0, 3);
     predatorHitSortMode = std::clamp<int>((int)core::configManager.conf["predatorHitSortMode"], 0, 5);
     predatorEventFilter = std::clamp<int>((int)core::configManager.conf["predatorEventFilter"], 0, 5);
@@ -268,6 +291,7 @@ void MainWindow::init() {
         predatorRole = std::clamp<int>((int)cfg.value("predatorRole", (int)PREDATOR_ROLE_DEVICE),
                                        (int)PREDATOR_ROLE_DEVICE, (int)PREDATOR_ROLE_CONTROLLER);
         kujhadDeviceServerEnabled = cfg.value("kujhadDeviceServerEnabled", false);
+        remoteFoxHuntEnabled = cfg.value("remoteFoxHuntEnabled", false);
         kujhadDeviceListenPort = std::clamp<int>(cfg.value("kujhadDeviceListenPort", 41947), 1, 65535);
         kujhadApiKey = cfg.value("kujhadApiKey", std::string(""));
         kujhadDeviceName = cfg.value("kujhadDeviceName", std::string(""));
@@ -496,6 +520,77 @@ void MainWindow::vfoAddedHandler(VFOManager::VFO* vfo, void* ctx) {
     double newOffset = std::clamp<double>(offset, viewLower, viewUpper);
 
     sigpath::vfoManager.setCenterOffset(name, _this->initComplete ? newOffset : offset);
+}
+
+// Predator RX/analysis spectrum gestures. Bound to gui::waterfall.onInputProcess
+// which fires from inside WaterFall::draw() BEFORE the upstream processInputs.
+// Setting gui::waterfall.inputHandled = true consumes the input so default
+// drag/retune behavior does not also run for the same gesture. Detection only —
+// the actual marker/tune mutation is deferred to member flags and applied in
+// MainWindow::draw() where the marker and tune lambdas are in scope.
+void MainWindow::spectrumInputHandlerFn(ImGui::WaterFall::InputHandlerArgs args, void* ctx) {
+    MainWindow* _this = (MainWindow*)ctx;
+
+    // Reset the one-shot long-press latch once the finger lifts.
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        _this->gestureHoldFired = false;
+    }
+
+    ImVec2 mouse = ImGui::GetMousePos();
+    bool inFFT = mouse.x >= args.fftRectMin.x && mouse.x <= args.fftRectMax.x &&
+                 mouse.y >= args.fftRectMin.y && mouse.y <= args.fftRectMax.y;
+    bool inWaterfall = mouse.x >= args.waterfallRectMin.x && mouse.x <= args.waterfallRectMax.x &&
+                       mouse.y >= args.waterfallRectMin.y && mouse.y <= args.waterfallRectMax.y;
+    if (!inFFT && !inWaterfall) { return; }
+
+    // Frequency under the cursor. x maps linearly from lowFreq at fftRectMin.x.
+    double freq = args.lowFreq + (double)(mouse.x - args.fftRectMin.x) * args.pixelToFreqRatio;
+    if (freq <= 0.0) { return; }
+
+    // Double-tap: place a Predator marker at the tapped frequency. Manual and
+    // Classify modes only — scan modes own marker assignment themselves.
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (_this->predatorMissionMode == PREDATOR_MODE_MANUAL ||
+            _this->predatorMissionMode == PREDATOR_MODE_CLASSIFY) {
+            _this->gesturePlaceMarkerFreq = freq;
+            gui::waterfall.inputHandled = true;
+        }
+        return;
+    }
+
+    // Long-press (stationary hold): open the Marker Menu if held over a Predator
+    // marker VFO, otherwise recenter/tune to the held frequency.
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !_this->gestureHoldFired) {
+        float held = ImGui::GetIO().MouseDownDuration[ImGuiMouseButton_Left];
+        ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+        bool stationary = fabsf(drag.x) < 10.0f * style::uiScale &&
+                          fabsf(drag.y) < 10.0f * style::uiScale;
+        if (held > 0.45f && stationary) {
+            _this->gestureHoldFired = true;
+
+            // Nearest Predator marker VFO to the held frequency, within either
+            // its own bandwidth or a small pixel-based touch tolerance.
+            double centerFreq = gui::waterfall.getCenterFrequency();
+            double touchTolHz = std::abs(args.pixelToFreqRatio) * 18.0 * style::uiScale;
+            std::string hitVfo;
+            double bestDist = 1e18;
+            for (auto& [name, vfo] : gui::waterfall.vfos) {
+                if (name.rfind("Predator M", 0) != 0 || vfo == nullptr) { continue; }
+                double vfoFreq = centerFreq + vfo->generalOffset;
+                double tol = std::max<double>(vfo->bandwidth * 0.5, touchTolHz);
+                double dist = std::abs(freq - vfoFreq);
+                if (dist <= tol && dist < bestDist) { bestDist = dist; hitVfo = name; }
+            }
+
+            if (!hitVfo.empty()) {
+                _this->gestureMarkerMenuVfo = hitVfo;
+            }
+            else {
+                _this->gestureRecenterFreq = freq;
+            }
+            gui::waterfall.inputHandled = true;
+        }
+    }
 }
 
 struct BaselineBin {
@@ -795,22 +890,22 @@ void MainWindow::draw() {
         "BASE"
 #ifdef OPT_BUILD_FOXHUNT
         ,
-        "FOX"
+        "TX"
 #endif
     };
 
     const char* tabTitles[] = {
         T("Spectrum"),
         T("Hits & Events"),
-        T("Network"),
-        T("Map"),
+        T("Networks"),
+        T("DF / Maps"),
         T("Mission Config"),
         T("Kujhad Fleet"),
         T("System"),
         T("Baseline")
 #ifdef OPT_BUILD_FOXHUNT
         ,
-        T("Fox Hunt TX")
+        T("Transmit")
 #endif
     };
 
@@ -1039,6 +1134,8 @@ void MainWindow::draw() {
         core::configManager.acquire();
         core::configManager.conf["showMenu"] = showMenu;
         core::configManager.conf["predatorMissionMode"] = predatorMissionMode;
+        core::configManager.conf["predatorMission"] = predatorMission;
+        core::configManager.conf["missionTrayOpen"] = missionTrayOpen;
         core::configManager.conf["predatorTab"] = predatorTab;
         core::configManager.conf["predatorQuickFilter"] = predatorQuickFilter;
         core::configManager.conf["predatorHitSortMode"] = predatorHitSortMode;
@@ -1046,6 +1143,7 @@ void MainWindow::draw() {
         core::configManager.conf["predatorLanguage"] = predatorLanguage;
         core::configManager.conf["predatorRole"] = predatorRole;
         core::configManager.conf["kujhadDeviceServerEnabled"] = kujhadDeviceServerEnabled;
+        core::configManager.conf["remoteFoxHuntEnabled"] = remoteFoxHuntEnabled;
         core::configManager.conf["kujhadDeviceListenPort"] = kujhadDeviceListenPort;
         core::configManager.conf["kujhadApiKey"] = kujhadApiKey;
         core::configManager.conf["kujhadDeviceName"] = kujhadDeviceName;
@@ -2234,10 +2332,18 @@ void MainWindow::draw() {
             // Reachable Addresses panel surfaces auto-detected NICs as
             // a fallback.
             j["advertise"]   = kujhadAdvertiseAddress;
+            // Read the opt-in from the server's atomic (not the plain UI-thread
+            // bool) since this provider runs on the server worker thread.
+            bool rfhAdvertise = kujhadServer.remoteFoxHuntEnabled();
             j["hwProfile"]   = {
                 {"source", kujhadSourceNameSnapshot.empty() ? std::string("None") : kujhadSourceNameSnapshot},
-                {"centerFreq", kujhadCenterFreqSnapshot}
+                {"centerFreq", kujhadCenterFreqSnapshot},
+                {"remoteFoxHunt", rfhAdvertise}
             };
+            // Advertise whether this node will accept networked Remote Fox
+            // Hunt beacon tasking, so a controller can show/hide the tasking
+            // control per peer. Never implies any tx.* (jamming) capability.
+            j["remoteFoxHunt"] = rfhAdvertise;
             return j;
         });
         kujhadServer.setStateProvider([this]() {
@@ -2421,6 +2527,32 @@ void MainWindow::draw() {
                     errOut = "unknown scan action"; return false;
                 }
             }
+            else if (cmd.commandClass == "foxbeacon") {
+                // Networked Remote Fox Hunt beacon. The Kujhad wire layer has
+                // already enforced the per-node opt-in gate; here we only
+                // validate shape. Actual TX start/stop happens on the UI
+                // thread in the pending-command drain (applyRemoteFoxBeacon).
+                if (cmd.action != "start" && cmd.action != "stop" && cmd.action != "status") {
+                    errOut = "unknown foxbeacon action"; return false;
+                }
+                if (cmd.action == "start") {
+                    if (cmd.args.value("frequencyHz", 0.0) <= 0.0) {
+                        errOut = "frequencyHz required"; return false;
+                    }
+                    // Deterministic pre-rejection so the HTTP/RNS response is
+                    // truthful at request time instead of ACKing a start that
+                    // the GUI-thread drain will later fail. Remaining failure
+                    // modes (device open/engine refusal) are still surfaced via
+                    // remoteFoxHuntStatus after the drain runs.
+#ifndef OPT_BUILD_FOXHUNT
+                    errOut = "node not built with Fox Hunt support"; return false;
+#else
+                    if (predator::foxhunt::TxDriverRegistry::instance().list().empty()) {
+                        errOut = "no TX drivers in this build"; return false;
+                    }
+#endif
+                }
+            }
             else {
                 errOut = "unhandled command";
                 return false;
@@ -2471,6 +2603,11 @@ void MainWindow::draw() {
         kujhadQuickScanDurationMsSnapshot = quickScanDurationMs;
         kujhadRecordAudioSnapshot         = recordAudio;
     }
+
+    // Push the per-node Remote Fox Hunt opt-in to the device server every
+    // frame so the operator toggling it takes effect live (the server's
+    // foxbeacon gate reads this atomically on the worker thread).
+    kujhadServer.setRemoteFoxHuntEnabled(remoteFoxHuntEnabled);
 
     // Drain any pending commands from the device server worker.
     {
@@ -2540,6 +2677,24 @@ void MainWindow::draw() {
                 }
                 saveMissionConfig(searchBands, targets, excludes, missionThreshold,
                                   dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+            }
+            else if (cmd.commandClass == "foxbeacon") {
+                // Networked Remote Fox Hunt: start/stop this node's own
+                // fox-hunt beacon in response to fleet tasking. Only reached
+                // if the operator opted in (enforced at the Kujhad wire gate).
+                if (cmd.action == "start") {
+                    std::string err;
+                    bool ok = applyRemoteFoxBeacon(true, cmd.args, err);
+                    remoteFoxHuntStatus = ok ? std::string("Remote Fox Hunt beacon started")
+                                             : (std::string("Remote Fox Hunt start failed: ") + err);
+                }
+                else if (cmd.action == "stop") {
+                    std::string err;
+                    applyRemoteFoxBeacon(false, cmd.args, err);
+                    remoteFoxHuntStatus = "Remote Fox Hunt beacon stopped";
+                }
+                // "status" is an ack-only no-op here; state is reflected in
+                // identify/state snapshots.
             }
         }
     }
@@ -3703,6 +3858,543 @@ void MainWindow::draw() {
         if (missionPeerActive) ImGui::EndDisabled();
     };
 
+    // Spectrum arrow-marker state, hoisted to draw() scope so both the
+    // spectrum body and the Mission Config tray lambda can read it.
+    static bool   predatorArrowOn[2]   = { false, false };
+    static double predatorArrowFreq[2] = { 0.0, 0.0 };
+
+    // Mission Config body, rendered in the left slide-out tray (Diablo
+    // anchor). Kept as a draw()-scope lambda so it is not tied to a
+    // right-rail view tab.
+    auto drawMissionConfigBody = [&]() {
+            if (predatorJumpSection == 2) {
+                ImGui::SetScrollY(0.0f);
+                predatorJumpSection = 0;
+            }
+            static char newBandName[64] = "New Band";
+            static double newBandStart = 150000000.0;
+            static double newBandStop = 170000000.0;
+            static double newTargetFreq = 465000000.0;
+            static double newTargetBandwidth = 12500.0;
+            static double newExcludeFreq = 462500000.0;
+            static double newExcludeBandwidth = 12500.0;
+
+            // Persistent driver banner across the top of the Mission tab.
+            // LOCAL = green, PEER fresh = amber, PEER stale/no-link = red.
+            // Stays visible regardless of which section the operator scrolls
+            // to so they always know whether edits will hit this rig or be
+            // routed to a peer (and whether that peer link is healthy).
+            {
+                ImVec4 bannerCol;
+                if (!missionPeerActive) {
+                    bannerCol = ImVec4(0.18f, 0.42f, 0.20f, 1.0f);
+                } else if (missionPeerSnapshotFresh) {
+                    bannerCol = ImVec4(0.55f, 0.35f, 0.10f, 1.0f);
+                } else {
+                    bannerCol = ImVec4(0.55f, 0.18f, 0.18f, 1.0f);
+                }
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, bannerCol);
+                float bw = ImGui::GetContentRegionAvail().x;
+                float bh = ImGui::GetTextLineHeightWithSpacing() + (10.0f * style::uiScale);
+                ImGui::BeginChild("##mission_driver_banner", ImVec2(bw, bh),
+                                  false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                if (missionPeerActive) {
+                    if (missionPeerSnapshotFresh) {
+                        ImGui::Text(T("Driving PEER: %s   (edits route to peer)"), missionPeerName.c_str());
+                    } else if (missionPeerLastSyncMs > 0) {
+                        ImGui::Text(T("Driving PEER: %s   (link STALE — commands may not land)"),
+                                    missionPeerName.c_str());
+                    } else {
+                        ImGui::Text(T("Driving PEER: %s   (no link yet — commands may not land)"),
+                                    missionPeerName.c_str());
+                    }
+                } else {
+                    ImGui::TextUnformatted(T("Driving LOCAL rig"));
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+
+            // Resolve the mission view source for this frame. When peer-
+            // active these mirror the peer's /v1/state payload; otherwise
+            // they alias the local configManager-backed arrays.
+            json displayedBandsCopy    = missionPeerActive ? missionPeerArray("searchBands") : json::array();
+            json displayedTargetsCopy  = missionPeerActive ? missionPeerArray("targets")     : json::array();
+            json displayedExcludesCopy = missionPeerActive ? missionPeerArray("excludes")    : json::array();
+            const json& displayedBands    = missionPeerActive ? displayedBandsCopy    : searchBands;
+            const json& displayedTargets  = missionPeerActive ? displayedTargetsCopy  : targets;
+            const json& displayedExcludes = missionPeerActive ? displayedExcludesCopy : excludes;
+            int   displayedMode        = missionPeerActive ? missionPeerMode : predatorMissionMode;
+            int   displayedDwellMs     = missionPeerActive ? missionPeerState.value("dwellMs", dwellMs) : dwellMs;
+            int   displayedQsDelay     = missionPeerActive ? missionPeerState.value("quickScanDelayMs", quickScanDelayMs) : quickScanDelayMs;
+            int   displayedQsDuration  = missionPeerActive ? missionPeerState.value("quickScanDurationMs", quickScanDurationMs) : quickScanDurationMs;
+            float displayedThreshold   = missionPeerActive ? (float)missionPeerState.value("thresholdDb", (double)missionThreshold) : missionThreshold;
+            bool  displayedRecordAudio = missionPeerActive ? missionPeerState.value("recordAudio", recordAudio) : recordAudio;
+
+            // Commit helpers fan out to either the local config save path
+            // or the fleet command pipe so the rest of the body never has
+            // to spell the branch out at every edit site.
+            auto commitSearchBands = [&](const json& v) {
+                if (missionPeerActive) {
+                    json args; args["bands"] = v;
+                    missionRoutePeerCmd("mission", "setSearchBands", args);
+                } else {
+                    searchBands = v;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    scanCandidates = buildScanCandidates();
+                }
+            };
+            auto commitTargets = [&](const json& v) {
+                if (missionPeerActive) {
+                    json args; args["targets"] = v;
+                    missionRoutePeerCmd("mission", "setTargets", args);
+                } else {
+                    targets = v;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    scanCandidates = buildScanCandidates();
+                }
+            };
+            auto commitExcludes = [&](const json& v) {
+                if (missionPeerActive) {
+                    json args; args["excludes"] = v;
+                    missionRoutePeerCmd("mission", "setExcludes", args);
+                } else {
+                    excludes = v;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                    scanCandidates = buildScanCandidates();
+                }
+            };
+            auto commitMissionSettings = [&](float threshold, int dwell, int qsDelay,
+                                             int qsDur, bool rec) {
+                if (missionPeerActive) {
+                    json args;
+                    args["thresholdDb"]         = threshold;
+                    args["dwellMs"]             = dwell;
+                    args["quickScanDelayMs"]    = qsDelay;
+                    args["quickScanDurationMs"] = qsDur;
+                    args["recordAudio"]         = rec;
+                    missionRoutePeerCmd("mission", "setSettings", args);
+                } else {
+                    missionThreshold     = threshold;
+                    dwellMs              = dwell;
+                    quickScanDelayMs     = qsDelay;
+                    quickScanDurationMs  = qsDur;
+                    recordAudio          = rec;
+                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                }
+            };
+
+            if (ImGui::CollapsingHeader(T("Mission Modes"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (int i = 0; i < 4; i++) {
+                    bool activeMode = (displayedMode == i);
+                    if (activeMode) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.45f, 0.24f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.50f, 0.27f, 1.0f));
+                    }
+                    if (ImGui::Button(missionModes[i], ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        if (missionPeerActive) {
+                            json args; args["mode"] = i;
+                            missionRoutePeerCmd("mission", "setMode", args);
+                        } else {
+                            setMissionMode(i);
+                        }
+                    }
+                    if (activeMode) {
+                        ImGui::PopStyleColor(3);
+                    }
+                    ImGui::TextWrapped("%s", missionModeDescriptions[i]);
+                    if (i < 3) { ImGui::Spacing(); }
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Mission Run"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                drawMissionRunControls();
+            }
+
+            // ── Baseline Comparison ──────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Baseline Comparison"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                ImGui::Checkbox(T("Scan against baseline##blcomp"), &blCompEnabled);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", T("When enabled, hits within the baseline noise floor are suppressed.\nOnly signals that exceed the baseline by the threshold are recorded."));
+
+                if (blCompEnabled) {
+                    ImGui::Spacing();
+                    ImGui::LeftLabel(T("Threshold##blcomp"));
+                    ImGui::SetNextItemWidth(fw * 0.5f);
+                    ImGui::SliderFloat("##blThresh", &blCompThreshDb, 1.0f, 40.0f, "+%.1f dB");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", T("Signal must exceed baseline by this many dB to be recorded as a hit."));
+
+                    ImGui::Spacing();
+                    if (blCompLoaded) {
+                        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "%s", T("Baseline loaded:"));
+                        ImGui::TextWrapped("%s", blCompFileName.c_str());
+                        ImGui::TextWrapped("%s", blCompStatus.c_str());
+                        if (ImGui::Button(T("Unload baseline##blcu"), ImVec2(fw, 0))) {
+                            blCompMap.clear();
+                            blCompLoaded   = false;
+                            blCompFilePath = "";
+                            blCompFileName = "";
+                            blCompStatus   = "";
+                        }
+                    } else {
+                        ImGui::TextDisabled("%s", blCompStatus.empty() ? T("No baseline loaded. Open the Baseline tab to record and load one.") : blCompStatus.c_str());
+                        // Inline file picker from saved baselines
+                        double now2 = ImGui::GetTime();
+                        if (now2 - blFileListRefreshedAt > 1.0) {
+                            refreshBaselineFileList();
+                            blFileListRefreshedAt = now2;
+                        }
+                        if (!blFileList.empty()) {
+                            ImGui::Spacing();
+                            ImGui::TextDisabled("%s", T("Select a saved baseline:"));
+                            for (auto& fpath : blFileList) {
+                                std::string fname2 = std::filesystem::path(fpath).filename().string();
+                                ImGui::PushID(fpath.c_str());
+                                if (ImGui::Button(fname2.c_str(), ImVec2(fw, 0))) {
+                                    loadBaseline(fpath, fname2);
+                                }
+                                ImGui::PopID();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Search Bands"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                drawEditButton(T("Band Name"), std::string(newBandName),
+                    [&](std::string nextName) {
+                        snprintf(newBandName, sizeof(newBandName), "%s", nextName.c_str());
+                    });
+                drawEditFreqButton(T("Band Start"), newBandStart,
+                    [&](double nextStart) { newBandStart = nextStart; });
+                drawEditFreqButton(T("Band Stop"), newBandStop,
+                    [&](double nextStop) { newBandStop = nextStop; });
+                float stepBtnW = (fw - 4.0f * style::uiScale) * 0.5f;
+                if (ImGui::Button("- 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart -= 1e6; newBandStop -= 1e6; }
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                if (ImGui::Button("+ 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart += 1e6; newBandStop += 1e6; }
+                if (ImGui::Button("From Current View", ImVec2(stepBtnW, 0))) {
+                    double ctr = gui::waterfall.getCenterFrequency();
+                    double bw  = gui::waterfall.getViewBandwidth();
+                    newBandStart = ctr - bw * 0.5;
+                    newBandStop  = ctr + bw * 0.5;
+                }
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                bool arrowSpanOk = predatorArrowOn[0] && predatorArrowOn[1]
+                                && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
+                if (!arrowSpanOk) ImGui::BeginDisabled();
+                if (ImGui::Button("Arrow Span##band", ImVec2(stepBtnW, 0))) {
+                    newBandStart = std::min(predatorArrowFreq[0], predatorArrowFreq[1]);
+                    newBandStop  = std::max(predatorArrowFreq[0], predatorArrowFreq[1]);
+                }
+                if (!arrowSpanOk) ImGui::EndDisabled();
+                if (ImGui::Button("Add Search Band", ImVec2(fw, 0))) {
+                    json row;
+                    row["name"] = std::string(newBandName);
+                    row["start"] = std::min(newBandStart, newBandStop);
+                    row["stop"] = std::max(newBandStart, newBandStop);
+                    row["enabled"] = true;
+                    json updated = displayedBands;
+                    updated.push_back(row);
+                    commitSearchBands(updated);
+                }
+                ImGui::Separator();
+                for (int i = 0; i < (int)displayedBands.size(); i++) {
+                    ImGui::PushID(3000 + i);
+                    bool enabled = readJsonBool(displayedBands[i], "enabled", true);
+                    if (ImGui::Checkbox("##search_enabled", &enabled)) {
+                        json updated = displayedBands;
+                        updated[i]["enabled"] = enabled;
+                        commitSearchBands(updated);
+                    }
+                    ImGui::SameLine();
+                    std::string bandName = readJsonString(displayedBands[i], "name", "Band");
+                    double bandStart = readJsonDouble(displayedBands[i], "start", 0.0);
+                    double bandStop = readJsonDouble(displayedBands[i], "stop", 0.0);
+                    ImGui::TextWrapped("%s  %.3f - %.3f MHz", bandName.c_str(), bandStart/1e6, bandStop/1e6);
+                    float delW = ImGui::GetContentRegionAvail().x;
+                    if (ImGui::Button("Delete##sb", ImVec2(delW, 0))) {
+                        json updated = displayedBands;
+                        updated.erase(updated.begin() + i);
+                        commitSearchBands(updated);
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::PopID();
+                    ImGui::Spacing();
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Targets"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                if (ImGui::Button("Add Current Frequency as Target", ImVec2(fw, 0))) {
+                    json row;
+                    row["name"] = "Target";
+                    row["frequency"] = gui::freqSelect.frequency;
+                    row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                    row["enabled"] = true;
+                    json updated = displayedTargets;
+                    updated.push_back(row);
+                    commitTargets(updated);
+                }
+                drawEditFreqButton(T("Target Frequency"), newTargetFreq,
+                    [&](double nextFreq) { newTargetFreq = nextFreq; });
+                drawEditDoubleButton(T("Target Bandwidth Hz"), newTargetBandwidth, "%.0f",
+                    [&](double nextBw) { newTargetBandwidth = nextBw; });
+                {
+                    float halfW = (fw - 4.0f * style::uiScale) * 0.5f;
+                    if (ImGui::Button("From Current View##tgt", ImVec2(halfW, 0))) {
+                        newTargetFreq = gui::waterfall.getCenterFrequency();
+                        newTargetBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                    }
+                    ImGui::SameLine(0, 4.0f * style::uiScale);
+                    bool spanOk = predatorArrowOn[0] && predatorArrowOn[1]
+                               && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
+                    if (!spanOk) ImGui::BeginDisabled();
+                    if (ImGui::Button("Arrow Span##tgt", ImVec2(halfW, 0))) {
+                        newTargetFreq = (predatorArrowFreq[0] + predatorArrowFreq[1]) * 0.5;
+                        newTargetBandwidth = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
+                    }
+                    if (!spanOk) ImGui::EndDisabled();
+                }
+                if (ImGui::Button("Add Target", ImVec2(fw, 0))) {
+                    json row;
+                    row["name"] = "Target";
+                    row["frequency"] = newTargetFreq;
+                    row["bandwidth"] = newTargetBandwidth;
+                    row["enabled"] = true;
+                    json updated = displayedTargets;
+                    updated.push_back(row);
+                    commitTargets(updated);
+                }
+                ImGui::Separator();
+                for (int i = 0; i < (int)displayedTargets.size(); i++) {
+                    ImGui::PushID(4000 + i);
+                    bool enabled = readJsonBool(displayedTargets[i], "enabled", true);
+                    if (ImGui::Checkbox("##target_enabled", &enabled)) {
+                        json updated = displayedTargets;
+                        updated[i]["enabled"] = enabled;
+                        commitTargets(updated);
+                    }
+                    ImGui::SameLine();
+                    double targetFrequency = readJsonDouble(displayedTargets[i], "frequency", 0.0);
+                    double targetBandwidth = readJsonDouble(displayedTargets[i], "bandwidth", 12500.0);
+                    ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", targetFrequency/1e6, targetBandwidth);
+                    if (ImGui::Button("Delete##tgt", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        json updated = displayedTargets;
+                        updated.erase(updated.begin() + i);
+                        commitTargets(updated);
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::PopID();
+                    ImGui::Spacing();
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Excludes"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float fw = ImGui::GetContentRegionAvail().x;
+                if (ImGui::Button("Add Current Frequency as Exclude", ImVec2(fw, 0))) {
+                    json row;
+                    row["name"] = "Exclude";
+                    row["frequency"] = gui::freqSelect.frequency;
+                    row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                    row["enabled"] = true;
+                    json updated = displayedExcludes;
+                    updated.push_back(row);
+                    commitExcludes(updated);
+                }
+                drawEditFreqButton(T("Exclude Frequency"), newExcludeFreq,
+                    [&](double nextFreq) { newExcludeFreq = nextFreq; });
+                drawEditDoubleButton(T("Exclude Bandwidth Hz"), newExcludeBandwidth, "%.0f",
+                    [&](double nextBw) { newExcludeBandwidth = nextBw; });
+                {
+                    float halfW = (fw - 4.0f * style::uiScale) * 0.5f;
+                    if (ImGui::Button("From Current View##excl", ImVec2(halfW, 0))) {
+                        newExcludeFreq = gui::waterfall.getCenterFrequency();
+                        newExcludeBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                    }
+                    ImGui::SameLine(0, 4.0f * style::uiScale);
+                    bool spanOk = predatorArrowOn[0] && predatorArrowOn[1]
+                               && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
+                    if (!spanOk) ImGui::BeginDisabled();
+                    if (ImGui::Button("Arrow Span##excl", ImVec2(halfW, 0))) {
+                        newExcludeFreq = (predatorArrowFreq[0] + predatorArrowFreq[1]) * 0.5;
+                        newExcludeBandwidth = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
+                    }
+                    if (!spanOk) ImGui::EndDisabled();
+                }
+                if (ImGui::Button("Add Exclude", ImVec2(fw, 0))) {
+                    json row;
+                    row["name"] = "Exclude";
+                    row["frequency"] = newExcludeFreq;
+                    row["bandwidth"] = newExcludeBandwidth;
+                    row["enabled"] = true;
+                    json updated = displayedExcludes;
+                    updated.push_back(row);
+                    commitExcludes(updated);
+                }
+                ImGui::Separator();
+                for (int i = 0; i < (int)displayedExcludes.size(); i++) {
+                    ImGui::PushID(5000 + i);
+                    bool enabled = readJsonBool(displayedExcludes[i], "enabled", true);
+                    if (ImGui::Checkbox("##exclude_enabled", &enabled)) {
+                        json updated = displayedExcludes;
+                        updated[i]["enabled"] = enabled;
+                        commitExcludes(updated);
+                    }
+                    ImGui::SameLine();
+                    double excludeFrequency = readJsonDouble(displayedExcludes[i], "frequency", 0.0);
+                    double excludeBandwidth = readJsonDouble(displayedExcludes[i], "bandwidth", 12500.0);
+                    ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", excludeFrequency/1e6, excludeBandwidth);
+                    if (ImGui::Button("Delete##excl", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                        json updated = displayedExcludes;
+                        updated.erase(updated.begin() + i);
+                        commitExcludes(updated);
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::PopID();
+                    ImGui::Spacing();
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Scan / QuickScan Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Local mirrors that ImGui binds to. When peer-active, the
+                // values seed from the peer snapshot and edits ship a
+                // mission.setSettings command; the on-screen value snaps
+                // back to the peer's state on the next /v1/state poll.
+                int   dwellEdit       = displayedDwellMs;
+                int   qsDelayEdit     = displayedQsDelay;
+                int   qsDurEdit       = displayedQsDuration;
+                float thresholdEdit   = displayedThreshold;
+                bool  recordEdit      = displayedRecordAudio;
+                bool settingsChanged = false;
+                drawEditIntButton(T("Dwell (ms)"), dwellEdit,
+                    [thresholdEdit, qsDelayEdit, qsDurEdit, recordEdit](int nextDwell) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = std::max<int>(100, nextDwell);
+                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
+                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("QuickScan Delay (ms)"), qsDelayEdit,
+                    [thresholdEdit, dwellEdit, qsDurEdit, recordEdit](int nextDelay) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
+                        core::configManager.conf["predatorQuickScanDelayMs"] = std::max<int>(50, nextDelay);
+                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("QuickScan Duration (ms)"), qsDurEdit,
+                    [thresholdEdit, dwellEdit, qsDelayEdit, recordEdit](int nextDuration) {
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
+                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
+                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
+                        core::configManager.conf["predatorQuickScanDurationMs"] = std::max<int>(100, nextDuration);
+                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
+                        core::configManager.release(true);
+                    });
+                if (ImGui::SliderFloat("Threshold", &thresholdEdit, -120.0f, 0.0f, "%.1f dB")) {
+                    settingsChanged = true;
+                }
+                if (ImGui::Checkbox("Record Audio", &recordEdit)) {
+                    settingsChanged = true;
+                }
+                if (settingsChanged) {
+                    commitMissionSettings(thresholdEdit, dwellEdit, qsDelayEdit, qsDurEdit, recordEdit);
+                }
+                if (missionPeerActive) {
+                    ImGui::TextDisabled("%s", T("Scan UX preferences below stay local — they govern this controller's UI only."));
+                }
+                bool scanUxChanged = false;
+                scanUxChanged |= ImGui::Checkbox(T("Hold on New Hit"), &predatorHoldOnNewHit);
+                scanUxChanged |= ImGui::Checkbox(T("Suppress Duplicate Hits"), &predatorSuppressDuplicateHits);
+                // Field feedback: Scan + QuickScan stacked markers on the
+                // same signal at slightly different offsets. This width is
+                // the "same signal" merge window — any new hit within +/-
+                // this bandwidth of an existing hit updates it instead of
+                // planting a second marker.
+                {
+                    int clusterEdit = (int)std::max<double>(hitClusterHz, 100.0);
+                    drawEditIntButton(T("Hit Merge Bandwidth (Hz)"), clusterEdit,
+                        [](int nextCluster) {
+                            core::configManager.acquire();
+                            core::configManager.conf["predatorHitClusterHz"] = (double)std::clamp<int>(nextCluster, 100, 10000000);
+                            core::configManager.release(true);
+                        });
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", T("Hits within this bandwidth of an existing hit are merged into it\ninstead of creating an overlapping marker. Widen for FM voice\n(~12500), narrow for tight digital channels."));
+                    }
+                }
+                drawEditIntButton(T("Duplicate Window (s)"), predatorDuplicateHitWindowSec,
+                    [this](int nextWindow) {
+                        predatorDuplicateHitWindowSec = std::clamp<int>(nextWindow, 1, 600);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDuplicateHitWindowSec"] = predatorDuplicateHitWindowSec;
+                        core::configManager.release(true);
+                    });
+                scanUxChanged |= ImGui::Checkbox(T("Extend Dwell on Strong Hit"), &predatorExtendDwellOnStrongHit);
+                if (ImGui::SliderFloat(T("Strong Hit SNR"), &predatorStrongHitSnrDb, 6.0f, 40.0f, "%.1f dB")) {
+                    scanUxChanged = true;
+                }
+                scanUxChanged |= ImGui::Checkbox(T("Classify Auto-Marker"), &predatorClassifyAutoMarker);
+                if (scanUxChanged) {
+                    savePeakDetectionConfig();
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Peak Detection"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool peakChanged = false;
+                peakChanged |= ImGui::Checkbox(T("Detect Peaks"), &predatorPeakDetectionEnabled);
+                if (ImGui::SliderFloat(T("Peak SNR"), &predatorPeakSnrDb, 3.0f, 30.0f, "%.1f dB")) {
+                    peakChanged = true;
+                }
+                drawEditDoubleButton(T("Peak Spacing Hz"), predatorPeakMinSpacingHz, "%.0f",
+                    [this](double nextSpacing) {
+                        predatorPeakMinSpacingHz = std::max<double>(1000.0, nextSpacing);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorPeakMinSpacingHz"] = predatorPeakMinSpacingHz;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Max Peaks / Dwell"), predatorPeakMaxPerDwell,
+                    [this](int nextMax) {
+                        predatorPeakMaxPerDwell = std::clamp<int>(nextMax, 1, 20);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorPeakMaxPerDwell"] = predatorPeakMaxPerDwell;
+                        core::configManager.release(true);
+                    });
+                drawEditIntButton(T("Marker Slots"), predatorMarkerSlots,
+                    [this](int nextSlots) {
+                        predatorMarkerSlots = std::clamp<int>(nextSlots, 1, 16);
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorMarkerSlots"] = predatorMarkerSlots;
+                        core::configManager.release(true);
+                    });
+                ImGui::TextWrapped("%s", chineseUi ? "\u6383\u63cf\u505c\u7559\u6642\uff0cPredator RF \u6703\u5c07\u901a\u904e\u9580\u6abb\u8207 SNR \u689d\u4ef6\u7684\u5cf0\u503c\u8a18\u9304\u70ba\u96c6\u7fa4\u547d\u4e2d\uff0c\u4e26\u7531\u547d\u4e2d\u9801\u9762\u6307\u6d3e\u6a19\u8a18\u3001\u89e3\u78bc\u5668\u3001\u76ee\u6a19\u6216\u6392\u9664\u3002" : "During scan dwell, Predator RF records peaks that clear threshold and SNR checks as clustered hits. Markers, decoders, targets, and excludes are assigned from the Hits page.");
+                if (peakChanged) {
+                    savePeakDetectionConfig();
+                }
+            }
+
+            if (ImGui::CollapsingHeader(T("Operator Note"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextWrapped("This shell carries the Predator RF mission control concepts: mode, search bands, targets, excludes, dwell, quick filters, and map launch.");
+            }
+            // Mission edits no longer accumulate a "missionChanged" flag —
+            // each commit helper above either saves locally or ships a
+            // mission.set* command to the active peer in-place.
+    };
+
     // Handle auto-start
     if (autostart) {
         autostart = false;
@@ -3845,6 +4537,35 @@ void MainWindow::draw() {
         savePredatorState();
     }
 
+    // Diablo Mission Selector: swaps the working UI between the two missions.
+    // Leaving Fox Hunt returns the operator to the Recon default tab so the
+    // now-hidden Transmit view isn't left selected.
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150.0f * style::uiScale);
+    if (ImGui::Combo("##predator_mission", &predatorMission, "RX Recon\0Fox Hunt TX\0")) {
+#ifdef OPT_BUILD_FOXHUNT
+        if (predatorMission != PREDATOR_MISSION_FOXHUNT && predatorTab == PREDATOR_TAB_FOXHUNT) {
+            predatorTab = PREDATOR_TAB_SPECTRUM;
+        }
+#endif
+        savePredatorState();
+    }
+
+    // Left slide-out Mission Config tray toggle (Diablo slider-bar anchor).
+    ImGui::SameLine();
+    if (missionTrayOpen) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.45f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.50f, 0.27f, 1.0f));
+    }
+    if (ImGui::Button(T("\xE2\x98\xB0 Config"))) {
+        missionTrayOpen = !missionTrayOpen;
+        savePredatorState();
+    }
+    if (missionTrayOpen) {
+        ImGui::PopStyleColor(3);
+    }
+
     ImGui::SameLine();
     if (drawBadge(phoneHasFix ? T("GPS READY") : T("GPS WAIT"), phoneHasFix ? ImVec4(0.55f, 0.74f, 0.46f, 1.0f) : ImVec4(0.45f, 0.49f, 0.41f, 1.0f))) {
         predatorTab = PREDATOR_TAB_MAP;
@@ -3934,8 +4655,6 @@ void MainWindow::draw() {
     // spectrum. Tap A1/A2 to ARM (next spectrum tap places it), long-hold
     // (~0.6s) to toggle the arrow off/on. Ghost lines show on both spectrum
     // views; the far right of this row shows the A1↔A2 frequency delta.
-    static bool   predatorArrowOn[2]   = { false, false };
-    static double predatorArrowFreq[2] = { 0.0, 0.0 };
     static int    predatorArrowArmed   = -1;
     static bool   predatorArrowHoldFired[2] = { false, false };
     static bool   predatorArrowLoaded  = false;
@@ -4245,6 +4964,138 @@ void MainWindow::draw() {
     }
 
     gui::waterfall.draw();
+
+    // --- Predator spectrum gesture consumption ---------------------------------
+    // The onInputProcess handler (spectrumInputHandlerFn) only records intent on
+    // member flags; the marker/tune lambdas live here in draw() scope, so the
+    // actual mutation happens now, right after the waterfall has been drawn.
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { gestureHoldLatch = 0; }
+    if (gesturePlaceMarkerFreq > 0.0) {
+        double f = gesturePlaceMarkerFreq;
+        gesturePlaceMarkerFreq = 0.0;
+        if (assignedMarkerCount() < predatorMarkerSlots) {
+            int idx = -1;
+            for (int i = 0; i < (int)hits.size(); i++) {
+                double hf = readJsonDouble(hits[i], "frequency", 0.0);
+                if (std::abs(hf - f) <= std::max<double>(hitClusterHz, 500.0)) { idx = i; break; }
+            }
+            if (idx < 0) {
+                json row;
+                row["frequency"] = f;
+                row["bandwidth"] = 12500.0;
+                row["name"] = "Manual Marker";
+                row["decoder"] = "None";
+                row["state"] = "unknown";
+                row["markerAssigned"] = true;
+                hits.push_back(row);
+                idx = (int)hits.size() - 1;
+            }
+            else {
+                hits[idx]["markerAssigned"] = true;
+            }
+            routeHitToVfo(idx);
+            savePredatorHits(hits);
+        }
+    }
+
+    if (gestureRecenterFreq > 0.0) {
+        double f = gestureRecenterFreq;
+        gestureRecenterFreq = 0.0;
+        tunePredatorFrequency(f);
+    }
+
+    if (!gestureMarkerMenuVfo.empty()) {
+        gestureMenuOpenVfo = gestureMarkerMenuVfo;
+        gestureMarkerMenuVfo.clear();
+        ImGui::OpenPopup("##predator_marker_menu");
+    }
+    if (ImGui::BeginPopup("##predator_marker_menu")) {
+        int mIdx = -1;
+        for (int i = 0; i < (int)hits.size(); i++) {
+            if (readJsonString(hits[i], "routeVfo", "") == gestureMenuOpenVfo) { mIdx = i; break; }
+        }
+        ImGui::TextDisabled("%s", gestureMenuOpenVfo.c_str());
+        double markerFreq = (mIdx >= 0) ? readJsonDouble(hits[mIdx], "frequency", 0.0) : 0.0;
+        if (mIdx >= 0) { ImGui::TextDisabled("%s", formatFrequency(markerFreq).c_str()); }
+        ImGui::Separator();
+
+        if (mIdx >= 0) {
+            if (ImGui::MenuItem(T("Name..."))) {
+                double capFreq = markerFreq;
+                openPendEdit(T("Marker name"), readJsonString(hits[mIdx], "name", "Marker"),
+                    [capFreq](std::string text) {
+                        core::configManager.acquire();
+                        auto& hs = core::configManager.conf["predatorHits"];
+                        if (hs.is_array()) {
+                            for (auto& h : hs) {
+                                if (h.is_object() && h.contains("frequency") && h["frequency"].is_number() &&
+                                    std::abs((double)h["frequency"] - capFreq) < 1.0) {
+                                    h["name"] = text;
+                                }
+                            }
+                        }
+                        core::configManager.release(true);
+                    });
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem(T("Target"))) {
+                if (!isKnownTargetFrequency(markerFreq)) {
+                    json row;
+                    row["name"] = readJsonString(hits[mIdx], "name", "Marker");
+                    row["frequency"] = markerFreq;
+                    row["bandwidth"] = readJsonDouble(hits[mIdx], "bandwidth", 12500.0);
+                    row["enabled"] = true;
+                    row["source"] = "marker_menu";
+                    targets.push_back(row);
+                }
+                hits[mIdx]["state"] = "target";
+                saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                savePredatorHits(hits);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem(T("Exclude"))) {
+                if (!isExcludedFrequency(markerFreq)) {
+                    json row;
+                    row["name"] = readJsonString(hits[mIdx], "name", "Marker");
+                    row["frequency"] = markerFreq;
+                    row["bandwidth"] = readJsonDouble(hits[mIdx], "bandwidth", 12500.0);
+                    row["enabled"] = true;
+                    row["source"] = "marker_menu";
+                    excludes.push_back(row);
+                }
+                hits[mIdx]["state"] = "exclude";
+                saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
+                savePredatorHits(hits);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(T("Remove Marker"))) {
+                releaseHitRoute(mIdx);
+                hits[mIdx]["markerAssigned"] = false;
+                savePredatorHits(hits);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        if (ImGui::MenuItem(T("Remove All Markers"))) {
+            for (int i = 0; i < (int)hits.size(); i++) {
+                std::string rv = readJsonString(hits[i], "routeVfo", "");
+                if (rv.rfind("Predator M", 0) == 0 || readJsonBool(hits[i], "markerAssigned", false)) {
+                    releaseHitRoute(i);
+                    hits[i]["markerAssigned"] = false;
+                }
+            }
+            std::vector<std::string> stray;
+            for (auto& [name, vfo] : gui::waterfall.vfos) {
+                if (name.rfind("Predator M", 0) == 0) { stray.push_back(name); }
+            }
+            for (const auto& name : stray) {
+                if (sigpath::vfoManager.vfoExists(name)) { sigpath::vfoManager.deleteVFO(name); }
+            }
+            savePredatorHits(hits);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     // PEER overlay banner: drawn over the FFT area while a mirror is live
     // so the operator can never confuse a peer's view with their own.
@@ -4571,7 +5422,7 @@ void MainWindow::draw() {
                     savePredatorState();
                 }
                 if (ImGui::Button(T("Open Mission Config"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                    predatorTab = PREDATOR_TAB_MISSION;
+                    missionTrayOpen = true;
                     predatorJumpSection = 2;
                     savePredatorState();
                 }
@@ -5769,6 +6620,56 @@ void MainWindow::draw() {
                                     if (selected) { ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 200, 90, 255)); }
                                     bool open = ImGui::TreeNode(tgLabel.c_str());
                                     if (selected) { ImGui::PopStyleColor(); }
+
+                                    // Long-press a talkgroup row → Tree Actions
+                                    // popup (Rename / Target / Exclude / Place
+                                    // Marker / Select), reusing applyNetworkAction.
+                                    if (ImGui::IsItemHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                                        gestureHoldLatch != treeUid) {
+                                        float held = ImGui::GetIO().MouseDownDuration[ImGuiMouseButton_Left];
+                                        ImVec2 d = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+                                        if (held > 0.45f && fabsf(d.x) < 10.0f * style::uiScale &&
+                                            fabsf(d.y) < 10.0f * style::uiScale) {
+                                            gestureHoldLatch = treeUid;
+                                            ImGui::OpenPopup("##tree_actions");
+                                        }
+                                    }
+                                    if (ImGui::BeginPopup("##tree_actions")) {
+                                        std::string nodeKey = nodes[ni].key;
+                                        std::string nodeAlias = networkAliasForKey(nodeKey, "");
+                                        ImGui::TextDisabled("TG %s", nodes[ni].talkgroup.c_str());
+                                        ImGui::Separator();
+                                        if (ImGui::MenuItem(T("Rename..."))) {
+                                            openPendEdit(T("Network alias"), nodeAlias,
+                                                [nodeKey](std::string text) {
+                                                    core::configManager.acquire();
+                                                    auto& aliases = core::configManager.conf["predatorNetworkAliases"];
+                                                    if (!aliases.is_object()) { aliases = json::object(); }
+                                                    aliases[nodeKey] = text;
+                                                    core::configManager.release(true);
+                                                });
+                                            ImGui::CloseCurrentPopup();
+                                        }
+                                        if (ImGui::MenuItem(T("Target"))) {
+                                            applyNetworkAction(nodeKey, "target", nodeAlias);
+                                            ImGui::CloseCurrentPopup();
+                                        }
+                                        if (ImGui::MenuItem(T("Exclude"))) {
+                                            applyNetworkAction(nodeKey, "exclude", nodeAlias);
+                                            ImGui::CloseCurrentPopup();
+                                        }
+                                        if (ImGui::MenuItem(T("Place Marker"))) {
+                                            applyNetworkAction(nodeKey, "marker", nodeAlias);
+                                            ImGui::CloseCurrentPopup();
+                                        }
+                                        if (ImGui::MenuItem(T("Select"))) {
+                                            selectedNetworkKey = nodeKey;
+                                            std::string fallback = nodes[ni].protocol + " / Net " + nodes[ni].networkId + " / TG " + nodes[ni].talkgroup;
+                                            snprintf(selectedNetworkAlias, sizeof(selectedNetworkAlias), "%s", networkAliasForKey(nodeKey, fallback).c_str());
+                                            ImGui::CloseCurrentPopup();
+                                        }
+                                        ImGui::EndPopup();
+                                    }
                                     if (open) {
                                         ImGui::Text("Events: %d", nodes[ni].events);
                                         ImGui::Text("Strongest: %.1f dB", nodes[ni].strongest);
@@ -6194,535 +7095,7 @@ void MainWindow::draw() {
                 ImGui::TextWrapped("Direction-finding is intentionally excluded for now. Only the placeholder directory exists so we can add it cleanly later.");
             }
         }
-        else if (predatorTab == PREDATOR_TAB_MISSION) {
-            if (predatorJumpSection == 2) {
-                ImGui::SetScrollY(0.0f);
-                predatorJumpSection = 0;
-            }
-            static char newBandName[64] = "New Band";
-            static double newBandStart = 150000000.0;
-            static double newBandStop = 170000000.0;
-            static double newTargetFreq = 465000000.0;
-            static double newTargetBandwidth = 12500.0;
-            static double newExcludeFreq = 462500000.0;
-            static double newExcludeBandwidth = 12500.0;
-
-            // Persistent driver banner across the top of the Mission tab.
-            // LOCAL = green, PEER fresh = amber, PEER stale/no-link = red.
-            // Stays visible regardless of which section the operator scrolls
-            // to so they always know whether edits will hit this rig or be
-            // routed to a peer (and whether that peer link is healthy).
-            {
-                ImVec4 bannerCol;
-                if (!missionPeerActive) {
-                    bannerCol = ImVec4(0.18f, 0.42f, 0.20f, 1.0f);
-                } else if (missionPeerSnapshotFresh) {
-                    bannerCol = ImVec4(0.55f, 0.35f, 0.10f, 1.0f);
-                } else {
-                    bannerCol = ImVec4(0.55f, 0.18f, 0.18f, 1.0f);
-                }
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, bannerCol);
-                float bw = ImGui::GetContentRegionAvail().x;
-                float bh = ImGui::GetTextLineHeightWithSpacing() + (10.0f * style::uiScale);
-                ImGui::BeginChild("##mission_driver_banner", ImVec2(bw, bh),
-                                  false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                if (missionPeerActive) {
-                    if (missionPeerSnapshotFresh) {
-                        ImGui::Text(T("Driving PEER: %s   (edits route to peer)"), missionPeerName.c_str());
-                    } else if (missionPeerLastSyncMs > 0) {
-                        ImGui::Text(T("Driving PEER: %s   (link STALE — commands may not land)"),
-                                    missionPeerName.c_str());
-                    } else {
-                        ImGui::Text(T("Driving PEER: %s   (no link yet — commands may not land)"),
-                                    missionPeerName.c_str());
-                    }
-                } else {
-                    ImGui::TextUnformatted(T("Driving LOCAL rig"));
-                }
-                ImGui::EndChild();
-                ImGui::PopStyleColor();
-                ImGui::Spacing();
-            }
-
-            // Resolve the mission view source for this frame. When peer-
-            // active these mirror the peer's /v1/state payload; otherwise
-            // they alias the local configManager-backed arrays.
-            json displayedBandsCopy    = missionPeerActive ? missionPeerArray("searchBands") : json::array();
-            json displayedTargetsCopy  = missionPeerActive ? missionPeerArray("targets")     : json::array();
-            json displayedExcludesCopy = missionPeerActive ? missionPeerArray("excludes")    : json::array();
-            const json& displayedBands    = missionPeerActive ? displayedBandsCopy    : searchBands;
-            const json& displayedTargets  = missionPeerActive ? displayedTargetsCopy  : targets;
-            const json& displayedExcludes = missionPeerActive ? displayedExcludesCopy : excludes;
-            int   displayedMode        = missionPeerActive ? missionPeerMode : predatorMissionMode;
-            int   displayedDwellMs     = missionPeerActive ? missionPeerState.value("dwellMs", dwellMs) : dwellMs;
-            int   displayedQsDelay     = missionPeerActive ? missionPeerState.value("quickScanDelayMs", quickScanDelayMs) : quickScanDelayMs;
-            int   displayedQsDuration  = missionPeerActive ? missionPeerState.value("quickScanDurationMs", quickScanDurationMs) : quickScanDurationMs;
-            float displayedThreshold   = missionPeerActive ? (float)missionPeerState.value("thresholdDb", (double)missionThreshold) : missionThreshold;
-            bool  displayedRecordAudio = missionPeerActive ? missionPeerState.value("recordAudio", recordAudio) : recordAudio;
-
-            // Commit helpers fan out to either the local config save path
-            // or the fleet command pipe so the rest of the body never has
-            // to spell the branch out at every edit site.
-            auto commitSearchBands = [&](const json& v) {
-                if (missionPeerActive) {
-                    json args; args["bands"] = v;
-                    missionRoutePeerCmd("mission", "setSearchBands", args);
-                } else {
-                    searchBands = v;
-                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
-                    scanCandidates = buildScanCandidates();
-                }
-            };
-            auto commitTargets = [&](const json& v) {
-                if (missionPeerActive) {
-                    json args; args["targets"] = v;
-                    missionRoutePeerCmd("mission", "setTargets", args);
-                } else {
-                    targets = v;
-                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
-                    scanCandidates = buildScanCandidates();
-                }
-            };
-            auto commitExcludes = [&](const json& v) {
-                if (missionPeerActive) {
-                    json args; args["excludes"] = v;
-                    missionRoutePeerCmd("mission", "setExcludes", args);
-                } else {
-                    excludes = v;
-                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
-                    scanCandidates = buildScanCandidates();
-                }
-            };
-            auto commitMissionSettings = [&](float threshold, int dwell, int qsDelay,
-                                             int qsDur, bool rec) {
-                if (missionPeerActive) {
-                    json args;
-                    args["thresholdDb"]         = threshold;
-                    args["dwellMs"]             = dwell;
-                    args["quickScanDelayMs"]    = qsDelay;
-                    args["quickScanDurationMs"] = qsDur;
-                    args["recordAudio"]         = rec;
-                    missionRoutePeerCmd("mission", "setSettings", args);
-                } else {
-                    missionThreshold     = threshold;
-                    dwellMs              = dwell;
-                    quickScanDelayMs     = qsDelay;
-                    quickScanDurationMs  = qsDur;
-                    recordAudio          = rec;
-                    saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
-                }
-            };
-
-            if (ImGui::CollapsingHeader(T("Mission Modes"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                for (int i = 0; i < 4; i++) {
-                    bool activeMode = (displayedMode == i);
-                    if (activeMode) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.45f, 0.24f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.50f, 0.27f, 1.0f));
-                    }
-                    if (ImGui::Button(missionModes[i], ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                        if (missionPeerActive) {
-                            json args; args["mode"] = i;
-                            missionRoutePeerCmd("mission", "setMode", args);
-                        } else {
-                            setMissionMode(i);
-                        }
-                    }
-                    if (activeMode) {
-                        ImGui::PopStyleColor(3);
-                    }
-                    ImGui::TextWrapped("%s", missionModeDescriptions[i]);
-                    if (i < 3) { ImGui::Spacing(); }
-                }
-            }
-
-            if (ImGui::CollapsingHeader(T("Mission Run"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                drawMissionRunControls();
-            }
-
-            // ── Baseline Comparison ──────────────────────────────────────────
-            if (ImGui::CollapsingHeader(T("Baseline Comparison"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                float fw = ImGui::GetContentRegionAvail().x;
-                ImGui::Checkbox(T("Scan against baseline##blcomp"), &blCompEnabled);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", T("When enabled, hits within the baseline noise floor are suppressed.\nOnly signals that exceed the baseline by the threshold are recorded."));
-
-                if (blCompEnabled) {
-                    ImGui::Spacing();
-                    ImGui::LeftLabel(T("Threshold##blcomp"));
-                    ImGui::SetNextItemWidth(fw * 0.5f);
-                    ImGui::SliderFloat("##blThresh", &blCompThreshDb, 1.0f, 40.0f, "+%.1f dB");
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", T("Signal must exceed baseline by this many dB to be recorded as a hit."));
-
-                    ImGui::Spacing();
-                    if (blCompLoaded) {
-                        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "%s", T("Baseline loaded:"));
-                        ImGui::TextWrapped("%s", blCompFileName.c_str());
-                        ImGui::TextWrapped("%s", blCompStatus.c_str());
-                        if (ImGui::Button(T("Unload baseline##blcu"), ImVec2(fw, 0))) {
-                            blCompMap.clear();
-                            blCompLoaded   = false;
-                            blCompFilePath = "";
-                            blCompFileName = "";
-                            blCompStatus   = "";
-                        }
-                    } else {
-                        ImGui::TextDisabled("%s", blCompStatus.empty() ? T("No baseline loaded. Open the Baseline tab to record and load one.") : blCompStatus.c_str());
-                        // Inline file picker from saved baselines
-                        double now2 = ImGui::GetTime();
-                        if (now2 - blFileListRefreshedAt > 1.0) {
-                            refreshBaselineFileList();
-                            blFileListRefreshedAt = now2;
-                        }
-                        if (!blFileList.empty()) {
-                            ImGui::Spacing();
-                            ImGui::TextDisabled("%s", T("Select a saved baseline:"));
-                            for (auto& fpath : blFileList) {
-                                std::string fname2 = std::filesystem::path(fpath).filename().string();
-                                ImGui::PushID(fpath.c_str());
-                                if (ImGui::Button(fname2.c_str(), ImVec2(fw, 0))) {
-                                    loadBaseline(fpath, fname2);
-                                }
-                                ImGui::PopID();
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (ImGui::CollapsingHeader(T("Search Bands"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                float fw = ImGui::GetContentRegionAvail().x;
-                drawEditButton(T("Band Name"), std::string(newBandName),
-                    [&](std::string nextName) {
-                        snprintf(newBandName, sizeof(newBandName), "%s", nextName.c_str());
-                    });
-                drawEditFreqButton(T("Band Start"), newBandStart,
-                    [&](double nextStart) { newBandStart = nextStart; });
-                drawEditFreqButton(T("Band Stop"), newBandStop,
-                    [&](double nextStop) { newBandStop = nextStop; });
-                float stepBtnW = (fw - 4.0f * style::uiScale) * 0.5f;
-                if (ImGui::Button("- 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart -= 1e6; newBandStop -= 1e6; }
-                ImGui::SameLine(0, 4.0f * style::uiScale);
-                if (ImGui::Button("+ 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart += 1e6; newBandStop += 1e6; }
-                if (ImGui::Button("From Current View", ImVec2(stepBtnW, 0))) {
-                    double ctr = gui::waterfall.getCenterFrequency();
-                    double bw  = gui::waterfall.getViewBandwidth();
-                    newBandStart = ctr - bw * 0.5;
-                    newBandStop  = ctr + bw * 0.5;
-                }
-                ImGui::SameLine(0, 4.0f * style::uiScale);
-                bool arrowSpanOk = predatorArrowOn[0] && predatorArrowOn[1]
-                                && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
-                if (!arrowSpanOk) ImGui::BeginDisabled();
-                if (ImGui::Button("Arrow Span##band", ImVec2(stepBtnW, 0))) {
-                    newBandStart = std::min(predatorArrowFreq[0], predatorArrowFreq[1]);
-                    newBandStop  = std::max(predatorArrowFreq[0], predatorArrowFreq[1]);
-                }
-                if (!arrowSpanOk) ImGui::EndDisabled();
-                if (ImGui::Button("Add Search Band", ImVec2(fw, 0))) {
-                    json row;
-                    row["name"] = std::string(newBandName);
-                    row["start"] = std::min(newBandStart, newBandStop);
-                    row["stop"] = std::max(newBandStart, newBandStop);
-                    row["enabled"] = true;
-                    json updated = displayedBands;
-                    updated.push_back(row);
-                    commitSearchBands(updated);
-                }
-                ImGui::Separator();
-                for (int i = 0; i < (int)displayedBands.size(); i++) {
-                    ImGui::PushID(3000 + i);
-                    bool enabled = readJsonBool(displayedBands[i], "enabled", true);
-                    if (ImGui::Checkbox("##search_enabled", &enabled)) {
-                        json updated = displayedBands;
-                        updated[i]["enabled"] = enabled;
-                        commitSearchBands(updated);
-                    }
-                    ImGui::SameLine();
-                    std::string bandName = readJsonString(displayedBands[i], "name", "Band");
-                    double bandStart = readJsonDouble(displayedBands[i], "start", 0.0);
-                    double bandStop = readJsonDouble(displayedBands[i], "stop", 0.0);
-                    ImGui::TextWrapped("%s  %.3f - %.3f MHz", bandName.c_str(), bandStart/1e6, bandStop/1e6);
-                    float delW = ImGui::GetContentRegionAvail().x;
-                    if (ImGui::Button("Delete##sb", ImVec2(delW, 0))) {
-                        json updated = displayedBands;
-                        updated.erase(updated.begin() + i);
-                        commitSearchBands(updated);
-                        ImGui::PopID();
-                        break;
-                    }
-                    ImGui::PopID();
-                    ImGui::Spacing();
-                }
-            }
-
-            if (ImGui::CollapsingHeader(T("Targets"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                float fw = ImGui::GetContentRegionAvail().x;
-                if (ImGui::Button("Add Current Frequency as Target", ImVec2(fw, 0))) {
-                    json row;
-                    row["name"] = "Target";
-                    row["frequency"] = gui::freqSelect.frequency;
-                    row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
-                    row["enabled"] = true;
-                    json updated = displayedTargets;
-                    updated.push_back(row);
-                    commitTargets(updated);
-                }
-                drawEditFreqButton(T("Target Frequency"), newTargetFreq,
-                    [&](double nextFreq) { newTargetFreq = nextFreq; });
-                drawEditDoubleButton(T("Target Bandwidth Hz"), newTargetBandwidth, "%.0f",
-                    [&](double nextBw) { newTargetBandwidth = nextBw; });
-                {
-                    float halfW = (fw - 4.0f * style::uiScale) * 0.5f;
-                    if (ImGui::Button("From Current View##tgt", ImVec2(halfW, 0))) {
-                        newTargetFreq = gui::waterfall.getCenterFrequency();
-                        newTargetBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
-                    }
-                    ImGui::SameLine(0, 4.0f * style::uiScale);
-                    bool spanOk = predatorArrowOn[0] && predatorArrowOn[1]
-                               && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
-                    if (!spanOk) ImGui::BeginDisabled();
-                    if (ImGui::Button("Arrow Span##tgt", ImVec2(halfW, 0))) {
-                        newTargetFreq = (predatorArrowFreq[0] + predatorArrowFreq[1]) * 0.5;
-                        newTargetBandwidth = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
-                    }
-                    if (!spanOk) ImGui::EndDisabled();
-                }
-                if (ImGui::Button("Add Target", ImVec2(fw, 0))) {
-                    json row;
-                    row["name"] = "Target";
-                    row["frequency"] = newTargetFreq;
-                    row["bandwidth"] = newTargetBandwidth;
-                    row["enabled"] = true;
-                    json updated = displayedTargets;
-                    updated.push_back(row);
-                    commitTargets(updated);
-                }
-                ImGui::Separator();
-                for (int i = 0; i < (int)displayedTargets.size(); i++) {
-                    ImGui::PushID(4000 + i);
-                    bool enabled = readJsonBool(displayedTargets[i], "enabled", true);
-                    if (ImGui::Checkbox("##target_enabled", &enabled)) {
-                        json updated = displayedTargets;
-                        updated[i]["enabled"] = enabled;
-                        commitTargets(updated);
-                    }
-                    ImGui::SameLine();
-                    double targetFrequency = readJsonDouble(displayedTargets[i], "frequency", 0.0);
-                    double targetBandwidth = readJsonDouble(displayedTargets[i], "bandwidth", 12500.0);
-                    ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", targetFrequency/1e6, targetBandwidth);
-                    if (ImGui::Button("Delete##tgt", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                        json updated = displayedTargets;
-                        updated.erase(updated.begin() + i);
-                        commitTargets(updated);
-                        ImGui::PopID();
-                        break;
-                    }
-                    ImGui::PopID();
-                    ImGui::Spacing();
-                }
-            }
-
-            if (ImGui::CollapsingHeader(T("Excludes"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                float fw = ImGui::GetContentRegionAvail().x;
-                if (ImGui::Button("Add Current Frequency as Exclude", ImVec2(fw, 0))) {
-                    json row;
-                    row["name"] = "Exclude";
-                    row["frequency"] = gui::freqSelect.frequency;
-                    row["bandwidth"] = (vfo != NULL) ? vfo->bandwidth : 12500.0;
-                    row["enabled"] = true;
-                    json updated = displayedExcludes;
-                    updated.push_back(row);
-                    commitExcludes(updated);
-                }
-                drawEditFreqButton(T("Exclude Frequency"), newExcludeFreq,
-                    [&](double nextFreq) { newExcludeFreq = nextFreq; });
-                drawEditDoubleButton(T("Exclude Bandwidth Hz"), newExcludeBandwidth, "%.0f",
-                    [&](double nextBw) { newExcludeBandwidth = nextBw; });
-                {
-                    float halfW = (fw - 4.0f * style::uiScale) * 0.5f;
-                    if (ImGui::Button("From Current View##excl", ImVec2(halfW, 0))) {
-                        newExcludeFreq = gui::waterfall.getCenterFrequency();
-                        newExcludeBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
-                    }
-                    ImGui::SameLine(0, 4.0f * style::uiScale);
-                    bool spanOk = predatorArrowOn[0] && predatorArrowOn[1]
-                               && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
-                    if (!spanOk) ImGui::BeginDisabled();
-                    if (ImGui::Button("Arrow Span##excl", ImVec2(halfW, 0))) {
-                        newExcludeFreq = (predatorArrowFreq[0] + predatorArrowFreq[1]) * 0.5;
-                        newExcludeBandwidth = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
-                    }
-                    if (!spanOk) ImGui::EndDisabled();
-                }
-                if (ImGui::Button("Add Exclude", ImVec2(fw, 0))) {
-                    json row;
-                    row["name"] = "Exclude";
-                    row["frequency"] = newExcludeFreq;
-                    row["bandwidth"] = newExcludeBandwidth;
-                    row["enabled"] = true;
-                    json updated = displayedExcludes;
-                    updated.push_back(row);
-                    commitExcludes(updated);
-                }
-                ImGui::Separator();
-                for (int i = 0; i < (int)displayedExcludes.size(); i++) {
-                    ImGui::PushID(5000 + i);
-                    bool enabled = readJsonBool(displayedExcludes[i], "enabled", true);
-                    if (ImGui::Checkbox("##exclude_enabled", &enabled)) {
-                        json updated = displayedExcludes;
-                        updated[i]["enabled"] = enabled;
-                        commitExcludes(updated);
-                    }
-                    ImGui::SameLine();
-                    double excludeFrequency = readJsonDouble(displayedExcludes[i], "frequency", 0.0);
-                    double excludeBandwidth = readJsonDouble(displayedExcludes[i], "bandwidth", 12500.0);
-                    ImGui::TextWrapped("%.3f MHz  BW %.0f Hz", excludeFrequency/1e6, excludeBandwidth);
-                    if (ImGui::Button("Delete##excl", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                        json updated = displayedExcludes;
-                        updated.erase(updated.begin() + i);
-                        commitExcludes(updated);
-                        ImGui::PopID();
-                        break;
-                    }
-                    ImGui::PopID();
-                    ImGui::Spacing();
-                }
-            }
-
-            if (ImGui::CollapsingHeader(T("Scan / QuickScan Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                // Local mirrors that ImGui binds to. When peer-active, the
-                // values seed from the peer snapshot and edits ship a
-                // mission.setSettings command; the on-screen value snaps
-                // back to the peer's state on the next /v1/state poll.
-                int   dwellEdit       = displayedDwellMs;
-                int   qsDelayEdit     = displayedQsDelay;
-                int   qsDurEdit       = displayedQsDuration;
-                float thresholdEdit   = displayedThreshold;
-                bool  recordEdit      = displayedRecordAudio;
-                bool settingsChanged = false;
-                drawEditIntButton(T("Dwell (ms)"), dwellEdit,
-                    [thresholdEdit, qsDelayEdit, qsDurEdit, recordEdit](int nextDwell) {
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
-                        core::configManager.conf["predatorDwellMs"] = std::max<int>(100, nextDwell);
-                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
-                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
-                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
-                        core::configManager.release(true);
-                    });
-                drawEditIntButton(T("QuickScan Delay (ms)"), qsDelayEdit,
-                    [thresholdEdit, dwellEdit, qsDurEdit, recordEdit](int nextDelay) {
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
-                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
-                        core::configManager.conf["predatorQuickScanDelayMs"] = std::max<int>(50, nextDelay);
-                        core::configManager.conf["predatorQuickScanDurationMs"] = qsDurEdit;
-                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
-                        core::configManager.release(true);
-                    });
-                drawEditIntButton(T("QuickScan Duration (ms)"), qsDurEdit,
-                    [thresholdEdit, dwellEdit, qsDelayEdit, recordEdit](int nextDuration) {
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorThreshold"] = thresholdEdit;
-                        core::configManager.conf["predatorDwellMs"] = dwellEdit;
-                        core::configManager.conf["predatorQuickScanDelayMs"] = qsDelayEdit;
-                        core::configManager.conf["predatorQuickScanDurationMs"] = std::max<int>(100, nextDuration);
-                        core::configManager.conf["predatorRecordAudio"] = recordEdit;
-                        core::configManager.release(true);
-                    });
-                if (ImGui::SliderFloat("Threshold", &thresholdEdit, -120.0f, 0.0f, "%.1f dB")) {
-                    settingsChanged = true;
-                }
-                if (ImGui::Checkbox("Record Audio", &recordEdit)) {
-                    settingsChanged = true;
-                }
-                if (settingsChanged) {
-                    commitMissionSettings(thresholdEdit, dwellEdit, qsDelayEdit, qsDurEdit, recordEdit);
-                }
-                if (missionPeerActive) {
-                    ImGui::TextDisabled("%s", T("Scan UX preferences below stay local — they govern this controller's UI only."));
-                }
-                bool scanUxChanged = false;
-                scanUxChanged |= ImGui::Checkbox(T("Hold on New Hit"), &predatorHoldOnNewHit);
-                scanUxChanged |= ImGui::Checkbox(T("Suppress Duplicate Hits"), &predatorSuppressDuplicateHits);
-                // Field feedback: Scan + QuickScan stacked markers on the
-                // same signal at slightly different offsets. This width is
-                // the "same signal" merge window — any new hit within +/-
-                // this bandwidth of an existing hit updates it instead of
-                // planting a second marker.
-                {
-                    int clusterEdit = (int)std::max<double>(hitClusterHz, 100.0);
-                    drawEditIntButton(T("Hit Merge Bandwidth (Hz)"), clusterEdit,
-                        [](int nextCluster) {
-                            core::configManager.acquire();
-                            core::configManager.conf["predatorHitClusterHz"] = (double)std::clamp<int>(nextCluster, 100, 10000000);
-                            core::configManager.release(true);
-                        });
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", T("Hits within this bandwidth of an existing hit are merged into it\ninstead of creating an overlapping marker. Widen for FM voice\n(~12500), narrow for tight digital channels."));
-                    }
-                }
-                drawEditIntButton(T("Duplicate Window (s)"), predatorDuplicateHitWindowSec,
-                    [this](int nextWindow) {
-                        predatorDuplicateHitWindowSec = std::clamp<int>(nextWindow, 1, 600);
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorDuplicateHitWindowSec"] = predatorDuplicateHitWindowSec;
-                        core::configManager.release(true);
-                    });
-                scanUxChanged |= ImGui::Checkbox(T("Extend Dwell on Strong Hit"), &predatorExtendDwellOnStrongHit);
-                if (ImGui::SliderFloat(T("Strong Hit SNR"), &predatorStrongHitSnrDb, 6.0f, 40.0f, "%.1f dB")) {
-                    scanUxChanged = true;
-                }
-                scanUxChanged |= ImGui::Checkbox(T("Classify Auto-Marker"), &predatorClassifyAutoMarker);
-                if (scanUxChanged) {
-                    savePeakDetectionConfig();
-                }
-            }
-
-            if (ImGui::CollapsingHeader(T("Peak Detection"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                bool peakChanged = false;
-                peakChanged |= ImGui::Checkbox(T("Detect Peaks"), &predatorPeakDetectionEnabled);
-                if (ImGui::SliderFloat(T("Peak SNR"), &predatorPeakSnrDb, 3.0f, 30.0f, "%.1f dB")) {
-                    peakChanged = true;
-                }
-                drawEditDoubleButton(T("Peak Spacing Hz"), predatorPeakMinSpacingHz, "%.0f",
-                    [this](double nextSpacing) {
-                        predatorPeakMinSpacingHz = std::max<double>(1000.0, nextSpacing);
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorPeakMinSpacingHz"] = predatorPeakMinSpacingHz;
-                        core::configManager.release(true);
-                    });
-                drawEditIntButton(T("Max Peaks / Dwell"), predatorPeakMaxPerDwell,
-                    [this](int nextMax) {
-                        predatorPeakMaxPerDwell = std::clamp<int>(nextMax, 1, 20);
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorPeakMaxPerDwell"] = predatorPeakMaxPerDwell;
-                        core::configManager.release(true);
-                    });
-                drawEditIntButton(T("Marker Slots"), predatorMarkerSlots,
-                    [this](int nextSlots) {
-                        predatorMarkerSlots = std::clamp<int>(nextSlots, 1, 16);
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorMarkerSlots"] = predatorMarkerSlots;
-                        core::configManager.release(true);
-                    });
-                ImGui::TextWrapped("%s", chineseUi ? "\u6383\u63cf\u505c\u7559\u6642\uff0cPredator RF \u6703\u5c07\u901a\u904e\u9580\u6abb\u8207 SNR \u689d\u4ef6\u7684\u5cf0\u503c\u8a18\u9304\u70ba\u96c6\u7fa4\u547d\u4e2d\uff0c\u4e26\u7531\u547d\u4e2d\u9801\u9762\u6307\u6d3e\u6a19\u8a18\u3001\u89e3\u78bc\u5668\u3001\u76ee\u6a19\u6216\u6392\u9664\u3002" : "During scan dwell, Predator RF records peaks that clear threshold and SNR checks as clustered hits. Markers, decoders, targets, and excludes are assigned from the Hits page.");
-                if (peakChanged) {
-                    savePeakDetectionConfig();
-                }
-            }
-
-            if (ImGui::CollapsingHeader(T("Operator Note"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::TextWrapped("This shell carries the Predator RF mission control concepts: mode, search bands, targets, excludes, dwell, quick filters, and map launch.");
-            }
-            // Mission edits no longer accumulate a "missionChanged" flag —
-            // each commit helper above either saves locally or ships a
-            // mission.set* command to the active peer in-place.
-        }
-        else if (predatorTab == PREDATOR_TAB_KUJHAD) {
+        if (predatorTab == PREDATOR_TAB_KUJHAD) {
             // Role selector — toggling changes which workflow runs.
             if (ImGui::CollapsingHeader(T("Role"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 int role = predatorRole;
@@ -6746,6 +7119,18 @@ void MainWindow::draw() {
                     if (ImGui::Checkbox(T("Enable peer access"), &enabled)) {
                         kujhadDeviceServerEnabled = enabled;
                         savePredatorState();
+                    }
+                    // Opt-in for networked Remote Fox Hunt: when checked, this
+                    // node will accept fleet foxbeacon tasking (start/stop a
+                    // local fox-hunt beacon) for sanctioned events. Off by
+                    // default; jamming/EW (tx.*) is always rejected regardless.
+                    bool rfh = remoteFoxHuntEnabled;
+                    if (ImGui::Checkbox(T("Accept Remote Fox Hunt tasking"), &rfh)) {
+                        remoteFoxHuntEnabled = rfh;
+                        savePredatorState();
+                    }
+                    if (!remoteFoxHuntStatus.empty()) {
+                        ImGui::TextWrapped("%s", remoteFoxHuntStatus.c_str());
                     }
                     int port = kujhadDeviceListenPort;
                     drawEditIntButton(T("Listen port"), port,
@@ -7512,6 +7897,33 @@ void MainWindow::draw() {
                             bool ok = client && client->sendCommand("scan", "stop", json::object(), err);
                             kujhadStatusBanner = ok ? std::string(T("scan.stop ok"))
                                                     : (std::string(T("scan.stop failed: ")) + err);
+                        }
+                        // ── Remote Fox Hunt tasking ──────────────────────
+                        // Distinct from the LOCAL Fox Hunt TX tab: this tasks
+                        // the SELECTED peer node to run a fox-hunt beacon for a
+                        // sanctioned event. The peer only obeys if its operator
+                        // has enabled Remote Fox Hunt; otherwise it returns 403
+                        // and the banner shows the refusal. Never sends tx.*.
+                        // The peer transmits with its own configured callsign.
+                        ImGui::Separator();
+                        ImGui::TextDisabled("%s", T("Remote Fox Hunt (beacon on peer)"));
+                        static double rfhFreq = 146565000.0; // 146.565 MHz — common fox freq
+                        drawEditFreqButton(T("Beacon Frequency"), rfhFreq,
+                            [](double nextFreq) { rfhFreq = nextFreq; });
+                        if (ImGui::Button(T("Start Remote Fox Hunt"))) {
+                            std::string err;
+                            json args;
+                            args["frequencyHz"] = rfhFreq;
+                            bool ok = client && client->sendCommand("foxbeacon", "start", args, err);
+                            kujhadStatusBanner = ok ? std::string(T("remote fox hunt started"))
+                                                    : (std::string(T("remote fox hunt failed: ")) + err);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(T("Stop Remote Fox Hunt"))) {
+                            std::string err;
+                            bool ok = client && client->sendCommand("foxbeacon", "stop", json::object(), err);
+                            kujhadStatusBanner = ok ? std::string(T("remote fox hunt stopped"))
+                                                    : (std::string(T("remote fox hunt stop failed: ")) + err);
                         }
                         if (!kujhadStatusBanner.empty()) {
                             ImGui::TextWrapped("%s", kujhadStatusBanner.c_str());
@@ -9753,15 +10165,51 @@ void MainWindow::draw() {
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 #endif
 
+    // Diablo Mission View Tabs order: Networks, Hits & Events, DF/Maps,
+    // Spectrum, Transmit, then our first-class extras (Kujhad, Baseline,
+    // System). Mission Config is no longer a rail tab — it lives in the
+    // left slide-out tray. The enum values are unchanged; only display
+    // order differs.
+    const int tabOrder[] = {
+        PREDATOR_TAB_NETWORK,
+        PREDATOR_TAB_HITS,
+        PREDATOR_TAB_MAP,
+        PREDATOR_TAB_SPECTRUM,
+#ifdef OPT_BUILD_FOXHUNT
+        PREDATOR_TAB_FOXHUNT,
+#endif
+        PREDATOR_TAB_KUJHAD,
+        PREDATOR_TAB_BASELINE,
+        PREDATOR_TAB_SYSTEM
+    };
+    const int tabOrderCount = (int)(sizeof(tabOrder) / sizeof(tabOrder[0]));
+
+    // Mission-dependent visibility: the Transmit view only appears in the
+    // Fox Hunt TX mission, mirroring Diablo's mission-swap behaviour.
+    auto tabVisible = [&](int t) -> bool {
+#ifdef OPT_BUILD_FOXHUNT
+        if (t == PREDATOR_TAB_FOXHUNT) { return predatorMission == PREDATOR_MISSION_FOXHUNT; }
+#endif
+        return true;
+    };
+
+    int visibleTabCount = 0;
+    for (int oi = 0; oi < tabOrderCount; oi++) {
+        if (tabVisible(tabOrder[oi])) { visibleTabCount++; }
+    }
+    visibleTabCount = std::max(visibleTabCount, 1);
+
     float tabAvailH = ImGui::GetContentRegionAvail().y;
     float tabSpacingY = ImGui::GetStyle().ItemSpacing.y;
-    float tabBtnH = std::floor((tabAvailH - (tabSpacingY * (float)(PREDATOR_TAB_COUNT - 1))) / (float)PREDATOR_TAB_COUNT);
+    float tabBtnH = std::floor((tabAvailH - (tabSpacingY * (float)(visibleTabCount - 1))) / (float)visibleTabCount);
     tabBtnH = std::max(tabBtnH, 1.0f);
 #ifdef __ANDROID__
     tabBtnH = std::max(tabBtnH, 56.0f * style::uiScale);
 #endif
 
-    for (int i = 0; i < PREDATOR_TAB_COUNT; i++) {
+    for (int oi = 0; oi < tabOrderCount; oi++) {
+        int i = tabOrder[oi];
+        if (!tabVisible(i)) { continue; }
         bool activeTab = (predatorTab == i);
         if (activeTab) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
@@ -9788,6 +10236,27 @@ void MainWindow::draw() {
 
     ImGui::EndChild();  // PredatorRightRail
     ImGui::PopStyleColor();
+
+    // ── Left slide-out Mission Config tray (Diablo left anchor) ──────────
+    // Overlays the content area from the left edge. Hosts the full mission
+    // configuration body (search / target / exclude / dwell / mission run /
+    // baseline / operator note), which used to be the MIS right-rail tab.
+    if (missionTrayOpen) {
+        float trayW = std::min(520.0f * style::uiScale,
+                               std::max(280.0f * style::uiScale, winSize.x - railWidth - (4.0f * pad)));
+        ImGui::SetCursorPos(ImVec2(pad, contentTop));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.07f, 0.09f, 0.06f, 0.98f));
+        ImGui::BeginChild("PredatorMissionTray", ImVec2(trayW, contentHeight), true);
+        ImGui::TextUnformatted(T("MISSION CONFIG"));
+        ImGui::SameLine(trayW - (56.0f * style::uiScale));
+        if (ImGui::SmallButton(T("Close##missiontray"))) {
+            missionTrayOpen = false;
+        }
+        ImGui::Separator();
+        drawMissionConfigBody();
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
 
     gui::waterfall.setFFTMin(fftMin);
     gui::waterfall.setFFTMax(fftMax);
@@ -9937,6 +10406,96 @@ bool MainWindow::sdrIsRunning() {
 
 bool MainWindow::isPlaying() {
     return playing;
+}
+
+// Networked Remote Fox Hunt: start/stop a LOCAL fox-hunt CW beacon on THIS
+// node in response to fleet foxbeacon tasking. The device server has already
+// verified this node opted in (remoteFoxHuntEnabled) before we get here, and
+// foxbeacon is NOT a tx.* class, so jamming/EW remains hard-rejected upstream.
+// Returns false + sets `err` on any failure so the server replies non-200.
+bool MainWindow::applyRemoteFoxBeacon(bool start, const nlohmann::json& args, std::string& err) {
+#ifdef OPT_BUILD_FOXHUNT
+    if (!start) {
+        foxhuntEngine.stop();
+        if (foxhuntOpenDriver) { foxhuntOpenDriver->stop(); }
+        remoteFoxHuntStatus = "Remote Fox Hunt: stopped by fleet tasking";
+        return true;
+    }
+
+    // ── start ────────────────────────────────────────────────────────────
+    auto drivers = predator::foxhunt::TxDriverRegistry::instance().list();
+    if (drivers.empty()) {
+        err = "no TX drivers in this build";
+        remoteFoxHuntStatus = std::string("Remote Fox Hunt refused: ") + err;
+        return false;
+    }
+    // Pick the first enumerable TX-capable device across all drivers.
+    predator::foxhunt::TxDriver* drv = nullptr;
+    predator::foxhunt::TxDeviceInfo dev;
+    bool haveDev = false;
+    for (auto* d : drivers) {
+        auto devs = d->enumerate();
+        if (!devs.empty()) { drv = d; dev = devs.front(); haveDev = true; break; }
+    }
+    if (!haveDev || !drv) {
+        err = "no TX-capable device found";
+        remoteFoxHuntStatus = std::string("Remote Fox Hunt refused: ") + err;
+        return false;
+    }
+
+    // Parameters: fleet args override, node config values are the fallback.
+    double freqHz  = args.value("frequencyHz", foxhuntFreqMhz * 1e6);
+    double rate    = args.value("sampleRate", foxhuntSampleRate);
+    double bwHz    = args.value("bandwidthHz", foxhuntBandwidthKhz * 1e3);
+    double gainReq = args.value("gainDb", foxhuntGainDb);
+    std::string callsign = args.value("callsign", foxhuntCallsign);
+    int    cwWpm   = args.value("cwWpm", foxhuntCwWpm);
+    if (freqHz <= 0.0) { err = "invalid frequencyHz"; return false; }
+
+    // Release any device left open by a previous run before reopening.
+    if (foxhuntOpenDriver && (foxhuntOpenDriver != drv || foxhuntOpenDeviceId != dev.id)) {
+        foxhuntOpenDriver->close();
+        foxhuntOpenDriver = nullptr;
+        foxhuntOpenDeviceId.clear();
+    }
+    bool opened = (foxhuntOpenDriver == drv && foxhuntOpenDeviceId == dev.id);
+    if (!opened) {
+        opened = drv->open(dev, err);
+        if (opened) { foxhuntOpenDriver = drv; foxhuntOpenDeviceId = dev.id; }
+        else {
+            remoteFoxHuntStatus = std::string("Remote Fox Hunt refused: ") + err;
+            return false;
+        }
+    }
+    double gainClamped = std::clamp(gainReq, dev.minGainDb, std::max(dev.minGainDb, dev.maxGainDb));
+    if (!drv->start(freqHz, rate, bwHz, gainClamped, err)) {
+        remoteFoxHuntStatus = std::string("Remote Fox Hunt TX start failed: ") + err;
+        return false;
+    }
+
+    predator::foxhunt::EngineConfig ecfg;
+    ecfg.source     = predator::foxhunt::TxSource::CW_BEACON;
+    ecfg.sampleRate = rate;
+    ecfg.repeat     = true;
+    ecfg.callsign   = callsign;
+    ecfg.cwWpm      = std::clamp(cwWpm, 5, 60);
+    ecfg.deadManSec = foxhuntDeadManSec;
+    if (!foxhuntEngine.start(std::move(ecfg),
+            [drv](const std::complex<float>* s, int n) { return drv->write(s, n); },
+            [drv]() { drv->stop(); })) {
+        drv->stop();
+        err = "engine start refused (bad config)";
+        remoteFoxHuntStatus = std::string("Remote Fox Hunt refused: ") + err;
+        return false;
+    }
+    remoteFoxHuntStatus = "Remote Fox Hunt: beacon running (fleet tasking)";
+    return true;
+#else
+    (void)start; (void)args;
+    err = "node not built with Fox Hunt support";
+    remoteFoxHuntStatus = std::string("Remote Fox Hunt refused: ") + err;
+    return false;
+#endif
 }
 
 void MainWindow::setFirstMenuRender() {

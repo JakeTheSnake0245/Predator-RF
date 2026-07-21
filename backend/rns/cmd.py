@@ -60,6 +60,12 @@ FORBIDDEN_CLASS_PREFIXES: Tuple[str, ...] = ("tx",)
 ALLOWED_COMMAND_CLASSES: frozenset = frozenset({
     "tune", "scan", "mission", "decoder", "marker", "hold",
     "vfo", "source", "audio", "ping",
+    # Networked Remote Fox Hunt beacon tasking. NOT a tx.* class, so the
+    # FORBIDDEN_CLASS_PREFIXES ("tx",) jamming/EW reject still applies. A
+    # node only acts on this when its operator has opted in; the class is
+    # allowed on the wire here so the envelope can be delivered for that
+    # opt-in check to run receiver-side.
+    "foxbeacon",
 })
 
 

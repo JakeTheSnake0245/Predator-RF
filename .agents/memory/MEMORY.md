@@ -4,3 +4,7 @@
 - [WebView JS bridge escaping](webview-js-bridge-escaping.md) — use JSONObject.quote() for evaluateJavascript payloads; manual quote-replace is an injection surface.
 - [Field deployment gaps](field-deployment-gaps.md) — prioritized gap list from the 6-node cellular trace (no non-Kraken bearings, no fusion identity gate, no node disk persistence, no failover) + overlay/tailnet transport facts.
 - [Kujhad spectrum liveness](kujhad-spectrum-liveness.md) — never gate the local FFT snapshot/serial on the device-server toggle; overlay fallback depends on it. Change-detect peer view snaps or drags fight.
+- [Predator gesture extension](predator-gesture-extension.md) — extend spectrum gestures via waterfall.onInputProcess, not upstream processInputs; detect-then-defer because the bound handler can't reach draw() lambdas.
+- [Predator gesture extension](predator-gesture-extension.md) — add spectrum gestures via waterfall.onInputProcess (not upstream processInputs); bound static handler can't see draw() lambdas so detect-then-defer via member flags.
+- [Git history scrub state](git-history-scrub.md) — repo realigned to scrubbed upstream; attached_assets/ must stay untracked; rebase onto scrubbed history deletes formerly-tracked files from disk.
+- [Remote Fox Hunt (foxbeacon)](remote-fox-hunt.md) — networked beacon tasking uses a non-tx.* class to keep all tx.* jamming rejects intact; per-node opt-in atomic, GUI/worker thread gate layering.

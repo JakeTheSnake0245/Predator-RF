@@ -34,8 +34,9 @@ Each key → where the detail lives. Read `docs/REPO_MAP.md` first for anything 
 - `STATIONARITY` → `docs/stationarity_gate.md` — TDOA fix sanity filter + motion classifier.
 - `RNS` → `docs/rns_commanding.md`, `docs/rns_parity.md`, `backend/rns/README.md` — Reticulum CoT + cmd.v1 tasking.
 - `KRAKEN` → `docs/krakensdr.md` — LOB decoder, triangulator, five footguns.
-- `FOXHUNT` → `docs/foxhunt.md` — TX tab, replay engine, drivers, OPT_BUILD_FOXHUNT flag rules.
+- `FOXHUNT` → `docs/foxhunt.md` — local TX tab + networked Remote Fox Hunt (`foxbeacon`, per-node opt-in, NOT tx.*), replay engine, drivers, OPT_BUILD_FOXHUNT flag rules.
 - `COCKPIT` → `docs/remote_cockpit.md` — predator_node_source Controller/Device split, tx.* unlock model.
+- `GESTURES` → `docs/REPO_MAP.md` (Diablo touch-gesture parity) — RX/analysis spectrum + network-tree gestures via `waterfall.onInputProcess` detect-then-defer; map/columns out of C++ scope.
 - `REPOSITORY` → `docs/signal_repository.md` — signal store, fingerprinter, REST routes.
 - `CORRELATION` → `docs/correlation_engine.md` — correlation rules, fleet state, IQ capture.
 - `OPS` → `docs/OPERATOR_RUNBOOK.md`, `docs/MISSION_READY_CHECKLIST.md`, `docs/1_conops.md` — field operation.

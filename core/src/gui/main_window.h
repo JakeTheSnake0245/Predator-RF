@@ -4,6 +4,7 @@
 #include <dsp/types.h>
 #include <dsp/stream.h>
 #include <signal_path/vfo_manager.h>
+#include <gui/widgets/waterfall.h>
 #include <predator/hold_manager.h>
 #include <predator/hold_decoder_binder.h>
 #ifdef OPT_BUILD_FOXHUNT
@@ -52,6 +53,14 @@ private:
         PREDATOR_MODE_QUICKSCAN
     };
 
+    // Diablo-style Mission Selector: swaps the working UI between two
+    // missions. RX Recon is the RX-only survey mission; Fox Hunt TX exposes
+    // the Transmit view tab and local TX controls.
+    enum PredatorMission {
+        PREDATOR_MISSION_RECON,
+        PREDATOR_MISSION_FOXHUNT
+    };
+
     enum PredatorTab {
         PREDATOR_TAB_SPECTRUM,
         PREDATOR_TAB_HITS,
@@ -82,6 +91,12 @@ private:
 
     static void vfoAddedHandler(VFOManager::VFO* vfo, void* ctx);
 
+    // Tab-independent Remote Fox Hunt beacon control. Runs on the UI thread
+    // from the Kujhad pending-command drain so a networked-tasked node can
+    // start/stop its beacon regardless of which view tab is showing. On a
+    // build without OPT_BUILD_FOXHUNT it fails cleanly with an error.
+    bool applyRemoteFoxBeacon(bool start, const nlohmann::json& args, std::string& err);
+
     // FFT Variables
     int fftSize = 8192 * 8;
     std::mutex fft_mtx;
@@ -108,6 +123,8 @@ private:
     bool demoWindow = false;
     int selectedWindow = 0;
     int predatorMissionMode = PREDATOR_MODE_CLASSIFY;
+    int predatorMission = PREDATOR_MISSION_RECON;
+    bool missionTrayOpen = false;
     int predatorTab = PREDATOR_TAB_SPECTRUM;
     int predatorQuickFilter = 0;
     int predatorHitSortMode = 0;
@@ -148,6 +165,15 @@ private:
     int predatorDuplicateHitWindowSec = 20;
     int predatorMarkerSlots = 4;
     std::string predatorScanStatus = "Idle";
+
+    // ── Remote Fox Hunt (networked beacon tasking) ──────────────────────
+    // Distinct from the LOCAL Fox Hunt TX tab: this lets an operator task a
+    // specific fleet node to run a fox-hunt beacon over the network (e.g. a
+    // sanctioned ham-club hunt). It is opt-in per node and never a tx.*
+    // class, so the jamming/EW reject on tx.* stays fully intact. Persisted
+    // (config key "remoteFoxHuntEnabled"); default OFF.
+    bool remoteFoxHuntEnabled = false;
+    std::string remoteFoxHuntStatus;        // last remote-beacon action, operator-facing
 
 #ifdef OPT_BUILD_FOXHUNT
     // ── Fox Hunt TX tab (local-hardware-only transmit) ──────────────────
@@ -355,4 +381,19 @@ private:
     bool autostart = false;
 
     EventHandler<VFOManager::VFO*> vfoCreatedHandler;
+
+    // --- Predator touch-gesture parity (RX/analysis surfaces) ---
+    // The spectrum gesture handler is bound to gui::waterfall.onInputProcess so
+    // Predator gestures can be added without editing the upstream WaterFall
+    // widget. Detection runs inside the handler (it has the FFT geometry via
+    // InputHandlerArgs); the resulting action is deferred to member flags and
+    // consumed in MainWindow::draw() where the marker/tune lambdas are in scope.
+    static void spectrumInputHandlerFn(ImGui::WaterFall::InputHandlerArgs args, void* ctx);
+    EventHandler<ImGui::WaterFall::InputHandlerArgs> spectrumInputHandler;
+    double gesturePlaceMarkerFreq = 0.0;   // >0 → place a marker at this freq
+    double gestureRecenterFreq = 0.0;      // >0 → recenter/tune to this freq
+    std::string gestureMarkerMenuVfo;      // non-empty → open Marker Menu for VFO
+    std::string gestureMenuOpenVfo;        // VFO the open Marker Menu popup targets
+    bool gestureHoldFired = false;         // one-shot latch for spectrum long-press
+    int gestureHoldLatch = 0;              // one-shot latch for widget long-press
 };
