@@ -48,3 +48,7 @@ install_linux/
 .replit
 replit.nix
 .github/workflows/ci.yml
+
+# Confidential reference material — must never reach GitHub
+attached_assets/*Diablo*
+attached_assets/*diablo*
