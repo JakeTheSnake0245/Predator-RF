@@ -34,6 +34,10 @@ namespace backend {
 
     float getNativeUiScale();
     bool isTouchPrimary();
+    // Number of USB devices the platform has granted access to, or -1 when
+    // the backend cannot know (desktop / web). Used by the SDR status badge
+    // to show NO SDR when nothing is physically plugged in on Android.
+    int getUsbDeviceCount();
     int renderLoop();
     int end();
 

@@ -266,6 +266,31 @@ namespace backend {
         return true;
     }
 
+    int getUsbDeviceCount() {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return -1; }
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return -1; }
+
+        int count = -1;
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz != NULL) {
+            jmethodID count_mid = java_env->GetMethodID(native_activity_clazz, "usbDevCount", "()I");
+            if (count_mid) {
+                count = (int)java_env->CallIntMethod(app->activity->clazz, count_mid);
+            }
+            else if (java_env->ExceptionCheck()) {
+                java_env->ExceptionClear();
+            }
+        }
+        java_vm->DetachCurrentThread();
+        return count;
+    }
+
     bool getPhoneLocation(double& lat, double& lon, float& accuracy, bool& hasFix) {
         lat = 0.0;
         lon = 0.0;

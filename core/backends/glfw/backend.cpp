@@ -264,6 +264,12 @@ namespace backend {
         return false;
     }
 
+    int getUsbDeviceCount() {
+        // Desktop cannot cheaply enumerate; report unknown so the badge
+        // never fakes a NO SDR state here.
+        return -1;
+    }
+
     int getImeBottomInset() {
         // Desktop has no soft keyboard; nothing ever covers the popup.
         return 0;

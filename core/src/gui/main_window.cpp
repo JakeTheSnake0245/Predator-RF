@@ -3717,7 +3717,14 @@ void MainWindow::draw() {
     }
 
     ImVec2 winSize = ImGui::GetWindowSize();
+#ifdef __ANDROID__
+    // Field feedback: on the phone every pixel counts — the 8px frame gap
+    // left a visible dead band on the left edge and between cells. Keep a
+    // hairline 2px so child borders don't visually fuse.
+    float pad = 2.0f * style::uiScale;
+#else
     float pad = 8.0f * style::uiScale;
+#endif
     float statusBarHeight = 42.0f * style::uiScale;
     float controlBarHeight = 46.0f * style::uiScale;
     float railWidth = 72.0f * style::uiScale;
@@ -3744,7 +3751,7 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(pad, pad));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.09f, 0.96f));
-    ImGui::BeginChild("PredatorMissionStatus", ImVec2(winSize.x - (2.0f * pad), statusBarHeight), true);
+    ImGui::BeginChild("PredatorMissionStatus", ImVec2(winSize.x - (2.0f * pad), statusBarHeight), true, ImGuiWindowFlags_NoScrollbar);
 
     ImVec2 btnSize(30 * style::uiScale, 30 * style::uiScale);
     ImGui::PushID(ImGui::GetID("sdrpp_menu_btn"));
@@ -3777,9 +3784,26 @@ void MainWindow::draw() {
         }
     }
     bool fftFlowing = (ImGui::GetTime() - lastFFTPushTime) < 2.5;
+    // Field feedback: READY used to show whenever a source MODULE was
+    // selected, even with nothing plugged into the phone. On backends that
+    // can enumerate USB (Android), a hardware-style source with zero granted
+    // USB devices is NO SDR. Network/file sources are exempt. Poll is
+    // throttled to 1 Hz because it crosses JNI.
+    static int cachedUsbCount = -1;
+    static double lastUsbPollTime = -10.0;
+    if (ImGui::GetTime() - lastUsbPollTime > 1.0) {
+        lastUsbPollTime = ImGui::GetTime();
+        cachedUsbCount = backend::getUsbDeviceCount();
+    }
+    bool sourceNeedsUsb = !sourceName.empty()
+        && sourceName.find("File") == std::string::npos
+        && sourceName.find("Server") == std::string::npos
+        && sourceName.find("Network") == std::string::npos
+        && sourceName.find("RFNM") == std::string::npos;
+    bool noHardware = sourceNeedsUsb && (cachedUsbCount == 0) && !playing;
     const char* liveStateLabel;
     ImVec4 liveStateColor;
-    if (sourceName.empty()) {
+    if (sourceName.empty() || noHardware) {
         liveStateLabel = T("NO SDR");
         liveStateColor = ImVec4(0.83f, 0.42f, 0.32f, 1.0f);
     }
@@ -3796,7 +3820,7 @@ void MainWindow::draw() {
         liveStateColor = ImVec4(0.87f, 0.55f, 0.25f, 1.0f);
     }
     if (drawBadge(liveStateLabel, liveStateColor) && !(playButtonLocked && !playing)) {
-        if (sourceName.empty() && !playing) {
+        if ((sourceName.empty() || noHardware) && !playing) {
             predatorTab = PREDATOR_TAB_SYSTEM;
             predatorJumpSection = 1;
             showMenu = true;
@@ -3874,7 +3898,7 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPos(ImVec2(pad, pad + statusBarHeight + pad));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.07f, 0.09f, 0.07f, 0.94f));
-    ImGui::BeginChild("PredatorControlBar", ImVec2(winSize.x - (2.0f * pad), controlBarHeight), true);
+    ImGui::BeginChild("PredatorControlBar", ImVec2(winSize.x - (2.0f * pad), controlBarHeight), true, ImGuiWindowFlags_NoScrollbar);
 
     float origY = ImGui::GetCursorPosY();
     ImGui::SetCursorPosY(origY);
@@ -3966,26 +3990,27 @@ void MainWindow::draw() {
             ImGui::SetTooltip("%s", T("Tap: arm, then tap the spectrum to place.\nLong hold: toggle arrow off/on."));
         }
     }
+    // Field feedback: the delta belongs DIRECTLY right of the two arrow
+    // buttons — not parked at the far edge behind a hint sentence.
     ImGui::SameLine();
     ImGui::SetCursorPosY(origY + (5.0f * style::uiScale));
     if (predatorArrowArmed >= 0) {
         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.30f, 1.0f), "%s A%d",
                            T("Tap the spectrum to place"), predatorArrowArmed + 1);
     }
-    else {
-        ImGui::TextDisabled("Select a right-side tab to overlay controls on the spectrum.");
-    }
-    if (predatorArrowOn[0] && predatorArrowOn[1] && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0) {
+    else if (predatorArrowOn[0] && predatorArrowOn[1] && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0) {
         char deltaTxt[64];
         double deltaHz = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
         if (deltaHz >= 1e6)      snprintf(deltaTxt, sizeof(deltaTxt), "\xCE\x94 %.6f MHz", deltaHz / 1e6);
         else if (deltaHz >= 1e3) snprintf(deltaTxt, sizeof(deltaTxt), "\xCE\x94 %.3f kHz", deltaHz / 1e3);
         else                     snprintf(deltaTxt, sizeof(deltaTxt), "\xCE\x94 %.0f Hz", deltaHz);
-        ImGui::SameLine();
-        float deltaW = ImGui::CalcTextSize(deltaTxt).x;
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - deltaW - (16.0f * style::uiScale)));
-        ImGui::SetCursorPosY(origY + (5.0f * style::uiScale));
         ImGui::TextColored(ImVec4(0.60f, 0.90f, 0.60f, 1.0f), "%s", deltaTxt);
+    }
+    else if (predatorArrowOn[0] && predatorArrowFreq[0] > 0.0) {
+        ImGui::TextColored(ImVec4(0.85f, 0.60f, 0.35f, 1.0f), "A1 %.6f MHz", predatorArrowFreq[0] / 1e6);
+    }
+    else if (predatorArrowOn[1] && predatorArrowFreq[1] > 0.0) {
+        ImGui::TextColored(ImVec4(0.40f, 0.70f, 0.95f, 1.0f), "A2 %.6f MHz", predatorArrowFreq[1] / 1e6);
     }
 
     ImGui::EndChild();
@@ -4500,7 +4525,12 @@ void MainWindow::draw() {
         }
         ImGui::TextWrapped("%s", tabDescriptions[predatorTab]);
         ImGui::Separator();
+#ifdef __ANDROID__
+        // Touch: hide the scrollbar strip but keep drag scrolling.
+        ImGui::BeginChild("PredatorOverlayBody", ImVec2(0, 0), false, ImGuiWindowFlags_NoScrollbar);
+#else
         ImGui::BeginChild("PredatorOverlayBody", ImVec2(0, 0), false);
+#endif
 
         if (predatorTab == PREDATOR_TAB_SPECTRUM) {
             if (ImGui::CollapsingHeader(T("Display Controls"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -4511,6 +4541,28 @@ void MainWindow::draw() {
             }
             if (ImGui::CollapsingHeader(T("Mission Run"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 drawMissionRunControls();
+            }
+            if (ImGui::CollapsingHeader(T("Arrow Markers"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool anyArrow = false;
+                for (int ai = 0; ai < 2; ai++) {
+                    if (!predatorArrowOn[ai] || predatorArrowFreq[ai] <= 0.0) { continue; }
+                    anyArrow = true;
+                    ImVec4 col = (ai == 0) ? ImVec4(0.85f, 0.60f, 0.35f, 1.0f)
+                                           : ImVec4(0.40f, 0.70f, 0.95f, 1.0f);
+                    ImGui::TextColored(col, "A%d", ai + 1);
+                    ImGui::SameLine();
+                    ImGui::Text("%.6f MHz", predatorArrowFreq[ai] / 1e6);
+                }
+                if (predatorArrowOn[0] && predatorArrowOn[1]
+                    && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0) {
+                    double dHz = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
+                    if (dHz >= 1e6)      ImGui::TextColored(ImVec4(0.60f, 0.90f, 0.60f, 1.0f), "\xCE\x94 %.6f MHz", dHz / 1e6);
+                    else if (dHz >= 1e3) ImGui::TextColored(ImVec4(0.60f, 0.90f, 0.60f, 1.0f), "\xCE\x94 %.3f kHz", dHz / 1e3);
+                    else                 ImGui::TextColored(ImVec4(0.60f, 0.90f, 0.60f, 1.0f), "\xCE\x94 %.0f Hz", dHz);
+                }
+                if (!anyArrow) {
+                    ImGui::TextDisabled("%s", T("No arrows placed. Use A1/A2 above the spectrum."));
+                }
             }
             if (ImGui::CollapsingHeader(T("Quick Actions"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Button(T("Open SDR / Settings"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
@@ -5357,6 +5409,28 @@ void MainWindow::draw() {
             }
 
             // ── CSV Export ─────────────────────────────────────────────────
+            if (ImGui::CollapsingHeader(T("Recording Locations"))) {
+                ImGui::TextWrapped("%s", T("Where signal recordings are saved. %ROOT% expands to the app data folder."));
+                ImGui::TextDisabled("%s", T("Voice recordings"));
+                drawEditButton(T("Voice Path"), voiceOutputPath,
+                    [](std::string nextPath) {
+                        if (nextPath.empty()) { nextPath = "%ROOT%/voice"; }
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorVoiceOutputPath"] = nextPath;
+                        core::configManager.release(true);
+                    });
+                ImGui::TextDisabled("%s", T("Data / decoder output"));
+                drawEditButton(T("Data Path"), dataOutputPath,
+                    [](std::string nextPath) {
+                        if (nextPath.empty()) { nextPath = "%ROOT%/data"; }
+                        core::configManager.acquire();
+                        core::configManager.conf["predatorDataOutputPath"] = nextPath;
+                        core::configManager.release(true);
+                    });
+                ImGui::TextDisabled("%s", T("Resolved folders"));
+                ImGui::TextWrapped("%s", voiceFolderSelect.expandString(voiceOutputPath).c_str());
+                ImGui::TextWrapped("%s", dataFolderSelect.expandString(dataOutputPath).c_str());
+            }
             if (ImGui::CollapsingHeader(T("Export CSV"))) {
                 if (hits.empty()) {
                     ImGui::TextDisabled("No hits to export");
@@ -6332,12 +6406,21 @@ void MainWindow::draw() {
                 if (ImGui::Button("- 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart -= 1e6; newBandStop -= 1e6; }
                 ImGui::SameLine(0, 4.0f * style::uiScale);
                 if (ImGui::Button("+ 1 MHz##bs", ImVec2(stepBtnW, 0))) { newBandStart += 1e6; newBandStop += 1e6; }
-                if (ImGui::Button("From Current View", ImVec2(fw, 0))) {
+                if (ImGui::Button("From Current View", ImVec2(stepBtnW, 0))) {
                     double ctr = gui::waterfall.getCenterFrequency();
                     double bw  = gui::waterfall.getViewBandwidth();
                     newBandStart = ctr - bw * 0.5;
                     newBandStop  = ctr + bw * 0.5;
                 }
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                bool arrowSpanOk = predatorArrowOn[0] && predatorArrowOn[1]
+                                && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
+                if (!arrowSpanOk) ImGui::BeginDisabled();
+                if (ImGui::Button("Arrow Span##band", ImVec2(stepBtnW, 0))) {
+                    newBandStart = std::min(predatorArrowFreq[0], predatorArrowFreq[1]);
+                    newBandStop  = std::max(predatorArrowFreq[0], predatorArrowFreq[1]);
+                }
+                if (!arrowSpanOk) ImGui::EndDisabled();
                 if (ImGui::Button("Add Search Band", ImVec2(fw, 0))) {
                     json row;
                     row["name"] = std::string(newBandName);
@@ -6391,9 +6474,21 @@ void MainWindow::draw() {
                     [&](double nextFreq) { newTargetFreq = nextFreq; });
                 drawEditDoubleButton(T("Target Bandwidth Hz"), newTargetBandwidth, "%.0f",
                     [&](double nextBw) { newTargetBandwidth = nextBw; });
-                if (ImGui::Button("From Current View##tgt", ImVec2(fw, 0))) {
-                    newTargetFreq = gui::waterfall.getCenterFrequency();
-                    newTargetBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                {
+                    float halfW = (fw - 4.0f * style::uiScale) * 0.5f;
+                    if (ImGui::Button("From Current View##tgt", ImVec2(halfW, 0))) {
+                        newTargetFreq = gui::waterfall.getCenterFrequency();
+                        newTargetBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                    }
+                    ImGui::SameLine(0, 4.0f * style::uiScale);
+                    bool spanOk = predatorArrowOn[0] && predatorArrowOn[1]
+                               && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
+                    if (!spanOk) ImGui::BeginDisabled();
+                    if (ImGui::Button("Arrow Span##tgt", ImVec2(halfW, 0))) {
+                        newTargetFreq = (predatorArrowFreq[0] + predatorArrowFreq[1]) * 0.5;
+                        newTargetBandwidth = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
+                    }
+                    if (!spanOk) ImGui::EndDisabled();
                 }
                 if (ImGui::Button("Add Target", ImVec2(fw, 0))) {
                     json row;
@@ -6446,9 +6541,21 @@ void MainWindow::draw() {
                     [&](double nextFreq) { newExcludeFreq = nextFreq; });
                 drawEditDoubleButton(T("Exclude Bandwidth Hz"), newExcludeBandwidth, "%.0f",
                     [&](double nextBw) { newExcludeBandwidth = nextBw; });
-                if (ImGui::Button("From Current View##excl", ImVec2(fw, 0))) {
-                    newExcludeFreq = gui::waterfall.getCenterFrequency();
-                    newExcludeBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                {
+                    float halfW = (fw - 4.0f * style::uiScale) * 0.5f;
+                    if (ImGui::Button("From Current View##excl", ImVec2(halfW, 0))) {
+                        newExcludeFreq = gui::waterfall.getCenterFrequency();
+                        newExcludeBandwidth = (vfo != NULL) ? vfo->bandwidth : 12500.0;
+                    }
+                    ImGui::SameLine(0, 4.0f * style::uiScale);
+                    bool spanOk = predatorArrowOn[0] && predatorArrowOn[1]
+                               && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
+                    if (!spanOk) ImGui::BeginDisabled();
+                    if (ImGui::Button("Arrow Span##excl", ImVec2(halfW, 0))) {
+                        newExcludeFreq = (predatorArrowFreq[0] + predatorArrowFreq[1]) * 0.5;
+                        newExcludeBandwidth = fabs(predatorArrowFreq[1] - predatorArrowFreq[0]);
+                    }
+                    if (!spanOk) ImGui::EndDisabled();
                 }
                 if (ImGui::Button("Add Exclude", ImVec2(fw, 0))) {
                     json row;
@@ -8903,27 +9010,42 @@ void MainWindow::draw() {
                 }
             }
 
-            if (ImGui::CollapsingHeader(T("Recording Locations"), ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::TextWrapped("%s", T("Where signal recordings are saved. %ROOT% expands to the app data folder."));
-                ImGui::TextDisabled("%s", T("Voice recordings"));
-                drawEditButton(T("Voice Path"), voiceOutputPath,
-                    [](std::string nextPath) {
-                        if (nextPath.empty()) { nextPath = "%ROOT%/voice"; }
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorVoiceOutputPath"] = nextPath;
-                        core::configManager.release(true);
-                    });
-                ImGui::TextDisabled("%s", T("Data / decoder output"));
-                drawEditButton(T("Data Path"), dataOutputPath,
-                    [](std::string nextPath) {
-                        if (nextPath.empty()) { nextPath = "%ROOT%/data"; }
-                        core::configManager.acquire();
-                        core::configManager.conf["predatorDataOutputPath"] = nextPath;
-                        core::configManager.release(true);
-                    });
-                ImGui::TextDisabled("%s", T("Resolved folders"));
-                ImGui::TextWrapped("%s", voiceFolderSelect.expandString(voiceOutputPath).c_str());
-                ImGui::TextWrapped("%s", dataFolderSelect.expandString(dataOutputPath).c_str());
+            // Recording Locations moved to the Hits & Events tab (field
+            // feedback: it belongs beside the recordings it configures).
+            if (ImGui::CollapsingHeader(T("Offline Analysis"), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float oaW = ImGui::GetContentRegionAvail().x;
+                ImGui::TextWrapped("%s", T("Work without an SDR attached: replay a recorded IQ file "
+                    "through the full spectrum/scan pipeline, and review or export past hits, "
+                    "events, and baselines."));
+                bool fileSelected = (sourceName == "File");
+                if (fileSelected) ImGui::BeginDisabled();
+                if (ImGui::Button(T("Switch to File Source (IQ Replay)"), ImVec2(oaW, 0))) {
+                    if (playing) { setPlayState(false); }
+                    sigpath::sourceManager.selectSource("File");
+                    core::configManager.acquire();
+                    core::configManager.conf["source"] = "File";
+                    core::configManager.release(true);
+                }
+                if (fileSelected) ImGui::EndDisabled();
+                if (fileSelected) {
+                    ImGui::TextWrapped("%s", T("File source active. Pick the IQ file under Source & Device, "
+                        "then press play. Hits, decoders, and baseline scans all run on the replay."));
+                }
+                std::string oaRoot = (std::string)core::args["root"];
+                ImGui::TextDisabled("%s", T("On-device folders (pull to PC via USB / adb):"));
+                ImGui::TextWrapped("exports/  %s", T("hit + event CSVs, session JSON"));
+                ImGui::TextWrapped("baselines/  %s", T("baseline snapshots (CSV)"));
+                ImGui::TextWrapped("%s: %s", T("App data root"), oaRoot.c_str());
+                if (ImGui::Button(T("Export Hits CSV##oa"), ImVec2((oaW - 4.0f * style::uiScale) * 0.5f, 0))) {
+                    exportHitsCsv();
+                }
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                if (ImGui::Button(T("Export Events CSV##oa"), ImVec2((oaW - 4.0f * style::uiScale) * 0.5f, 0))) {
+                    exportEventsCsv();
+                }
+                if (!exportStatus.empty()) {
+                    ImGui::TextWrapped("%s", exportStatus.c_str());
+                }
             }
             if (ImGui::CollapsingHeader(T("Session Export"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 drawEditButton(T("Note"), std::string(sessionNoteBuf),
@@ -9020,12 +9142,21 @@ void MainWindow::draw() {
                     }
                     ImGui::PopID();
                 }
-                if (ImGui::Button(T("From Current View##bl"), ImVec2(fw, 0))) {
+                if (ImGui::Button(T("From Current View##bl"), ImVec2(hw, 0))) {
                     double ctr = gui::waterfall.getCenterFrequency();
                     double bw2 = gui::waterfall.getViewBandwidth();
                     blNewRangeStart = ctr - bw2 * 0.5;
                     blNewRangeStop  = ctr + bw2 * 0.5;
                 }
+                ImGui::SameLine(0, 4.0f * style::uiScale);
+                bool blArrowSpanOk = predatorArrowOn[0] && predatorArrowOn[1]
+                                  && predatorArrowFreq[0] > 0.0 && predatorArrowFreq[1] > 0.0;
+                if (!blArrowSpanOk) ImGui::BeginDisabled();
+                if (ImGui::Button(T("Arrow Span##bl"), ImVec2(hw, 0))) {
+                    blNewRangeStart = std::min(predatorArrowFreq[0], predatorArrowFreq[1]);
+                    blNewRangeStop  = std::max(predatorArrowFreq[0], predatorArrowFreq[1]);
+                }
+                if (!blArrowSpanOk) ImGui::EndDisabled();
                 if (ImGui::Button(T("+ Add Range##bl"), ImVec2(fw, 0))) {
                     if (blNewRangeStart != blNewRangeStop) {
                         json r;
@@ -9614,9 +9745,10 @@ void MainWindow::draw() {
     ImGui::SetCursorPos(ImVec2(railX, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.11f, 0.08f, 0.96f));
 #ifdef __ANDROID__
-    // Touch: rail scrolls vertically and every tab button keeps a minimum
-    // finger-sized height instead of shrinking to fit (field feedback).
-    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true);
+    // Touch: rail scrolls vertically (drag) and every tab button keeps a
+    // minimum finger-sized height instead of shrinking to fit. NoScrollbar
+    // hides the bar itself but touch-drag scrolling still works.
+    ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, ImGuiWindowFlags_NoScrollbar);
 #else
     ImGui::BeginChild("PredatorRightRail", ImVec2(railWidth, contentHeight), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 #endif

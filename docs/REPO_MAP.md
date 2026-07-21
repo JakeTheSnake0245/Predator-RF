@@ -200,3 +200,35 @@ short list of what's covered there:
   `file(GLOB_RECURSE)` so a fresh CMake configure is required after pulling
   (stale build dirs won't see the new file → linker errors on
   `qrcodegen::QrCode`).
+
+## Field-feedback round 4 (July 2026): layout, arrows polish, offline analysis
+
+- **Δ readout placement:** delta now renders DIRECTLY right of the A1/A2
+  control-bar buttons (replaces the old always-on hint sentence; the hint
+  only shows while an arrow is armed). Single-arrow fallback shows that
+  arrow's frequency.
+- **Arrow Span fill buttons:** beside "From Current View" in Mission Config
+  (Search Band start/stop, Target center+bw, Exclude center+bw) and
+  Baseline range start/stop. Disabled until both arrows are placed. Target/
+  Exclude use midpoint + |Δ| as center/bandwidth.
+- **Spectrum tab "Arrow Markers" section:** A1/A2 frequencies + Δ readout.
+- **NO SDR badge:** `backend::getUsbDeviceCount()` (new backend API; Android
+  JNI → `MainActivity.usbDevCount()`, -1 = unknown on glfw/web). Badge shows
+  NO SDR when a USB-style source is selected but zero USB devices are
+  granted; sources whose name contains File/Server/Network/RFNM are exempt.
+  Poll throttled to 1 Hz (JNI crossing).
+- **Scrollbars/spacing (Android):** NoScrollbar on PredatorMissionStatus,
+  PredatorControlBar, PredatorRightRail, PredatorOverlayBody (touch-drag
+  scroll still works — only NoScrollWithMouse would kill it, desktop rail
+  keeps that). Frame `pad` is 2px on Android (was 8px) to remove the left
+  dead band and let cells nearly touch.
+- **Tactical map chrome:** `activity_map.xml` full-width top bar REMOVED —
+  floating X top-left, follow/recenter stacked bottom-right, so WebView map
+  controls are no longer covered. IDs unchanged; `MapActivity.kt` untouched.
+- **Recording Locations** moved from System tab → Hits & Events tab (above
+  Export CSV). System tab keeps a pointer comment.
+- **Offline Analysis (System tab):** header with "Switch to File Source
+  (IQ Replay)" (stops playback via `setPlayState(false)`, selects the
+  "File" source, persists `conf["source"]`), folder pointers (exports/,
+  baselines/, app data root), and Hits/Events CSV export buttons. Baselines
+  are already CSV on disk in `baselines/`.
