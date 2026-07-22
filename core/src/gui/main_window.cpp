@@ -9224,6 +9224,7 @@ void MainWindow::draw() {
                         ImGui::InputInt (T("Respawn delay s##rns_e"), &eRespawnDelay);
                         iv();
                     }
+                    applyTouchScroll();
                     ImGui::EndChild();  // ##rns_e_body
 
                     // Execute deferred header-bar button actions.
