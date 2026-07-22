@@ -118,6 +118,20 @@ namespace {
             }
         }
 
+        bool setFrequency(double freqHz) override {
+            if (!dev) { return false; }
+            // Soapy setFrequency is safe while streaming on the devices we
+            // target (Fox Hunt sweep mode retunes at a few steps/second).
+            try {
+                dev->setFrequency(SOAPY_SDR_TX, 0, freqHz);
+                return true;
+            }
+            catch (const std::exception& e) {
+                flog::warn("FoxHunt soapy setFrequency failed: {}", e.what());
+                return false;
+            }
+        }
+
         int write(const std::complex<float>* samples, int count) override {
             if (!dev || !stream || streamDead.load()) { return -1; }
             const void* buffs[1];

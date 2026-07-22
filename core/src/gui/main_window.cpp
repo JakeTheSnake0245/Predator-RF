@@ -362,6 +362,14 @@ void MainWindow::init() {
         foxhuntDeadManSec   = std::clamp<double>(cfg.value("foxhuntDeadManSec", 600.0), 0.0, 7200.0);
         if (foxhuntDeadManSec > 0.0 && foxhuntDeadManSec < 10.0) { foxhuntDeadManSec = 10.0; }
         foxhuntSourceMode   = std::clamp<int>(cfg.value("foxhuntSourceMode", 0), 0, 2);
+        foxhuntFreqMode     = std::clamp<int>(cfg.value("foxhuntFreqMode", 0), 0, 2);
+        foxhuntSweepStartMhz = std::clamp<double>(cfg.value("foxhuntSweepStartMhz", 146.0), 0.1, 6000.0);
+        foxhuntSweepEndMhz   = std::clamp<double>(cfg.value("foxhuntSweepEndMhz", 148.0), 0.1, 6000.0);
+        // Sweep span hard cap: 15 MHz wide.
+        if (foxhuntSweepEndMhz < foxhuntSweepStartMhz) { std::swap(foxhuntSweepStartMhz, foxhuntSweepEndMhz); }
+        if (foxhuntSweepEndMhz - foxhuntSweepStartMhz > 15.0) { foxhuntSweepEndMhz = foxhuntSweepStartMhz + 15.0; }
+        foxhuntSweepStepKhz     = std::clamp<double>(cfg.value("foxhuntSweepStepKhz", 25.0), 0.1, 15000.0);
+        foxhuntSweepStepsPerSec = std::clamp<double>(cfg.value("foxhuntSweepStepsPerSec", 2.0), 0.1, 50.0);
         foxhuntFolder       = cfg.value("foxhuntFolder", std::string(""));
         if (foxhuntFolder.empty()) {
             foxhuntFolder = (std::filesystem::path((std::string)core::args["root"]) / "recordings").string();
@@ -1198,6 +1206,11 @@ void MainWindow::draw() {
         core::configManager.conf["foxhuntCwWpm"] = foxhuntCwWpm;
         core::configManager.conf["foxhuntDeadManSec"] = foxhuntDeadManSec;
         core::configManager.conf["foxhuntSourceMode"] = foxhuntSourceMode;
+        core::configManager.conf["foxhuntFreqMode"] = foxhuntFreqMode;
+        core::configManager.conf["foxhuntSweepStartMhz"] = foxhuntSweepStartMhz;
+        core::configManager.conf["foxhuntSweepEndMhz"] = foxhuntSweepEndMhz;
+        core::configManager.conf["foxhuntSweepStepKhz"] = foxhuntSweepStepKhz;
+        core::configManager.conf["foxhuntSweepStepsPerSec"] = foxhuntSweepStepsPerSec;
         core::configManager.conf["foxhuntFolder"] = foxhuntFolder;
 #endif
         core::configManager.release(true);
@@ -2714,6 +2727,40 @@ void MainWindow::draw() {
     // frame so the operator toggling it takes effect live (the server's
     // foxbeacon gate reads this atomically on the worker thread).
     kujhadServer.setRemoteFoxHuntEnabled(remoteFoxHuntEnabled);
+
+#ifdef OPT_BUILD_FOXHUNT
+    // Fox Hunt sweep stepper. Runs every frame (NOT just while the Transmit
+    // tab is open, or leaving the tab would freeze the sweep) whenever a
+    // sweep-mode TX is live. Walks the TX frequency up and down between the
+    // sweep bounds (span hard-capped at 15 MHz) at the operator-set steps
+    // per second using the driver's live retune. If the open driver cannot
+    // retune without restarting the stream, we warn once and keep
+    // transmitting at the current frequency instead of glitching the TX.
+    if (foxhuntFreqMode == 2 && foxhuntEngine.running() && foxhuntOpenDriver
+        && !foxhuntSweepUnsupported) {
+        double now = ImGui::GetTime();
+        double rate = std::clamp(foxhuntSweepStepsPerSec, 0.1, 50.0);
+        if ((now - foxhuntSweepLastStepAt) >= (1.0 / rate)) {
+            foxhuntSweepLastStepAt = now;
+            double lo = std::min(foxhuntSweepStartMhz, foxhuntSweepEndMhz);
+            double hi = std::max(foxhuntSweepStartMhz, foxhuntSweepEndMhz);
+            if (hi - lo > 15.0) { hi = lo + 15.0; }
+            double stepMhz = std::clamp(foxhuntSweepStepKhz, 0.1, 15000.0) / 1000.0;
+            if (foxhuntSweepCurrentMhz < lo || foxhuntSweepCurrentMhz > hi) {
+                foxhuntSweepCurrentMhz = lo;
+                foxhuntSweepDir = 1;
+            }
+            double next = foxhuntSweepCurrentMhz + stepMhz * (double)foxhuntSweepDir;
+            if (next >= hi) { next = hi; foxhuntSweepDir = -1; }
+            else if (next <= lo) { next = lo; foxhuntSweepDir = 1; }
+            foxhuntSweepCurrentMhz = next;
+            if (!foxhuntOpenDriver->setFrequency(next * 1e6)) {
+                foxhuntSweepUnsupported = true;
+                foxhuntStatus = T("This TX device cannot retune while transmitting — sweep parked at current frequency.");
+            }
+        }
+    }
+#endif
 
     // Drain any pending commands from the device server worker.
     {
@@ -10130,8 +10177,73 @@ void MainWindow::draw() {
             // ── TX Parameters ────────────────────────────────────────────────
             if (ImGui::CollapsingHeader(T("TX Parameters"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::BeginDisabled(txRunning);
-                drawEditDoubleButtonNumeric(T("Frequency (MHz)"), foxhuntFreqMhz, "%.4f MHz",
-                    [&](double v) { foxhuntFreqMhz = std::clamp(v, 0.1, 6000.0); });
+                // ── Frequency source: Manual / Marker / Sweep ────────────────
+                ImGui::LeftLabel(T("Set Frequency"));
+                ImGui::SetNextItemWidth(fw * 0.55f);
+                if (ImGui::Combo("##fox_freq_mode", &foxhuntFreqMode, "Manual\0Marker\0Sweep\0")) {
+                    savePredatorState();
+                }
+                if (foxhuntFreqMode == 0) {
+                    drawEditDoubleButtonNumeric(T("Frequency (MHz)"), foxhuntFreqMhz, "%.4f MHz",
+                        [&](double v) { foxhuntFreqMhz = std::clamp(v, 0.1, 6000.0); });
+                }
+                else if (foxhuntFreqMode == 1) {
+                    // Marker pick: every entry in the Hits tab (markers carry
+                    // the names the operator gave them there). Selecting one
+                    // copies its frequency into the TX frequency.
+                    char mkPrev[96];
+                    snprintf(mkPrev, sizeof(mkPrev), "%.4f MHz", foxhuntFreqMhz);
+                    std::string mkPreview = mkPrev;
+                    for (int i = 0; i < (int)hits.size(); i++) {
+                        double f = readJsonDouble(hits[i], "frequency", 0.0);
+                        if (f > 0.0 && std::abs(f - foxhuntFreqMhz * 1e6) < 1.0) {
+                            mkPreview = readJsonString(hits[i], "name", "Marker") + " — " + formatFrequency(f);
+                            break;
+                        }
+                    }
+                    ImGui::LeftLabel(T("Marker"));
+                    ImGui::SetNextItemWidth(fw * 0.55f);
+                    if (ImGui::BeginCombo("##fox_marker_pick", mkPreview.c_str())) {
+                        if (hits.empty()) {
+                            ImGui::TextDisabled("%s", T("No markers yet — add them in the Hits tab."));
+                        }
+                        for (int i = 0; i < (int)hits.size(); i++) {
+                            double f = readJsonDouble(hits[i], "frequency", 0.0);
+                            if (f <= 0.0) { continue; }
+                            std::string label = readJsonString(hits[i], "name", "Marker")
+                                              + " — " + formatFrequency(f) + "##foxmk" + std::to_string(i);
+                            if (ImGui::Selectable(label.c_str(), std::abs(f - foxhuntFreqMhz * 1e6) < 1.0)) {
+                                foxhuntFreqMhz = std::clamp(f / 1e6, 0.1, 6000.0);
+                                savePredatorState();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                }
+                else {
+                    // Sweep: TX steps up and down between Start and End
+                    // (span hard-capped at 15 MHz) at N steps per second,
+                    // retuning the driver live. Start of sweep = Start freq.
+                    auto clampSweep = [&]() {
+                        foxhuntSweepStartMhz = std::clamp(foxhuntSweepStartMhz, 0.1, 6000.0);
+                        foxhuntSweepEndMhz   = std::clamp(foxhuntSweepEndMhz, 0.1, 6000.0);
+                        if (foxhuntSweepEndMhz < foxhuntSweepStartMhz) { std::swap(foxhuntSweepStartMhz, foxhuntSweepEndMhz); }
+                        if (foxhuntSweepEndMhz - foxhuntSweepStartMhz > 15.0) { foxhuntSweepEndMhz = foxhuntSweepStartMhz + 15.0; }
+                    };
+                    drawEditDoubleButtonNumeric(T("Sweep start (MHz)"), foxhuntSweepStartMhz, "%.4f MHz",
+                        [&](double v) { foxhuntSweepStartMhz = v; clampSweep(); });
+                    drawEditDoubleButtonNumeric(T("Sweep end (MHz)"), foxhuntSweepEndMhz, "%.4f MHz",
+                        [&](double v) { foxhuntSweepEndMhz = v; clampSweep(); });
+                    drawEditDoubleButtonNumeric(T("Step size (kHz)"), foxhuntSweepStepKhz, "%.1f kHz",
+                        [&](double v) { foxhuntSweepStepKhz = std::clamp(v, 0.1, 15000.0); });
+                    drawEditDoubleButtonNumeric(T("Steps per second"), foxhuntSweepStepsPerSec, "%.1f /s",
+                        [&](double v) { foxhuntSweepStepsPerSec = std::clamp(v, 0.1, 50.0); });
+                    char swBuf[128];
+                    snprintf(swBuf, sizeof(swBuf), "%s %.4f – %.4f MHz (%.3f MHz wide, max 15)",
+                             T("Sweep:"), foxhuntSweepStartMhz, foxhuntSweepEndMhz,
+                             foxhuntSweepEndMhz - foxhuntSweepStartMhz);
+                    ImGui::TextDisabled("%s", swBuf);
+                }
                 {
                     float bwKhz = (float)foxhuntBandwidthKhz;
                     ImGui::LeftLabel(T("Bandwidth"));
@@ -10237,7 +10349,18 @@ void MainWindow::draw() {
                         double rate = (foxhuntSourceMode == 0 && foxhuntLoadedFile.sampleRate > 0.0)
                                           ? foxhuntLoadedFile.sampleRate : foxhuntSampleRate;
                         double gainClamped = std::clamp(foxhuntGainDb, dev.minGainDb, std::max(dev.minGainDb, dev.maxGainDb));
-                        if (opened && !drv->start(foxhuntFreqMhz * 1e6, rate, foxhuntBandwidthKhz * 1e3, gainClamped, err)) {
+                        // Sweep mode transmits starting at the sweep start
+                        // frequency; the per-frame stepper walks it up and
+                        // down the band from there.
+                        double startFreqMhz = foxhuntFreqMhz;
+                        if (foxhuntFreqMode == 2) {
+                            startFreqMhz = std::min(foxhuntSweepStartMhz, foxhuntSweepEndMhz);
+                            foxhuntSweepCurrentMhz  = startFreqMhz;
+                            foxhuntSweepDir         = 1;
+                            foxhuntSweepLastStepAt  = ImGui::GetTime();
+                            foxhuntSweepUnsupported = false;
+                        }
+                        if (opened && !drv->start(startFreqMhz * 1e6, rate, foxhuntBandwidthKhz * 1e3, gainClamped, err)) {
                             foxhuntStatus = std::string(T("TX start failed: ")) + err;
                             opened = false;
                         }
@@ -10289,6 +10412,10 @@ void MainWindow::draw() {
                     : "…";
                 snprintf(liveBuf, sizeof(liveBuf), "%s | %.0f s elapsed | %.0f s carrier", stateStr, engStatus.elapsedSec, engStatus.txSec);
                 ImGui::TextWrapped("%s", liveBuf);
+                if (foxhuntFreqMode == 2 && !foxhuntSweepUnsupported && foxhuntSweepCurrentMhz > 0.0) {
+                    snprintf(liveBuf, sizeof(liveBuf), "%s %.4f MHz", T("Sweeping at"), foxhuntSweepCurrentMhz);
+                    ImGui::TextDisabled("%s", liveBuf);
+                }
                 if (engStatus.nextBurstInSec >= 0.0) {
                     snprintf(liveBuf, sizeof(liveBuf), "Next burst in %.0f s", engStatus.nextBurstInSec);
                     ImGui::TextDisabled("%s", liveBuf);

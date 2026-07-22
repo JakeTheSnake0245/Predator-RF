@@ -195,6 +195,21 @@ private:
     double foxhuntDeadManSec   = 600.0;
     int    foxhuntSourceMode   = 0;         // 0=file, 1=tone, 2=CW beacon
     std::string foxhuntFolder;
+    // Frequency source: 0=manual entry, 1=marker pick (hits tab), 2=sweep.
+    // Sweep steps the TX frequency up and down across a band (hard-capped at
+    // 15 MHz wide) at a user-set number of steps per second, via the
+    // driver's live setFrequency() (falls back to a status warning when the
+    // open driver can't retune without restarting the stream).
+    int    foxhuntFreqMode         = 0;
+    double foxhuntSweepStartMhz    = 146.0;
+    double foxhuntSweepEndMhz      = 148.0;
+    double foxhuntSweepStepKhz     = 25.0;
+    double foxhuntSweepStepsPerSec = 2.0;
+    // Sweep runtime (not persisted)
+    double foxhuntSweepCurrentMhz  = 0.0;
+    int    foxhuntSweepDir         = 1;
+    double foxhuntSweepLastStepAt  = 0.0;
+    bool   foxhuntSweepUnsupported = false; // open driver refused live retune
     // Runtime-only state
     bool   foxhuntArmed        = false;     // ARM switch, resets every launch
     predator::foxhunt::ReplayEngine foxhuntEngine;

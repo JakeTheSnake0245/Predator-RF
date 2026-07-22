@@ -117,6 +117,18 @@ namespace {
             iio_channel_attr_write_double(gainChan, "hardwaregain", gainDb);
         }
 
+        bool setFrequency(double freqHz) override {
+            if (!ctx || !phy) { return false; }
+            // Look the LO channel up on demand (same pattern as stop() —
+            // start() only holds it as a local). LO attribute write is a
+            // control-path iio call, safe alongside the streaming buffer
+            // pushes (Fox Hunt sweep mode).
+            struct iio_channel* txLo = iio_device_find_channel(phy, "altvoltage1", true);
+            if (!txLo) { return false; }
+            return iio_channel_attr_write_longlong(txLo, "frequency",
+                                                   (long long)std::llround(freqHz)) >= 0;
+        }
+
         int write(const std::complex<float>* samples, int count) override {
             if (!ctx || !tx0i || streamDead.load()) { return -1; }
             // (Re)create the buffer if the chunk size changed.

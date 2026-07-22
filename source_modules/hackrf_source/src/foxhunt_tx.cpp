@@ -151,6 +151,14 @@ namespace {
             return true;
         }
 
+        bool setFrequency(double freqHz) override {
+            if (!dev) { return false; }
+            // hackrf_set_freq is a control transfer — safe to issue from the
+            // UI thread while the TX streaming callback keeps running
+            // (Fox Hunt sweep mode retunes live at a few steps/second).
+            return hackrf_set_freq(dev, (uint64_t)std::llround(freqHz)) == HACKRF_SUCCESS;
+        }
+
         void setGain(double gainDb) override {
             if (!dev) { return; }
             // HackRF TX VGA range is 0..47 dB in 1 dB steps.

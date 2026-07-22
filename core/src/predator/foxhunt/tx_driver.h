@@ -74,6 +74,14 @@ namespace predator::foxhunt {
         // Live gain update while streaming (slider drag).
         virtual void setGain(double gainDb) = 0;
 
+        // Live frequency retune while streaming (Fox Hunt sweep mode).
+        // Called from the UI thread; must be safe to call concurrently
+        // with write() (same contract as setGain). Default: unsupported.
+        // Returns false when the driver cannot retune without a full
+        // stop()/start() cycle — the sweep stepper stops stepping and
+        // reports it instead of glitching the stream.
+        virtual bool setFrequency(double freqHz) { (void)freqHz; return false; }
+
         // Blocking write of interleaved complex float samples (full scale
         // ±1.0). Returns samples accepted, or <0 on stream error.
         virtual int write(const std::complex<float>* samples, int count) = 0;
