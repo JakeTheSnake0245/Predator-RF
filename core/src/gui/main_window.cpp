@@ -5423,6 +5423,11 @@ void MainWindow::draw() {
             // 3) Hits — full-height labelled vertical markers.
             if (overlayHits.is_array()) {
                 for (int hi = 0; hi < (int)overlayHits.size(); hi++) {
+                    // Only marker-assigned hits paint spectrum lines. Plain
+                    // detected hits used to draw a frequency-labelled line
+                    // that lingered after "Remove Marker" / "Clear" — the
+                    // hit list is their home; the spectrum shows markers.
+                    if (!readJsonBool(overlayHits[hi], "markerAssigned", false)) continue;
                     double hf = readJsonDouble(overlayHits[hi], "frequency", 0.0);
                     if (hf <= 0.0 || hf < lowF || hf > highF) continue;
                     float x = fMin.x + (float)((hf - lowF) / (highF - lowF)) * fftW;
@@ -5746,14 +5751,10 @@ void MainWindow::draw() {
                     for (int i = 0; i < hits.size(); i++) {
                         hitOrder.push_back(i);
                     }
-                    // Scrollable hit list — max ~5 entries visible at once
-                    float hitListH = std::min<float>((float)hitOrder.size(), 5.0f) *
-                                     (ImGui::GetTextLineHeightWithSpacing() * 4.5f + 6.0f * style::uiScale);
-                    hitListH = std::max(hitListH, 120.0f * style::uiScale);
-                    // No HorizontalScrollbar flag — long hit labels truncate
-                    // / wrap rather than forcing the operator to swipe the
-                    // child sideways. Vertical scroll is always allowed.
-                    ImGui::BeginChild("##hit_list_scroll", ImVec2(0, hitListH), false, 0);
+                    // Hit list renders inline (no nested scroll child) — the
+                    // list grows with the hits and the whole tab body scrolls
+                    // as one surface. A fixed-height embedded scroller used to
+                    // fight the outer touch scroll for ownership of drags.
                     std::sort(hitOrder.begin(), hitOrder.end(), [&](int a, int b) {
                         switch (predatorHitSortMode) {
                         case 1:
@@ -6057,8 +6058,6 @@ void MainWindow::draw() {
                         ImGui::Separator();
                         ImGui::PopID();
                     }
-                    applyTouchScroll();
-                    ImGui::EndChild();
                     if (detectedHitsChanged) {
                         savePredatorHits(hits);
                     }
