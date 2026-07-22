@@ -37,6 +37,9 @@ intent on MainWindow member flags; the mutation is applied right after
   reload pick it up.
 - `ImGui::GetItemID()` is NOT in this ImGui vendor drop. For per-row hold
   latches (network tree), use an int keyed on the row's own unique id (`treeUid`).
+- Modal gesture states (e.g. marker Adjust drag mode) armed from a menu must
+  have an explicit cancel path (tap outside spectrum) or they latch forever and
+  hijack later taps — review flagged this; don't rely on "user will drag".
 - Out of C++ scope: DF/Map gestures are Android-native (`MapActivity.kt`); the
   Event Log is a flat filtered text list, not an ImGui table, so "customize
   columns" has no header to long-press; pinch needs real multi-touch (ImGui here

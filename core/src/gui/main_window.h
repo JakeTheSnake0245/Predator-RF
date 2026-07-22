@@ -396,4 +396,8 @@ private:
     std::string gestureMenuOpenVfo;        // VFO the open Marker Menu popup targets
     bool gestureHoldFired = false;         // one-shot latch for spectrum long-press
     int gestureHoldLatch = 0;              // one-shot latch for widget long-press
+    std::string gestureAdjustVfo;          // non-empty → Adjust mode: marker VFO being dragged
+    double gestureAdjustFreq = 0.0;        // live frequency under the finger while adjusting
+    bool gestureAdjustDragged = false;     // finger moved at least once during Adjust
+    bool gestureAdjustDone = false;        // finger lifted → finalize + save
 };

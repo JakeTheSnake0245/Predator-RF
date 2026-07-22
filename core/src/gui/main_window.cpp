@@ -1,6 +1,7 @@
 #include <gui/main_window.h>
 #include <gui/gui.h>
 #include "imgui.h"
+#include "imgui_internal.h"
 #include <stdio.h>
 #include <thread>
 #include <complex>
@@ -541,6 +542,35 @@ void MainWindow::spectrumInputHandlerFn(ImGui::WaterFall::InputHandlerArgs args,
                  mouse.y >= args.fftRectMin.y && mouse.y <= args.fftRectMax.y;
     bool inWaterfall = mouse.x >= args.waterfallRectMin.x && mouse.x <= args.waterfallRectMax.x &&
                        mouse.y >= args.waterfallRectMin.y && mouse.y <= args.waterfallRectMax.y;
+
+    // ── Adjust mode: a marker is being repositioned by dragging ─────────────
+    // Entered from the marker long-press menu ("Adjust"). While active, the
+    // marker follows the finger's horizontal position across the spectrum;
+    // lifting the finger (after having dragged) commits the new frequency.
+    // All spectrum input is consumed so the drag can't simultaneously tune
+    // the VFO or pan the waterfall. Detection only — the actual hit/VFO
+    // mutation happens in draw() where the marker lambdas are in scope.
+    if (!_this->gestureAdjustVfo.empty()) {
+        // Tapping anywhere outside the spectrum cancels Adjust mode so it
+        // can't stay latched indefinitely if the operator changes their mind.
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !inFFT && !inWaterfall) {
+            _this->gestureAdjustDone = true;   // freq stays 0 → draw() aborts without committing
+            return;
+        }
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && (inFFT || inWaterfall)) {
+            double af = args.lowFreq + (double)(mouse.x - args.fftRectMin.x) * args.pixelToFreqRatio;
+            if (af > 0.0) {
+                _this->gestureAdjustFreq = af;
+                _this->gestureAdjustDragged = true;
+            }
+            gui::waterfall.inputHandled = true;
+        }
+        else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && _this->gestureAdjustDragged) {
+            _this->gestureAdjustDone = true;
+        }
+        return;
+    }
+
     if (!inFFT && !inWaterfall) { return; }
 
     // Frequency under the cursor. x maps linearly from lowFreq at fftRectMin.x.
@@ -1207,47 +1237,82 @@ void MainWindow::draw() {
         return pressed;
     };
 
+    // Android ScrollView-style touch scrolling for the CURRENT window.
+    //
+    // Design (mirrors native Android touch semantics):
+    //   * Touch slop: a drag must travel >10dp cumulatively (from the press
+    //     point, NOT per-frame) before it counts as a scroll. Per-frame
+    //     MouseDelta thresholds made scrolling jerky (slow drags never
+    //     crossed the threshold) — cumulative distance is what platforms use.
+    //   * Direction lock: only claims clearly-vertical drags (|dy| > |dx|).
+    //   * ActiveId steal: on touch, the finger landing on ANY widget makes it
+    //     active, and the old IsAnyItemActive() early-return killed scrolling
+    //     everywhere a menu was full of widgets (i.e. everywhere). Instead,
+    //     once the slop is exceeded we ClearActiveID() so the button under
+    //     the finger releases without firing and the panel scrolls — exactly
+    //     like Android cancels a button press when a ScrollView takes over.
+    //   * Text-input guard: while the keyboard/IME owns input, never scroll.
+    //   * Sticky until release: once scrolling starts it owns the gesture
+    //     until finger-up (no re-arming widgets mid-drag).
+    //   * Innermost-wins: nested scrollable children call this before their
+    //     parent does (children End first); the first window to claim the
+    //     gesture this frame blocks outer windows from double-scrolling.
+    //
+    // Vertical-only on purpose — horizontal pan created the "menu slides
+    // sideways under my finger" bug (GetScrollMaxX() goes positive whenever
+    // any widget overflows by a pixel).
+    static int   touchScrollClaimFrame = -1;      // frame # a window claimed the drag
+    static ImGuiID touchScrollOwner    = 0;       // window that owns the active drag
     auto applyTouchScroll = [&]() {
 #ifdef __ANDROID__
         ImGuiIO& io = ImGui::GetIO();
-        // Direct position + button-state check.  IsWindowHovered/IsMouseDragging
-        // are unreliable inside child windows when widgets (sliders, buttons) have
-        // captured ActiveId — the hover check silently returns false even though
-        // the finger is clearly over the window.  Instead, compare io.MousePos
-        // against the actual window rect and apply the per-frame delta directly.
-        //
-        // CRITICAL: vertical-only. Horizontal pan was actively *creating* the
-        // "menu slides left/right under my finger" bug the operator keeps
-        // reporting. Even after the menuWidth floor + hit-list fix, ImGui's
-        // GetScrollMaxX() can still return a few pixels positive whenever any
-        // widget overflows by a hair (long combo preview, Hz string, plugin
-        // SetNextItemWidth in raw px, etc) — and this branch then panned the
-        // entire menu sideways on the slightest finger drift. Sub-menus must
-        // never scroll horizontally; if a widget overflows, fix the widget,
-        // do not paper over it with finger panning.
-        //
-        // Only Android suppresses horizontal pan; vertical pan is essential
-        // for long menus that don't fit on screen.
-        //
-        // Suppress panning entirely while a widget owns ActiveId (slider in
-        // mid-drag, text input being typed in, etc) so finger movement edits
-        // the widget instead of scrolling the panel out from under it.
-        if (ImGui::IsAnyItemActive()) return;
+        ImGuiWindow* win = ImGui::GetCurrentWindow();
+        ImGuiStorage* st = ImGui::GetStateStorage();
+        const ImGuiID kScrollingId = ImGui::GetID("##predator_touch_scrolling");
 
-        ImVec2 wpos  = ImGui::GetWindowPos();
-        ImVec2 wsize = ImGui::GetWindowSize();
-        if (io.MouseDown[0] &&
-            io.MousePos.x >= wpos.x && io.MousePos.x < wpos.x + wsize.x &&
-            io.MousePos.y >= wpos.y && io.MousePos.y < wpos.y + wsize.y) {
-            // 10 dp threshold separates deliberate drag from tap jitter.
-            // At 0.5 px even a clean tap would scroll the panel before
-            // the button could register on mouse-up, causing missed clicks.
-            const float kDragThresh = 10.0f * style::uiScale;
-            if (std::fabs(io.MouseDelta.y) > kDragThresh && ImGui::GetScrollMaxY() > 0.0f) {
+        if (!io.MouseDown[0]) {
+            st->SetBool(kScrollingId, false);
+            if (touchScrollOwner == win->ID) { touchScrollOwner = 0; }
+            return;
+        }
+        // While typing (IME up / InputText focused) the finger belongs to
+        // the text widget, never to panel scrolling.
+        if (io.WantTextInput) return;
+
+        int frame = ImGui::GetFrameCount();
+        bool scrolling = st->GetBool(kScrollingId, false);
+
+        if (!scrolling) {
+            // Another window already owns this drag (inner child claimed it).
+            if (touchScrollOwner != 0 || touchScrollClaimFrame == frame) return;
+            if (ImGui::GetScrollMaxY() <= 0.0f) return;
+            // The PRESS must have started inside this window's rect.
+            ImVec2 cp = io.MouseClickedPos[0];
+            ImVec2 wpos  = ImGui::GetWindowPos();
+            ImVec2 wsize = ImGui::GetWindowSize();
+            if (cp.x < wpos.x || cp.x >= wpos.x + wsize.x ||
+                cp.y < wpos.y || cp.y >= wpos.y + wsize.y) return;
+            // Cumulative touch slop + vertical direction lock.
+            float dx = io.MousePos.x - cp.x;
+            float dy = io.MousePos.y - cp.y;
+            const float kSlop = 10.0f * style::uiScale;
+            if (std::fabs(dy) <= kSlop || std::fabs(dy) <= std::fabs(dx)) return;
+            scrolling = true;
+            st->SetBool(kScrollingId, true);
+            touchScrollOwner = win->ID;
+            // Cancel whatever widget the finger pressed down on so the drag
+            // scrolls the panel instead of (a) doing nothing because a button
+            // held ActiveId, or (b) firing that button on release.
+            if (ImGui::GetCurrentContext()->ActiveId != 0) { ImGui::ClearActiveID(); }
+        }
+        if (scrolling && touchScrollOwner == win->ID) {
+            touchScrollClaimFrame = frame;
+            if (io.MouseDelta.y != 0.0f) {
                 float next = ImGui::GetScrollY() - io.MouseDelta.y;
                 ImGui::SetScrollY(std::clamp(next, 0.0f, ImGui::GetScrollMaxY()));
             }
-            // Horizontal pan intentionally removed — see note above.
+            // Keep widgets released for the whole gesture.
+            if (ImGui::GetCurrentContext()->ActiveId != 0) { ImGui::ClearActiveID(); }
         }
 #endif
     };
@@ -3200,6 +3265,13 @@ void MainWindow::draw() {
 
         bool inScanMode = predatorScanRunning && (predatorMissionMode == PREDATOR_MODE_SCAN || predatorMissionMode == PREDATOR_MODE_QUICKSCAN);
         if (inScanMode) {
+            // If this hit previously owned a real VFO, delete it BEFORE
+            // blanking routeVfo — otherwise the VFO is orphaned and no
+            // later release/clear can ever find it (leftover marker bug).
+            std::string prevVfo = readJsonString(hit, "routeVfo", "");
+            if (prevVfo.rfind("Predator M", 0) == 0 && sigpath::vfoManager.vfoExists(prevVfo)) {
+                sigpath::vfoManager.deleteVFO(prevVfo);
+            }
             hit["routeState"] = "tracked";
             hit["routeVfo"] = "";
             hit["routeFrequency"] = frequency;
@@ -4547,13 +4619,28 @@ void MainWindow::draw() {
         if (predatorMission != PREDATOR_MISSION_FOXHUNT && predatorTab == PREDATOR_TAB_FOXHUNT) {
             predatorTab = PREDATOR_TAB_SPECTRUM;
         }
+        // Switching INTO Fox Hunt must visibly open something: jump straight
+        // to the Transmit view. Before this, the only effect was a new "TX"
+        // button quietly appearing in the right rail — operators read that
+        // as "Fox Hunt opens nothing".
+        if (predatorMission == PREDATOR_MISSION_FOXHUNT) {
+            predatorTab = PREDATOR_TAB_FOXHUNT;
+            showMenu = true;
+        }
 #endif
         savePredatorState();
     }
 
     // Left slide-out Mission Config tray toggle (Diablo slider-bar anchor).
     ImGui::SameLine();
-    if (missionTrayOpen) {
+    // CRASH FIX: capture the highlight state BEFORE the button. The button
+    // click flips missionTrayOpen mid-frame, so gating the Pop on the LIVE
+    // value either leaked 3 pushed colors (open → close: PushStyleColor/
+    // PopStyleColor mismatch assert) or popped colors that were never pushed
+    // (close → open: "Size > 0" assert in PopStyleColor). Both were SIGABRTs
+    // in the field logcat.
+    bool trayHighlight = missionTrayOpen;
+    if (trayHighlight) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.39f, 0.21f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.45f, 0.24f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.50f, 0.27f, 1.0f));
@@ -4562,7 +4649,7 @@ void MainWindow::draw() {
         missionTrayOpen = !missionTrayOpen;
         savePredatorState();
     }
-    if (missionTrayOpen) {
+    if (trayHighlight) {
         ImGui::PopStyleColor(3);
     }
 
@@ -5004,6 +5091,66 @@ void MainWindow::draw() {
         tunePredatorFrequency(f);
     }
 
+    // ── Adjust mode: apply the live drag + commit on release ────────────────
+    // The input handler only records the frequency under the finger; here the
+    // marker's hit row and VFO actually move (draw() scope has the lambdas).
+    if (!gestureAdjustVfo.empty()) {
+        int aIdx = -1;
+        for (int i = 0; i < (int)hits.size(); i++) {
+            if (readJsonString(hits[i], "routeVfo", "") == gestureAdjustVfo) { aIdx = i; break; }
+        }
+        if (aIdx < 0) {
+            // Marker vanished (cleared/released) — abort Adjust mode.
+            gestureAdjustVfo.clear();
+            gestureAdjustFreq = 0.0;
+            gestureAdjustDragged = false;
+            gestureAdjustDone = false;
+        }
+        else if (gestureAdjustDone) {
+            // Finger lifted: normalize the route (retune/recreate VFO at the
+            // final frequency) and persist.
+            if (gestureAdjustFreq > 0.0) {
+                hits[aIdx]["frequency"] = gestureAdjustFreq;
+                routeHitToVfo(aIdx);
+                savePredatorHits(hits);
+            }
+            gestureAdjustVfo.clear();
+            gestureAdjustFreq = 0.0;
+            gestureAdjustDragged = false;
+            gestureAdjustDone = false;
+        }
+        else {
+            // Live drag: slide the marker under the finger every frame.
+            if (gestureAdjustFreq > 0.0) {
+                hits[aIdx]["frequency"] = gestureAdjustFreq;
+                if (sigpath::vfoManager.vfoExists(gestureAdjustVfo)) {
+                    sigpath::vfoManager.setCenterOffset(
+                        gestureAdjustVfo,
+                        gestureAdjustFreq - gui::waterfall.getCenterFrequency());
+                }
+            }
+            // On-screen hint so the operator knows the drag is armed.
+            ImDrawList* hdl = ImGui::GetWindowDrawList();
+            ImVec2 hMin = gui::waterfall.fftAreaMin;
+            ImVec2 hMax = gui::waterfall.fftAreaMax;
+            if (hMax.x > hMin.x) {
+                char hint[128];
+                if (gestureAdjustFreq > 0.0) {
+                    snprintf(hint, sizeof(hint), "%s  %s", T("ADJUST: drag to move, lift to set"),
+                             formatFrequency(gestureAdjustFreq).c_str());
+                } else {
+                    snprintf(hint, sizeof(hint), "%s", T("ADJUST: drag the marker side-to-side, lift to set"));
+                }
+                ImVec2 tsz = ImGui::CalcTextSize(hint);
+                float hx = hMin.x + ((hMax.x - hMin.x) - tsz.x) * 0.5f;
+                float hy = hMin.y + 30.0f * style::uiScale;
+                hdl->AddRectFilled(ImVec2(hx - 8, hy - 4), ImVec2(hx + tsz.x + 8, hy + tsz.y + 4),
+                                   IM_COL32(160, 90, 20, 220), 4.0f * style::uiScale);
+                hdl->AddText(ImVec2(hx, hy), IM_COL32(255, 240, 220, 255), hint);
+            }
+        }
+    }
+
     if (!gestureMarkerMenuVfo.empty()) {
         gestureMenuOpenVfo = gestureMarkerMenuVfo;
         gestureMarkerMenuVfo.clear();
@@ -5066,6 +5213,15 @@ void MainWindow::draw() {
                 hits[mIdx]["state"] = "exclude";
                 saveMissionConfig(searchBands, targets, excludes, missionThreshold, dwellMs, quickScanDelayMs, quickScanDurationMs, recordAudio);
                 savePredatorHits(hits);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem(T("Adjust (drag to move)"))) {
+                // Enter Adjust mode: the next touch-drag on the spectrum
+                // slides this marker side-to-side; lifting the finger commits.
+                gestureAdjustVfo = gestureMenuOpenVfo;
+                gestureAdjustFreq = 0.0;
+                gestureAdjustDragged = false;
+                gestureAdjustDone = false;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::Separator();
@@ -5551,6 +5707,22 @@ void MainWindow::draw() {
                                 releaseHitRoute(i);
                             }
                             hits = json::array();
+                            // Sweep stray marker VFOs too: a hit whose
+                            // routeVfo was blanked (e.g. scan-mode re-route)
+                            // can leave its "Predator M#" VFO alive with no
+                            // hit pointing at it — releaseHitRoute() can't
+                            // see it, so the marker (with its frequency
+                            // label) survived Clear All Hits.
+                            {
+                                std::vector<std::string> stray;
+                                for (auto& [vname, vfo] : gui::waterfall.vfos) {
+                                    if (vname.rfind("Predator M", 0) == 0) { stray.push_back(vname); }
+                                }
+                                for (const auto& vname : stray) {
+                                    if (sigpath::vfoManager.vfoExists(vname)) { sigpath::vfoManager.deleteVFO(vname); }
+                                }
+                            }
+                            predatorSelectedHitFrequency = 0.0;
                             savePredatorHits(hits);
                             ImGui::CloseCurrentPopup();
                         }
@@ -5885,6 +6057,7 @@ void MainWindow::draw() {
                         ImGui::Separator();
                         ImGui::PopID();
                     }
+                    applyTouchScroll();
                     ImGui::EndChild();
                     if (detectedHitsChanged) {
                         savePredatorHits(hits);
@@ -6107,6 +6280,7 @@ void MainWindow::draw() {
                             ImGui::TextColored(evCol, "[%s] %s  %.0f dB  %s", evTime.c_str(), evLabel.c_str(), evStrength, evDecoder.c_str());
                         }
                     }
+                    applyTouchScroll();
                     ImGui::EndChild();
 
                     if (selectedChanged) {
@@ -6223,6 +6397,7 @@ void MainWindow::draw() {
                         }
                     }
                 }
+                applyTouchScroll();
                 ImGui::EndChild();
 
                 if (ImGui::Button(T("Clear Events"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
@@ -7033,6 +7208,7 @@ void MainWindow::draw() {
                             readJsonString(events[i], "label", "Event").c_str(),
                             formatFrequency(readJsonDouble(events[i], "frequency", 0.0)).c_str());
                     }
+                    applyTouchScroll();
                     ImGui::EndChild();
                 }
             }
@@ -9229,6 +9405,7 @@ void MainWindow::draw() {
                                            ts, lv.c_str(), ms.c_str());
                     }
                 }
+                applyTouchScroll();
                 ImGui::EndChild();
 
                 ImGui::TextDisabled("%s", T(
@@ -10234,6 +10411,7 @@ void MainWindow::draw() {
         }
     }
 
+    applyTouchScroll();
     ImGui::EndChild();  // PredatorRightRail
     ImGui::PopStyleColor();
 
@@ -10254,6 +10432,7 @@ void MainWindow::draw() {
         }
         ImGui::Separator();
         drawMissionConfigBody();
+        applyTouchScroll();
         ImGui::EndChild();
         ImGui::PopStyleColor();
     }
