@@ -118,6 +118,10 @@ void MainWindow::init() {
     vfoCreatedHandler.ctx = this;
     sigpath::vfoManager.onVfoCreated.bindHandler(&vfoCreatedHandler);
 
+    vfoDeleteHandler.handler = vfoRemovedHandler;
+    vfoDeleteHandler.ctx = this;
+    sigpath::vfoManager.onVfoDelete.bindHandler(&vfoDeleteHandler);
+
     // Predator spectrum gesture handler (double-tap place marker, long-press
     // marker menu, long-press empty recenter). Bound to the waterfall's input
     // event so upstream WaterFall::processInputs is left untouched.
@@ -516,6 +520,21 @@ void MainWindow::releaseFFTBuffer(void* ctx) {
 void MainWindow::vfoAddedHandler(VFOManager::VFO* vfo, void* ctx) {
     MainWindow* _this = (MainWindow*)ctx;
     std::string name = vfo->getName();
+
+    // Predator marker VFOs ("Predator M<n>") have no decoder attached, so
+    // nothing reads their downconverter output. An undrained VFO stream
+    // back-pressures the DSP splitter and stalls the whole flowgraph (the
+    // FFT/waterfall feed goes STALLED). Attach a Null sink so the stream is
+    // drained and the marker never wedges the SDR. Torn down in
+    // vfoRemovedHandler when the marker VFO is deleted.
+    if (name.rfind("Predator M", 0) == 0 &&
+        _this->markerVfoDrains.find(name) == _this->markerVfoDrains.end()) {
+        auto drain = std::make_unique<dsp::sink::Null<dsp::complex_t>>();
+        drain->init(vfo->output);
+        drain->start();
+        _this->markerVfoDrains[name] = std::move(drain);
+    }
+
     core::configManager.acquire();
     if (!core::configManager.conf["vfoOffsets"].contains(name)) {
         core::configManager.release();
@@ -533,6 +552,19 @@ void MainWindow::vfoAddedHandler(VFOManager::VFO* vfo, void* ctx) {
     double newOffset = std::clamp<double>(offset, viewLower, viewUpper);
 
     sigpath::vfoManager.setCenterOffset(name, _this->initComplete ? newOffset : offset);
+}
+
+void MainWindow::vfoRemovedHandler(VFOManager::VFO* vfo, void* ctx) {
+    MainWindow* _this = (MainWindow*)ctx;
+    std::string name = vfo->getName();
+    // Fires from VFOManager::deleteVFO BEFORE the VFO (and its output stream)
+    // is freed, so stopping the drain here is safe. ~VFO then calls
+    // dspVFO->stop() which unblocks the downconverter after the drain detaches.
+    auto it = _this->markerVfoDrains.find(name);
+    if (it != _this->markerVfoDrains.end()) {
+        it->second->stop();
+        _this->markerVfoDrains.erase(it);
+    }
 }
 
 // Predator RX/analysis spectrum gestures. Bound to gui::waterfall.onInputProcess

@@ -3,6 +3,9 @@
 #include <fftw3.h>
 #include <dsp/types.h>
 #include <dsp/stream.h>
+#include <dsp/sink/null_sink.h>
+#include <map>
+#include <memory>
 #include <signal_path/vfo_manager.h>
 #include <gui/widgets/waterfall.h>
 #include <predator/hold_manager.h>
@@ -90,6 +93,7 @@ private:
     };
 
     static void vfoAddedHandler(VFOManager::VFO* vfo, void* ctx);
+    static void vfoRemovedHandler(VFOManager::VFO* vfo, void* ctx);
 
     // Tab-independent Remote Fox Hunt beacon control. Runs on the UI thread
     // from the Kujhad pending-command drain so a networked-tasked node can
@@ -396,6 +400,14 @@ private:
     bool autostart = false;
 
     EventHandler<VFOManager::VFO*> vfoCreatedHandler;
+    EventHandler<VFOManager::VFO*> vfoDeleteHandler;
+
+    // Predator marker VFOs ("Predator M<n>") carry no decoder, so nothing
+    // consumes their downconverter output. An undrained VFO stream back-
+    // pressures the DSP splitter and stalls the whole flowgraph (FFT feed
+    // included). A Null sink per marker VFO keeps the stream drained. Keyed
+    // by VFO name; created on onVfoCreated, torn down on onVfoDelete.
+    std::map<std::string, std::unique_ptr<dsp::sink::Null<dsp::complex_t>>> markerVfoDrains;
 
     // --- Predator touch-gesture parity (RX/analysis surfaces) ---
     // The spectrum gesture handler is bound to gui::waterfall.onInputProcess so

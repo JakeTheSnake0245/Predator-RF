@@ -9,3 +9,4 @@
 - [Waterfall VFO auto-selection](waterfall-vfo-selection.md) — helper/marker VFOs must be excluded from auto-select (selectionSkipPrefix) or they capture spectrum drags; popups need hover-guarded touch scroll + waterfall lock.
 - [Touch scroll vs text fields](touch-scroll-text-guard.md) — never gate panel scroll on WantTextInput alone; yield only if typing started before the press, tracker must update every call.
 - [Remote Fox Hunt (foxbeacon)](remote-fox-hunt.md) — networked beacon tasking uses a non-tx.* class to keep all tx.* jamming rejects intact; per-node opt-in atomic, GUI/worker thread gate layering.
+- [Undrained VFO stalls DSP splitter](undrained-vfo-stall.md) — a VFO output stream with no consumer back-pressures the splitter and freezes the FFT feed (STALLED); orphan/marker VFOs need a Null drain sink.
