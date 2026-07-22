@@ -18,3 +18,9 @@ id = "WrweKvZoATohv3QeSG-By"
 uri = "file://exports/Predator_RF_Operator_Guide_Updated.pdf"
 type = "pdf"
 title = "Predator RF Operator Guide — Rev 2 (with KrakenSDR)"
+
+[[outputs]]
+id = "zLLMxU0Lfy0pqlbXZ2NGd"
+uri = "file://docs/USER_MANUAL.pdf"
+type = "pdf"
+title = "Predator RF — Operator's Manual (PDF)"
