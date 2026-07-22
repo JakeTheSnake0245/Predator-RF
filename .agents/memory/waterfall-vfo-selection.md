@@ -23,3 +23,13 @@ touch-scroll claim must require `IsWindowHovered(ChildWindows)` or it
 ClearActiveID()s popup slider drags; and `lockWaterfallControls` should
 include `IsPopupOpen(AnyPopupId|AnyPopupLevel)` so popup drags don't leak
 into waterfall input.
+
+Touch-scroll claim guard refinement: plain `IsWindowHovered()` returns
+false whenever ANY item is active — a finger pressing a button killed all
+panel scrolling. Correct guard: reject only when `ActiveIdWindow->RootWindow`
+differs from this window's root (popup slider protection), and hover-check
+with `ChildWindows | AllowWhenBlockedByActiveItem`.
+
+Status bar layout: variable-width items (SDR source name badge) can push
+trailing buttons off-screen; right-anchor critical buttons unconditionally
+via SetCursorPosX and truncate variable labels.

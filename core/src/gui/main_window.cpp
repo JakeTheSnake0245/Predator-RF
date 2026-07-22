@@ -1284,10 +1284,19 @@ void MainWindow::draw() {
             if (touchScrollOwner != 0 || touchScrollClaimFrame == frame) return;
             if (ImGui::GetScrollMaxY() <= 0.0f) return;
             // Popups (VIEW sliders, marker menu, pendEdit) float on top of
-            // these children: never claim a drag while this window isn't the
-            // one actually hovered, or slider drags inside the popup get
-            // stolen (ClearActiveID) by the panel underneath.
-            if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) return;
+            // these children: never claim a drag that belongs to a widget in
+            // a DIFFERENT root window (popup slider), or the ClearActiveID
+            // below kills that slider's drag. But a press on a button inside
+            // THIS window must not block the claim — that's the normal
+            // "finger lands on a button, then scrolls" case — so the hover
+            // check must allow blocked-by-active-item (plain IsWindowHovered
+            // returns false the moment any widget is active, which silently
+            // killed right-rail / menu scrolling).
+            ImGuiContext* gctx = ImGui::GetCurrentContext();
+            if (gctx->ActiveId != 0 && gctx->ActiveIdWindow
+                && gctx->ActiveIdWindow->RootWindow != win->RootWindow) return;
+            if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows
+                                        | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) return;
             // The PRESS must have started inside this window's rect.
             ImVec2 cp = io.MouseClickedPos[0];
             ImVec2 wpos  = ImGui::GetWindowPos();
@@ -4598,11 +4607,18 @@ void MainWindow::draw() {
     }
 
     ImGui::SameLine();
-    if (drawBadge(sourceName.empty() ? T("Select SDR") : sourceName.c_str(), ImVec4(0.73f, 0.70f, 0.45f, 1.0f))) {
-        predatorTab = PREDATOR_TAB_SYSTEM;
-        predatorJumpSection = 1;
-        showMenu = true;
-        savePredatorState();
+    {
+        // Long source names ("RTL-SDR [serial...]") used to stretch this
+        // badge until the VIEW button fell off the right edge of the
+        // status bar. Truncate for display; the System tab shows the full name.
+        std::string srcLabel = sourceName.empty() ? T("Select SDR") : sourceName;
+        if (srcLabel.size() > 16) { srcLabel = srcLabel.substr(0, 14) + ".."; }
+        if (drawBadge(srcLabel.c_str(), ImVec4(0.73f, 0.70f, 0.45f, 1.0f))) {
+            predatorTab = PREDATOR_TAB_SYSTEM;
+            predatorJumpSection = 1;
+            showMenu = true;
+            savePredatorState();
+        }
     }
 
     ImGui::SameLine();
@@ -4662,7 +4678,14 @@ void MainWindow::draw() {
         savePredatorState();
     }
 
+    // VIEW is anchored to the right edge (just left of the logo) so it can
+    // never be pushed off-screen by whatever the row before it grew into.
+    // Anchor UNCONDITIONALLY: on narrow screens a crowded row may draw
+    // under it, but a reachable VIEW beats an invisible one (field report:
+    // long source names made VIEW vanish entirely).
     ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetWindowSize().x - (44.0f * style::uiScale)
+                         - (68.0f * style::uiScale) - (10.0f * style::uiScale));
     if (ImGui::Button(T("VIEW"), ImVec2(68.0f * style::uiScale, 0))) {
         ImGui::OpenPopup("##predator_spectrum_view");
     }
