@@ -4808,8 +4808,10 @@ void MainWindow::draw() {
     ImGui::PopStyleColor();
 
     // Placement mode also locks normal waterfall tuning so the placement tap
-    // cannot simultaneously drag the VFO.
-    lockWaterfallControls = showMenu || (predatorArrowArmed >= 0);
+    // cannot simultaneously drag the VFO. The mission Config tray overlays
+    // the waterfall too, so it must lock tuning as well — otherwise touches
+    // on tray widgets leak through and retune the SDR underneath.
+    lockWaterfallControls = showMenu || missionTrayOpen || (predatorArrowArmed >= 0);
 
     ImGui::SetCursorPos(ImVec2(pad, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.04f, 0.98f));
