@@ -3795,6 +3795,20 @@ void MainWindow::draw() {
         auto createCb = [&](const predator::hold::HoldEntry& e,
                             const std::string& vfoName,
                             double initialOffset) -> bool {
+            // Do NOT create a VFO for a held entry whose decoder has no
+            // auto-activatable module (DSD-FME, ADSB, all Radio_* — see
+            // decoderModuleName()). The HoldDecoderBinder deliberately
+            // skips spawning a decoder for those, so the VFO would have
+            // no consumer. An undrained VFO output stream back-pressures
+            // the DSP splitter and starves the FFT/waterfall feed → the
+            // SDR status latches STALLED for as long as the entry is
+            // held (exactly the "hold to decode wedges the radio" bug).
+            // Returning false leaves the entry inactive; the next tick
+            // retries harmlessly if the operator later switches it to an
+            // auto-activatable decoder kind.
+            if (predator::hold::decoderModuleName(e.decoder)[0] == '\0') {
+                return false;
+            }
             if (sigpath::vfoManager.vfoExists(vfoName)) return true;
             double reqBw = predator::hold::requiredVfoBandwidth(e.decoder);
             double bw    = (reqBw > 0.0) ? reqBw : e.bandwidth_hz;

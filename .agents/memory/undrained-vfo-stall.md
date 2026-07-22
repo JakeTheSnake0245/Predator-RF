@@ -22,3 +22,20 @@ in the `onVfoCreated` handler and torn down in an `onVfoDelete` handler
 the sink; `~VFO` then calls `dspVFO->stop()`). Keyed by VFO name.
 Any future feature that creates a VFO without a downstream consumer will
 re-trigger this stall.
+
+## Known instances of this class
+- **Classify auto-marker** (fixed): `routeHitToVfo` creates `Predator M<n>` with
+  no decoder → drained via a Null sink attached in the onVfoCreated handler.
+- **Hold to decode, deferred decoders** (fixed): `HoldManager.tick` creates a
+  `Predator H<id>` VFO for every enabled+in-band entry, but `HoldDecoderBinder`
+  only spawns a decoder when `decoderModuleName(kind)` is non-empty. Only
+  `Native_RTL433` is non-empty today; DSD-FME/ADSB/Radio_* return "" (deferred).
+  Fix: the hold createCb wire-up returns false (skip VFO) when the decoder has
+  no module, so no orphan VFO is created. RTL433 unaffected.
+- **DSD-FME manual/legacy load** (NOT yet fixed): the dsdfme_decoder module
+  creates its own VFO in its CONSTRUCTOR while enabled_ defaults false and the
+  draining pipeline only starts on enable(). So loading the module but not
+  pressing Start leaves an undrained VFO → stall. RTL433 avoids this by creating
+  its VFO in startPipeline (bound-mode aware), not the ctor. Refactoring DSD-FME
+  to match (lazy VFO + bound mode) is the prerequisite for real hold-to-decode
+  of DSD-FME.
