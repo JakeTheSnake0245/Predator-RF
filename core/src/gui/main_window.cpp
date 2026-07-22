@@ -939,21 +939,6 @@ void MainWindow::draw() {
 #endif
     };
 
-    const char* tabDescriptions[] = {
-        T("Tune, shape, and monitor the live spectrum picture."),
-        T("Review operational queues, filters, and retained frequencies of interest."),
-        T("Hold the Predator RF navigation slot for decoder-backed structure and labels."),
-        T("Launch the touch-first phone map tied to handset GPS."),
-        T("Drive search bands, targets, excludes, dwell, and quick-scan workflow."),
-        T("Operate this unit as a Device or pull peer state from a Controller."),
-        T("Health, theme, legacy modules, and operator-level status."),
-        T("Record local RF noise floor and scan against it to surface anomalies.")
-#ifdef OPT_BUILD_FOXHUNT
-        ,
-        T("Replay IQ recordings or a tone/CW beacon through a TX-capable SDR.")
-#endif
-    };
-
     const char* quickFilterLabels[] = {
         T("All"),
         T("Target"),
@@ -5535,7 +5520,6 @@ void MainWindow::draw() {
             showMenu = false;
             savePredatorState();
         }
-        ImGui::TextWrapped("%s", tabDescriptions[predatorTab]);
         ImGui::Separator();
 #ifdef __ANDROID__
         // Touch: hide the scrollbar strip but keep drag scrolling.
