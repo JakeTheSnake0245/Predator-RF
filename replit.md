@@ -40,6 +40,7 @@ Each key → where the detail lives. Read `docs/REPO_MAP.md` first for anything 
 - `REPOSITORY` → `docs/signal_repository.md` — signal store, fingerprinter, REST routes.
 - `CORRELATION` → `docs/correlation_engine.md` — correlation rules, fleet state, IQ capture.
 - `OPS` → `docs/OPERATOR_RUNBOOK.md`, `docs/MISSION_READY_CHECKLIST.md`, `docs/1_conops.md` — field operation.
+- `MANUAL` → `docs/USER_MANUAL.md` — operator's manual for the Android app (tabs, modes, markers, gestures, holds, recording, networking/peer control, Fox Hunt, troubleshooting, current limits).
 - `COT` → `docs/ATAK_COT_FORMAT.md` — CoT XML format.
 - Upstream base: [SDR++ GitHub](https://github.com/AlexandreRouma/SDRPlusPlus).
 
