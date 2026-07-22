@@ -7,4 +7,5 @@
 - [Predator gesture extension](predator-gesture-extension.md) — add spectrum gestures via waterfall.onInputProcess (not upstream processInputs); detect-then-defer via member flags; modal gesture states need an explicit cancel path.
 - [Git history scrub state](git-history-scrub.md) — repo realigned to scrubbed upstream; attached_assets/ must stay untracked; rebase onto scrubbed history deletes formerly-tracked files from disk.
 - [Waterfall VFO auto-selection](waterfall-vfo-selection.md) — helper/marker VFOs must be excluded from auto-select (selectionSkipPrefix) or they capture spectrum drags; popups need hover-guarded touch scroll + waterfall lock.
+- [Touch scroll vs text fields](touch-scroll-text-guard.md) — never gate panel scroll on WantTextInput alone; yield only if typing started before the press, tracker must update every call.
 - [Remote Fox Hunt (foxbeacon)](remote-fox-hunt.md) — networked beacon tasking uses a non-tx.* class to keep all tx.* jamming rejects intact; per-node opt-in atomic, GUI/worker thread gate layering.

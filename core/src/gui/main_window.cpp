@@ -1267,14 +1267,44 @@ void MainWindow::draw() {
         ImGuiStorage* st = ImGui::GetStateStorage();
         const ImGuiID kScrollingId = ImGui::GetID("##predator_touch_scrolling");
 
+        // Text-input guard, refined (field feedback: panels dense with
+        // input fields could not be scrolled at all — every touch was
+        // eaten by the field under the finger). The finger belongs to the
+        // text widget ONLY if the operator was already typing BEFORE this
+        // press (dragging a text-selection cursor). A fresh press that
+        // merely landed on an input field is still scroll-stealable: a
+        // quick tap activates the field, a hold-and-slide scrolls the
+        // panel (the slop steal below clears the field's ActiveId).
+        // IMPORTANT: this tracker runs BEFORE the !MouseDown early-return so
+        // typingPrevFrame has true previous-frame semantics — it must decay
+        // to false while no finger is down, or a stale `true` from the last
+        // typing session would suppress the next drag's scroll steal.
+        // Statics are shared across every window that calls this lambda in
+        // a frame; typingThisFrame OR-accumulates within the frame and is
+        // rolled into typingPrevFrame on the first call of the next frame.
+        static int  tsFrame        = -1;
+        static bool typingPrevFrame = false;
+        static bool typingThisFrame = false;
+        static bool typingAtPress   = false;
+        int tsNow = ImGui::GetFrameCount();
+        if (tsNow != tsFrame) {
+            tsFrame = tsNow;
+            typingPrevFrame = typingThisFrame;
+            typingThisFrame = false;
+        }
+        typingThisFrame = typingThisFrame || io.WantTextInput;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            // io.WantTextInput this frame may already reflect the field the
+            // finger just landed on — use last frame's state instead.
+            typingAtPress = typingPrevFrame;
+        }
+
         if (!io.MouseDown[0]) {
             st->SetBool(kScrollingId, false);
             if (touchScrollOwner == win->ID) { touchScrollOwner = 0; }
             return;
         }
-        // While typing (IME up / InputText focused) the finger belongs to
-        // the text widget, never to panel scrolling.
-        if (io.WantTextInput) return;
+        if (io.WantTextInput && typingAtPress) return;
 
         int frame = ImGui::GetFrameCount();
         bool scrolling = st->GetBool(kScrollingId, false);
@@ -4529,12 +4559,14 @@ void MainWindow::draw() {
     ImGui::BeginChild("PredatorMissionStatus", ImVec2(winSize.x - (2.0f * pad), statusBarHeight), true, ImGuiWindowFlags_NoScrollbar);
 
     ImVec2 btnSize(30 * style::uiScale, 30 * style::uiScale);
-    ImGui::PushID(ImGui::GetID("sdrpp_menu_btn"));
-    if (ImGui::ImageButton(icons::MENU, btnSize, ImVec2(0, 0), ImVec2(1, 1), 5, ImVec4(0, 0, 0, 0), textCol) || ImGui::IsKeyPressed(ImGuiKey_Menu, false)) {
-        showMenu = !showMenu;
-        savePredatorState();
+    // Field feedback: the hamburger menu button is replaced by VIEW here at
+    // the far left — the right end of this row proved unreliable on narrow
+    // screens (long badges pushed it off, anchoring made it overlap). The
+    // spectrum view popup (zoom / min / max) is opened from this button;
+    // its contents are drawn further down in this same window.
+    if (ImGui::Button(T("VIEW"), ImVec2(0, 30.0f * style::uiScale))) {
+        ImGui::OpenPopup("##predator_spectrum_view");
     }
-    ImGui::PopID();
 
     ImGui::SameLine();
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (2.0f * style::uiScale));
@@ -4678,17 +4710,8 @@ void MainWindow::draw() {
         savePredatorState();
     }
 
-    // VIEW is anchored to the right edge (just left of the logo) so it can
-    // never be pushed off-screen by whatever the row before it grew into.
-    // Anchor UNCONDITIONALLY: on narrow screens a crowded row may draw
-    // under it, but a reachable VIEW beats an invisible one (field report:
-    // long source names made VIEW vanish entirely).
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetWindowSize().x - (44.0f * style::uiScale)
-                         - (68.0f * style::uiScale) - (10.0f * style::uiScale));
-    if (ImGui::Button(T("VIEW"), ImVec2(68.0f * style::uiScale, 0))) {
-        ImGui::OpenPopup("##predator_spectrum_view");
-    }
+    // VIEW popup contents — opened by the VIEW button at the far left of
+    // this row (where the hamburger menu button used to live).
     if (ImGui::BeginPopup("##predator_spectrum_view")) {
         ImGui::TextUnformatted(T("Spectrum View"));
         ImGui::Separator();
