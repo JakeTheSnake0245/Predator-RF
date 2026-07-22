@@ -3407,7 +3407,17 @@ void MainWindow::draw() {
         }
 
         double offset = frequency - centerFrequency;
-        double sampleRate = std::max<double>(wholeBandwidth, bandwidth);
+        // Marker VFOs must NOT run at the full SDR sample rate. RxVFO builds a
+        // low-pass with estimateTapCount() = 3.8 * Fs / transWidth taps, and
+        // transWidth scales with the (narrow) marker bandwidth. At a multi-MHz
+        // Fs that is tens of thousands to millions of taps for a single marker
+        // — the downconverter can never compute it in real time, so it wedges
+        // the DSP splitter and the spectrum goes STALLED no matter how the VFO
+        // output is drained (deleting the VFO on "release" is what frees it).
+        // Anchoring the channel rate to a small multiple of the bandwidth keeps
+        // the tap count roughly constant (~150) and the marker real-time, while
+        // still giving a usable baseband IQ stream for per-marker recording.
+        double sampleRate = std::max<double>(bandwidth * 2.0, 2000.0);
         if (!sigpath::vfoManager.vfoExists(vfoName)) {
             sigpath::vfoManager.createVFO(vfoName, ImGui::WaterfallVFO::REF_CENTER, offset, bandwidth, sampleRate, 200.0, std::max<double>(sampleRate, bandwidth), false);
         }
