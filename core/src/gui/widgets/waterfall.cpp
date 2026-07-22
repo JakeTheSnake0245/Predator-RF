@@ -206,17 +206,19 @@ namespace ImGui {
     }
 
     void WaterFall::selectFirstVFO() {
-        bool available = false;
+        // Skip VFOs matching selectionSkipPrefix (Predator marker VFOs):
+        // creating a marker must never hijack tuning/drag focus. Only flag
+        // selectedVFOChanged when the selection actually changes, because
+        // draw() re-runs this every frame while nothing is selected.
+        std::string prev = selectedVFO;
+        std::string pick = "";
         for (auto const& [name, vfo] : vfos) {
-            available = true;
-            selectedVFO = name;
-            selectedVFOChanged = true;
-            return;
+            if (!selectionSkipPrefix.empty() && name.rfind(selectionSkipPrefix, 0) == 0) { continue; }
+            pick = name;
+            break;
         }
-        if (!available) {
-            selectedVFO = "";
-            selectedVFOChanged = true;
-        }
+        selectedVFO = pick;
+        if (selectedVFO != prev) { selectedVFOChanged = true; }
     }
 
     void WaterFall::processInputs() {

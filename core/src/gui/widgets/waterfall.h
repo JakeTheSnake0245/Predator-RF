@@ -203,6 +203,9 @@ namespace ImGui {
         std::map<std::string, WaterfallVFO*> vfos;
         std::string selectedVFO = "";
         bool selectedVFOChanged = false;
+        // VFO names with this prefix are never auto-selected (Predator
+        // marker VFOs must not steal tuning focus when created/deleted).
+        std::string selectionSkipPrefix = "";
 
         struct FFTRedrawArgs {
             ImVec2 min;

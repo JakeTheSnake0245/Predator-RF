@@ -212,6 +212,10 @@ void MainWindow::init() {
     gui::waterfall.setWaterfallMin(fftMin);
     gui::waterfall.setFFTMax(fftMax);
     gui::waterfall.setWaterfallMax(fftMax);
+    // Predator marker VFOs must never be auto-selected: a selected VFO
+    // captures spectrum drags (drag moves the VFO instead of tuning), which
+    // made the spectrum feel frozen the moment a marker was added.
+    gui::waterfall.selectionSkipPrefix = "Predator M";
 
     double frequency = core::configManager.conf["frequency"];
 
@@ -669,6 +673,14 @@ void MainWindow::draw() {
             gui::waterfall.selectedVFO = receiverName;
             gui::waterfall.selectedVFOChanged = true;
             vfo = gui::waterfall.vfos[receiverName];
+        }
+        else {
+            // No receiver VFO exists (marker-only setup): deselect entirely
+            // so spectrum drags keep tuning the SDR instead of dragging the
+            // marker VFO around ("spectrum frozen after adding a marker").
+            gui::waterfall.selectedVFO = "";
+            gui::waterfall.selectedVFOChanged = true;
+            vfo = NULL;
         }
     }
 
@@ -1271,6 +1283,11 @@ void MainWindow::draw() {
             // Another window already owns this drag (inner child claimed it).
             if (touchScrollOwner != 0 || touchScrollClaimFrame == frame) return;
             if (ImGui::GetScrollMaxY() <= 0.0f) return;
+            // Popups (VIEW sliders, marker menu, pendEdit) float on top of
+            // these children: never claim a drag while this window isn't the
+            // one actually hovered, or slider drags inside the popup get
+            // stolen (ClearActiveID) by the panel underneath.
+            if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) return;
             // The PRESS must have started inside this window's rect.
             ImVec2 cp = io.MouseClickedPos[0];
             ImVec2 wpos  = ImGui::GetWindowPos();
@@ -4811,7 +4828,11 @@ void MainWindow::draw() {
     // cannot simultaneously drag the VFO. The mission Config tray overlays
     // the waterfall too, so it must lock tuning as well — otherwise touches
     // on tray widgets leak through and retune the SDR underneath.
-    lockWaterfallControls = showMenu || missionTrayOpen || (predatorArrowArmed >= 0);
+    // Any open popup (VIEW sliders, marker menu, pendEdit, confirms) also
+    // locks the waterfall so slider/menu drags can't leak through and
+    // retune or drag the spectrum underneath.
+    lockWaterfallControls = showMenu || missionTrayOpen || (predatorArrowArmed >= 0)
+        || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 
     ImGui::SetCursorPos(ImVec2(pad, contentTop));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.04f, 0.98f));
