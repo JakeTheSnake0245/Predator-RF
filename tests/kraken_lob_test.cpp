@@ -263,6 +263,61 @@ void test_ctl_patch_settings_sets_freq_and_flag() {
     CHECK_EQ(out.size(), settings.size());
 }
 
+void test_ctl_patch_settings_vfo_array() {
+    // VFO-0 stored as an array element: element 0 retuned, rest untouched.
+    nlohmann::json settings = {
+        {"center_freq", 433920000.0},
+        {"ext_upd_flag", false},
+        {"vfo_freq", {433920000.0, 100000000.0, 200000000.0}}
+    };
+    auto out = predator::krakenPatchSettings(settings, 868300000.0);
+    CHECK(out.is_object());
+    CHECK(out["vfo_freq"].is_array());
+    CHECK_EQ(out["vfo_freq"].size(), 3u);
+    CHECK_NEAR(out["vfo_freq"][0].get<double>(), 868300000.0, 0.001);
+    // Other VFO slots left untouched.
+    CHECK_NEAR(out["vfo_freq"][1].get<double>(), 100000000.0, 0.001);
+    CHECK_NEAR(out["vfo_freq"][2].get<double>(), 200000000.0, 0.001);
+}
+
+void test_ctl_patch_settings_vfo_scalar() {
+    // VFO-0 stored as a scalar key.
+    nlohmann::json settings = {
+        {"center_freq", 433920000.0},
+        {"ext_upd_flag", false},
+        {"vfo_freq_0", 433920000.0}
+    };
+    auto out = predator::krakenPatchSettings(settings, 868300000.0);
+    CHECK(out.is_object());
+    CHECK_NEAR(out.value("vfo_freq_0", 0.0), 868300000.0, 0.001);
+}
+
+void test_ctl_patch_settings_absent_vfo_stays_absent() {
+    // No VFO keys present → none invented.
+    nlohmann::json settings = {
+        {"center_freq", 433920000.0},
+        {"ext_upd_flag", false}
+    };
+    auto out = predator::krakenPatchSettings(settings, 868300000.0);
+    CHECK(out.is_object());
+    CHECK(!out.contains("vfo_freq"));
+    CHECK(!out.contains("vfo_freq_0"));
+    CHECK_NEAR(out.value("center_freq", 0.0), 868300000.0, 0.001);
+    CHECK_EQ(out.value("ext_upd_flag", false), true);
+}
+
+void test_ctl_patch_settings_both_vfo_forms() {
+    // If both forms are present, both element 0 and the scalar are retuned.
+    nlohmann::json settings = {
+        {"center_freq", 100e6},
+        {"vfo_freq", {100e6}},
+        {"vfo_freq_0", 100e6}
+    };
+    auto out = predator::krakenPatchSettings(settings, 462562500.0);
+    CHECK_NEAR(out["vfo_freq"][0].get<double>(), 462562500.0, 0.001);
+    CHECK_NEAR(out.value("vfo_freq_0", 0.0), 462562500.0, 0.001);
+}
+
 void test_ctl_patch_settings_rejects_non_object() {
     CHECK(predator::krakenPatchSettings(nlohmann::json::array(), 1e8).is_null());
     CHECK(predator::krakenPatchSettings(nlohmann::json(), 1e8).is_null());
@@ -336,6 +391,10 @@ int main() {
     test_multiple_sequential_messages();
 
     test_ctl_patch_settings_sets_freq_and_flag();
+    test_ctl_patch_settings_vfo_array();
+    test_ctl_patch_settings_vfo_scalar();
+    test_ctl_patch_settings_absent_vfo_stays_absent();
+    test_ctl_patch_settings_both_vfo_forms();
     test_ctl_patch_settings_rejects_non_object();
     test_ctl_settings_center_freq_extraction();
     test_ctl_freq_match_tolerance();

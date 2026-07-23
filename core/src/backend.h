@@ -32,6 +32,18 @@ namespace backend {
     // feedback where they tapped. No-op on desktop backends.
     bool setKrakenTuneStatus(const std::string& statusJson);
 
+    // Post a native platform notification (Android notification shade) for a
+    // signal alert. `sound`/`vibrate` select the alert channel behaviour.
+    // Returns false (no-op) on backends without a notification system
+    // (desktop / GLFW / web).
+    bool postNotification(const std::string& title, const std::string& text,
+                          bool sound, bool vibrate);
+
+    // Publish event markers (JSON array of {label,freqHz,lat,lon,time,
+    // sourceDevice,type}) to the platform map view so heard signals can be
+    // plotted where/when they were heard. No-op on desktop backends.
+    bool setEventMarkers(const std::string& eventsJson);
+
     float getNativeUiScale();
     bool isTouchPrimary();
     // Number of USB devices the platform has granted access to, or -1 when

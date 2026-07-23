@@ -457,6 +457,87 @@ namespace backend {
         return (jni_return == JNI_OK);
     }
 
+    // Post a native Android notification for a signal alert. Mirrors the
+    // JNI pattern of setPeerMarkers/setKrakenTuneStatus. The Kotlin method
+    // is thread-safe (NotificationManager.notify) and no-ops safely if the
+    // POST_NOTIFICATIONS runtime permission is missing.
+    bool postNotification(const std::string& title, const std::string& text,
+                          bool sound, bool vibrate) {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return false; }
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return false; }
+
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "postSignalNotification", "(Ljava/lang/String;Ljava/lang/String;ZZ)V");
+        if (method_id == NULL) {
+            if (java_env->ExceptionCheck()) { java_env->ExceptionClear(); }
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jstring jtitle = java_env->NewStringUTF(title.c_str());
+        jstring jtext = java_env->NewStringUTF(text.c_str());
+        if (jtitle == NULL || jtext == NULL) {
+            if (jtitle != NULL) { java_env->DeleteLocalRef(jtitle); }
+            if (jtext != NULL) { java_env->DeleteLocalRef(jtext); }
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+        java_env->CallVoidMethod(app->activity->clazz, method_id, jtitle, jtext, (jboolean)sound, (jboolean)vibrate);
+        java_env->DeleteLocalRef(jtitle);
+        java_env->DeleteLocalRef(jtext);
+        jni_return = java_vm->DetachCurrentThread();
+        return (jni_return == JNI_OK);
+    }
+
+    // Publish event markers (heard-signal locations) to the platform map
+    // view. Mirrors setPeerMarkers exactly: writes MainActivity.eventMarkersJson
+    // via updateEventMarkers(String), which MapActivity's poll loop forwards
+    // into the map WebView.
+    bool setEventMarkers(const std::string& eventsJson) {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return false; }
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return false; }
+
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "updateEventMarkers", "(Ljava/lang/String;)V");
+        if (method_id == NULL) {
+            if (java_env->ExceptionCheck()) { java_env->ExceptionClear(); }
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jstring jstr = java_env->NewStringUTF(eventsJson.c_str());
+        if (jstr == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+        java_env->CallVoidMethod(app->activity->clazz, method_id, jstr);
+        java_env->DeleteLocalRef(jstr);
+        jni_return = java_vm->DetachCurrentThread();
+        return (jni_return == JNI_OK);
+    }
+
     int renderLoop() {
         while (true) {
             int out_events;

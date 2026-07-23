@@ -867,6 +867,34 @@
                     'text-size': 11, 'text-offset': [0, 1.3], 'text-anchor': 'top' },
                 paint: { 'text-color': '#f2a733', 'text-halo-color': '#0b0e0a', 'text-halo-width': 1.2 } });
 
+            // Heard-signal event markers — small purple dots, visually
+            // distinct from emitter dots (threat-colored) and fleet peers
+            // (amber). Each marks where/when a signal was heard; tapping
+            // one opens a popup with the label, frequency, time, and which
+            // device heard it. Populated via PredatorRFMap.updateEventMarkers().
+            map.addSource('_event_markers', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addLayer({ id: '_event_markers_layer', source: '_event_markers', type: 'circle',
+                paint: { 'circle-radius': 5, 'circle-color': '#a24be0',
+                    'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 1.5,
+                    'circle-opacity': 0.9 } });
+            map.addLayer({ id: '_event_marker_labels', source: '_event_markers', type: 'symbol',
+                layout: { 'text-field': ['get', 'label'],
+                    'text-font': ['literal', ['Noto Sans Regular']],
+                    'text-size': 10, 'text-offset': [0, 1.1], 'text-anchor': 'top' },
+                paint: { 'text-color': '#c79bec', 'text-halo-color': '#0b0e0a', 'text-halo-width': 1 } });
+
+            // ── Event marker tap → heard-signal detail popup ──
+            // Mirrors the emitter popup idiom: all fields go in via
+            // textContent (never innerHTML) since labels/device names ride
+            // on RF-derived data.
+            map.on('click', '_event_markers_layer', (e) => {
+                const f = e.features && e.features[0];
+                if (!f) return;
+                openEventPopup(f.geometry.coordinates.slice(), f.properties || {});
+            });
+            map.on('mouseenter', '_event_markers_layer', () => { map.getCanvas().style.cursor = 'pointer'; });
+            map.on('mouseleave', '_event_markers_layer', () => { map.getCanvas().style.cursor = ''; });
+
             // ── Emitter tap → Kraken DF tasking popup ──
             // Tapping an emitter dot opens a popup with the track details
             // and (when running inside the Android app, where the
@@ -964,6 +992,82 @@
                     el.style.color = '#9fb8a3';
                     el.textContent = s.running ? (s.status || 'Kraken control ready') : 'Kraken control idle';
             }
+        }
+
+        /* ── Heard-signal event markers ── */
+        // Format a raw Hz value into a human-readable string. No existing
+        // shared helper (the emitter code inlines /1e6), so scoped here.
+        function fmtEventFreq(hz) {
+            const f = Number(hz);
+            if (!isFinite(f) || f <= 0) return '';
+            if (f >= 1e9) return (f / 1e9).toFixed(6).replace(/\.?0+$/, '') + ' GHz';
+            if (f >= 1e6) return (f / 1e6).toFixed(6).replace(/\.?0+$/, '') + ' MHz';
+            if (f >= 1e3) return (f / 1e3).toFixed(3).replace(/\.?0+$/, '') + ' kHz';
+            return f + ' Hz';
+        }
+
+        // Build the event FeatureCollection from an array of
+        // {label,freqHz,lat,lon,time,sourceDevice,type}. Skips (0,0) and
+        // non-finite coordinates. freqStr is precomputed for popup display.
+        function eventMarkerGeoJSON(events) {
+            const features = [];
+            for (const ev of events) {
+                if (!ev) continue;
+                const lat = Number(ev.lat);
+                const lon = Number(ev.lon);
+                if (!isFinite(lat) || !isFinite(lon)) continue;
+                if (lat === 0 && lon === 0) continue;
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        label: ev.label != null ? String(ev.label) : 'signal',
+                        freqStr: fmtEventFreq(ev.freqHz),
+                        time: ev.time != null ? String(ev.time) : '',
+                        sourceDevice: ev.sourceDevice != null ? String(ev.sourceDevice) : '',
+                        etype: ev.type != null ? String(ev.type) : ''
+                    },
+                    geometry: { type: 'Point', coordinates: [lon, lat] }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        let eventPopup = null;
+        // Build the popup DOM safely via textContent (never innerHTML).
+        function openEventPopup(lngLat, props) {
+            const root = document.createElement('div');
+            root.style.cssText = 'font-family:monospace;font-size:12px;color:#d7e4d9;min-width:150px;';
+
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:bold;margin-bottom:2px;color:#c79bec;';
+            title.textContent = props.label || 'signal';
+            root.appendChild(title);
+
+            if (props.freqStr) {
+                const freq = document.createElement('div');
+                freq.style.cssText = 'color:#9fb8a3;';
+                freq.textContent = props.freqStr;
+                root.appendChild(freq);
+            }
+            if (props.time) {
+                const time = document.createElement('div');
+                time.style.cssText = 'color:#9fb8a3;';
+                time.textContent = props.time;
+                root.appendChild(time);
+            }
+            if (props.sourceDevice) {
+                const src = document.createElement('div');
+                src.style.cssText = 'color:#9fb8a3;margin-top:2px;';
+                src.textContent = 'heard by: ' + props.sourceDevice;
+                root.appendChild(src);
+            }
+
+            if (eventPopup) { try { eventPopup.remove(); } catch (e) {} }
+            eventPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '240px' })
+                .setLngLat(lngLat)
+                .setDOMContent(root)
+                .addTo(map);
+            eventPopup.on('close', () => { eventPopup = null; });
         }
 
         map.on('load', () => {
@@ -1102,6 +1206,21 @@
                 if (!s || typeof s !== 'object') return;
                 lastKrakenStatus = s;
                 renderKrakenPopupStatus();
+            },
+
+            // Heard-signal event markers pushed from MapActivity every poll
+            // tick: JSON array of {label,freqHz,lat,lon,time,sourceDevice,
+            // type}. Replaces the whole set each call. Entries at (0,0) or
+            // with non-finite coordinates are skipped.
+            updateEventMarkers(eventsJson) {
+                if (!styleReady) return;
+                let events;
+                try { events = typeof eventsJson === 'string' ? JSON.parse(eventsJson) : eventsJson; }
+                catch(e) { return; }
+                if (!Array.isArray(events)) return;
+                try {
+                    map.getSource('_event_markers').setData(eventMarkerGeoJSON(events));
+                } catch(e) {}
             }
         };
     </script>

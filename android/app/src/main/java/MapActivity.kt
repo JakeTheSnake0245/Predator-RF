@@ -44,6 +44,7 @@ class MapActivity : AppCompatActivity() {
             pollExecutor.execute {
                 fetchAndPushTracks()
                 pushPeerMarkers()
+                pushEventMarkers()
                 mainHandler.postDelayed(this, POLL_INTERVAL_MS)
             }
         }
@@ -301,6 +302,23 @@ class MapActivity : AppCompatActivity() {
             if (mapReady) {
                 mapView.evaluateJavascript(
                     "window.PredatorRFMap && window.PredatorRFMap.updatePeers($jsLiteral);",
+                    null
+                )
+            }
+        }
+    }
+
+    // Heard-signal event markers come from the native layer:
+    // MainActivity.eventMarkersJson is updated by C++ via JNI
+    // (backend::setEventMarkers). Push it to the WebView event-marker layer
+    // on every poll tick, using JSONObject.quote() so no label / source
+    // string can break out of the JS literal.
+    private fun pushEventMarkers() {
+        val jsLiteral = JSONObject.quote(MainActivity.eventMarkersJson)
+        mainHandler.post {
+            if (mapReady) {
+                mapView.evaluateJavascript(
+                    "window.PredatorRFMap && window.PredatorRFMap.updateEventMarkers($jsLiteral);",
                     null
                 )
             }

@@ -1,25 +1,42 @@
 #pragma once
 
-// KrakenSDR remote-control client (krakensdr_doa settings API).
+// KrakenSDR remote-control client — "DF Kracked" retune method.
 //
-// The stock krakensdr_doa firmware exposes a headless remote-control HTTP
-// API on the KrakenSDR RPi (default port 8042):
+// This matches how the operator's field Kraken Pi is actually set up. The
+// stock krakensdr_doa DoA software, when "Remote Control" is enabled
+// (en_remote_control=true in the DoA _share/settings.json), makes
+// gui_run.sh serve its web root with an upload-capable miniserve on
+// port 8081 (miniserve -u) instead of the read-only PHP server. That
+// exposes exactly two things we use:
 //
-//   GET  /settings   → full settings JSON (includes "center_freq" in Hz)
-//   POST /settings   → accept a full settings JSON blob back; setting
-//                      "ext_upd_flag": true triggers a retune + automatic
-//                      calibration cycle at the new "center_freq".
+//   GET  /settings.json           → the live settings file from the DoA
+//                                    web root (includes "center_freq" Hz
+//                                    and VFO-0 frequency).
+//   POST /upload?path=/           → multipart/form-data upload that writes
+//                                    a file into the web root. Uploading a
+//                                    patched settings.json (field "file",
+//                                    filename "settings.json") replaces the
+//                                    live file. miniserve returns 201/2xx.
 //
-// Contract (must be honoured — the DOA engine rejects partial blobs):
-//   1. Always GET the full settings first.
-//   2. Patch ONLY the needed keys (center_freq, ext_upd_flag) in the blob.
-//   3. POST the complete modified blob back.
-//   4. Retune takes several seconds (calibration). Poll GET /settings and
-//      only report success when the read-back center_freq matches the
-//      request. Never assume instant success.
+// DF-Kracked contract (default port 8081):
+//   1. Prerequisite: en_remote_control=true on the Kraken so miniserve is
+//      up on :8081 with upload enabled. Without it there is no write path.
+//   2. GET /settings.json to fetch the full current blob.
+//   3. Patch center_freq, ext_upd_flag=true, AND the VFO-0 frequency
+//      ("vfo_freq" array element 0 and/or scalar "vfo_freq_0" — whichever
+//      the file actually contains).
+//   4. Upload the complete patched blob back via the multipart POST.
+//   5. The upload applies LIVE — the DoA software watches settings.json
+//      and retunes without any restart. After the retune the Kraken
+//      re-calibrates briefly. Poll the /settings.json readback until the
+//      read-back center_freq matches the request (30 s budget). Never
+//      assume instant success.
 //
-// A legacy read-only settings endpoint also exists on port 8081 — not used
-// here (we need write access).
+// Legacy fallback (older remote-control installs, port 8042): if
+// GET /settings.json 404s we fall back to GET /settings, and in that mode
+// we write with the old POST /settings full-blob path instead of the
+// miniserve upload. The successful GET mode is remembered and drives the
+// matching write path.
 //
 // Threading model: identical to the ingesters in decoder_ingest.h — one
 // background worker thread owns all sockets; the UI thread only calls the
@@ -52,9 +69,13 @@ enum class KrakenTuneState : int {
 
 // ── Pure settings-patch logic (unit-testable, no sockets) ────────────────────
 //
-// Given the full settings blob from GET /settings and the requested centre
-// frequency in Hz, return the blob to POST back: identical except
-// center_freq is replaced and ext_upd_flag is set true. Throws nothing;
+// Given the full settings blob from GET /settings.json and the requested
+// centre frequency in Hz, return the blob to write back: identical except
+// center_freq is replaced, ext_upd_flag is set true, and the VFO-0
+// frequency is retuned to match. krakensdr_doa stores the VFO-0 frequency
+// either as element 0 of a "vfo_freq" array or as a scalar "vfo_freq_0"
+// key; both are handled if present, and absent keys are left absent (we
+// never invent a VFO layout the file didn't already use). Throws nothing;
 // returns a discarded (null) json if the input is not an object.
 inline nlohmann::json krakenPatchSettings(const nlohmann::json& settings,
                                           double centerFreqHz) {
@@ -62,6 +83,16 @@ inline nlohmann::json krakenPatchSettings(const nlohmann::json& settings,
     nlohmann::json out = settings;
     out["center_freq"]  = centerFreqHz;
     out["ext_upd_flag"] = true;
+    // VFO-0 as an array: patch element 0 only, leave the rest untouched.
+    auto arrIt = out.find("vfo_freq");
+    if (arrIt != out.end() && arrIt->is_array() && !arrIt->empty()) {
+        (*arrIt)[0] = centerFreqHz;
+    }
+    // VFO-0 as a scalar key.
+    auto scIt = out.find("vfo_freq_0");
+    if (scIt != out.end() && scIt->is_number()) {
+        *scIt = centerFreqHz;
+    }
     return out;
 }
 
@@ -255,9 +286,27 @@ private:
 
     // ── HTTP plumbing ────────────────────────────────────────────────────
 
+    // Fetch the settings blob. Primary path is the DF-Kracked miniserve
+    // GET /settings.json on :8081. If that 404s we fall back to the legacy
+    // remote-control GET /settings and remember the mode so the write path
+    // matches (miniserve upload vs. legacy POST /settings).
     bool getSettings(nlohmann::json& out) {
+        // Try /settings.json first (miniserve web-root file).
+        if (httpGetJson("/settings.json", out)) {
+            legacyMode_ = false;
+            return true;
+        }
+        // Fall back to the legacy remote-control endpoint.
+        if (httpGetJson("/settings", out)) {
+            legacyMode_ = true;
+            return true;
+        }
+        return false;
+    }
+
+    bool httpGetJson(const std::string& path, nlohmann::json& out) {
         std::string req =
-            "GET /settings HTTP/1.1\r\n"
+            "GET " + path + " HTTP/1.1\r\n"
             "Host: " + host_ + ":" + std::to_string(port_) + "\r\n"
             "Accept: application/json\r\n"
             "Connection: close\r\n"
@@ -273,7 +322,41 @@ private:
         return out.is_object();
     }
 
+    // Write the patched settings back using the path matching the GET mode:
+    //   DF-Kracked (default): multipart upload to miniserve.
+    //   Legacy:               POST /settings full-blob.
     bool postSettings(const nlohmann::json& blob) {
+        return legacyMode_ ? postSettingsLegacy(blob) : uploadSettingsFile(blob);
+    }
+
+    // DF-Kracked write path: miniserve multipart upload. Writes
+    // settings.json into the web root; the DoA software watches the file
+    // and retunes live. miniserve returns 201 (or another 2xx) on success.
+    bool uploadSettingsFile(const nlohmann::json& blob) {
+        std::string payload = blob.dump();
+        const std::string boundary = "----PredatorRFKrakenBoundary";
+        std::string body;
+        body += "--" + boundary + "\r\n";
+        body += "Content-Disposition: form-data; name=\"file\"; "
+                "filename=\"settings.json\"\r\n";
+        body += "Content-Type: application/json\r\n\r\n";
+        body += payload;
+        body += "\r\n--" + boundary + "--\r\n";
+
+        std::string req =
+            "POST /upload?path=/ HTTP/1.1\r\n"
+            "Host: " + host_ + ":" + std::to_string(port_) + "\r\n"
+            "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n"
+            "Content-Length: " + std::to_string(body.size()) + "\r\n"
+            "Connection: close\r\n"
+            "\r\n" + body;
+        std::string resp;
+        int status = httpRoundTrip(req, resp);
+        return status >= 200 && status < 300;
+    }
+
+    // Legacy remote-control write path (older installs, e.g. :8042).
+    bool postSettingsLegacy(const nlohmann::json& blob) {
         std::string payload = blob.dump();
         std::string req =
             "POST /settings HTTP/1.1\r\n"
@@ -369,7 +452,12 @@ private:
 
     // ── State ────────────────────────────────────────────────────────────
     std::string host_ = "127.0.0.1";
-    int         port_ = 8042;
+    int         port_ = 8081;
+
+    // Which GET mode last succeeded: false = DF-Kracked /settings.json +
+    // miniserve upload (default); true = legacy /settings + POST /settings.
+    // Only touched from the worker thread.
+    bool legacyMode_ = false;
 
     std::atomic<bool> stopFlag_{true};
     std::atomic<bool> running_{false};

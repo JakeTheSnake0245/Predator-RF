@@ -83,7 +83,7 @@ static const json DEFAULT_CONFIG = {
     {"krakenPath",    "/ws"},
     {"krakenNodeId",  "kraken-0"},
     {"krakenEnabled", false},
-    {"krakenCtlPort", 8042},    // krakensdr_doa remote-control HTTP API
+    {"krakenCtlPort", 8081},    // DF-Kracked: miniserve upload endpoint (en_remote_control=true)
     {"krakenCtlEnabled", false}
 };
 
@@ -360,7 +360,7 @@ private:
     bool enabled_ = false;
     int  port_ = 8081;
     bool ctlEnabled_ = false;
-    int  ctlPort_ = 8042;
+    int  ctlPort_ = 8081;
     double tuneFreqMHz_ = 0.0;
     // Last frequency requested through the tune bus (Hz); surfaces in the
     // bus snapshot so callers can match feedback to their own request.

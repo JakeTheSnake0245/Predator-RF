@@ -2,6 +2,9 @@ package org.sdrpp.sdrpp;
 
 import android.app.NativeActivity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -67,6 +70,24 @@ private val usbReceiver = object : BroadcastReceiver() {
     }
 }
 
+// USB detach receiver. When an SDR/GPS dongle is unplugged mid-session
+// the stale fd lingers in the tracking lists and native reads fail
+// unpredictably (often taking the app down). This receiver drops the
+// yanked device from all tracking so getUsbDeviceCount() shrinks and the
+// native SDR status badge reflects the removal. Registered alongside the
+// USB permission receiver in registerUsbReceiverOnce().
+private val usbDetachReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
+            val _this = context as? MainActivity ?: return
+            val dev: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            if (dev != null) {
+                _this.handleUsbDetach(dev)
+            }
+        }
+    }
+}
+
 class MainActivity : NativeActivity() {
     companion object {
         @JvmStatic @Volatile var peerMarkersJson: String = "[]"
@@ -78,7 +99,30 @@ class MainActivity : NativeActivity() {
         // (backend::setKrakenTuneStatus) and polled by MapActivity to
         // surface calibrating/confirmed feedback in the map popup.
         @JvmStatic @Volatile var krakenTuneStatusJson: String = "{}"
+        // Event (heard-signal) markers bridge: backend::setEventMarkers
+        // writes a JSON array of {label,freqHz,lat,lon,time,sourceDevice,
+        // type} here via updateEventMarkers(); MapActivity polls it and
+        // pushes to the map WebView's updateEventMarkers() JS hook.
+        @JvmStatic @Volatile var eventMarkersJson: String = "[]"
+        // Rolling notification ID for signal alerts. Starts above the
+        // PredatorBackendService foreground NOTIFICATION_ID (1337) so
+        // repeated alerts never collide with the persistent service
+        // notification. Incremented per post so each alert shows/refreshes.
+        @JvmStatic @Volatile var signalNotificationId: Int = 2000
+        // Monotonic USB detach counter (see handleUsbDetach). @JvmStatic so
+        // the auto-generated getUsbDetachEvent() getter is a static-style
+        // accessor consistent with the other companion bridges; incremented
+        // on every detach.
+        @JvmStatic @Volatile var usbDetachEvent: Int = 0
     }
+
+    // JNI-readable accessor for the detach counter, matching the instance
+    // usbDevCount() accessor style so a native GetMethodID lookup works the
+    // same way (CallIntMethod on the activity instance). Named distinctly
+    // from the companion `usbDetachEvent` property to avoid a JVM signature
+    // clash with the @JvmStatic-generated getUsbDetachEvent() static getter.
+    // Reads the companion @Volatile.
+    @Synchronized public fun usbDetachCount(): Int = usbDetachEvent
 
     private val TAG : String = "Predator RF";
     public var usbManager : UsbManager? = null;
@@ -142,6 +186,42 @@ class MainActivity : NativeActivity() {
     @Synchronized public fun usbDevVid(i: Int): Int = if (i in 0 until usbDevVids.size) usbDevVids[i] else -1
     @Synchronized public fun usbDevPid(i: Int): Int = if (i in 0 until usbDevPids.size) usbDevPids[i] else -1
     @Synchronized public fun usbDevFd(i: Int): Int = if (i in 0 until usbDevConns.size) usbDevConns[i].fileDescriptor else -1
+
+    // Remove a detached device from every tracking list, close its
+    // connection, and clear the legacy SDR_* single-slot if it pointed at
+    // the yanked device. Never crashes on an unknown device — just logs.
+    @Synchronized
+    public fun handleUsbDetach(dev: UsbDevice) {
+        val name = dev.deviceName
+        usbDetachEvent++
+        val idx = usbDevNames.indexOf(name)
+        if (idx < 0) {
+            Log.i(TAG, "USB detached (untracked): $name vid=0x${"%04x".format(dev.vendorId)} pid=0x${"%04x".format(dev.productId)}")
+            return
+        }
+        try { usbDevConns[idx].close() } catch (e: Exception) {}
+        usbDevNames.removeAt(idx)
+        usbDevConns.removeAt(idx)
+        usbDevVids.removeAt(idx)
+        usbDevPids.removeAt(idx)
+        // Clear the legacy single-slot fields if they referenced this
+        // device — otherwise old native callers keep a dangling fd.
+        if (SDR_device?.deviceName == name) {
+            try { SDR_conn?.close() } catch (e: Exception) {}
+            SDR_device = null
+            SDR_conn = null
+            SDR_VID = -1
+            SDR_PID = -1
+            SDR_FD = -1
+        }
+        Log.i(TAG, "USB detached: $name vid=0x${"%04x".format(dev.vendorId)} pid=0x${"%04x".format(dev.productId)} (${usbDevNames.size} remaining)")
+        // Best-effort quiet notification; never crash cleanup on it.
+        try {
+            postSignalNotification("SDR disconnected", "$name unplugged", false, false)
+        } catch (e: Exception) {
+            Log.w(TAG, "detach notification failed", e)
+        }
+    }
     public var gpsLat : Double = 0.0;
     public var gpsLon : Double = 0.0;
     public var gpsAccuracyMeters : Float = 0.0f;
@@ -315,6 +395,16 @@ class MainActivity : NativeActivity() {
         } else {
             registerReceiver(usbReceiver, filter)
         }
+        // Detach is a SYSTEM broadcast, so the receiver must be exported to
+        // hear it on API 33+ (RECEIVER_NOT_EXPORTED would silently never
+        // fire). Registered here so it shares the same lifetime + idempotent
+        // guard as the permission receiver.
+        val detachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbDetachReceiver, detachFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(usbDetachReceiver, detachFilter)
+        }
         usbReceiverRegistered = true
     }
 
@@ -354,6 +444,13 @@ class MainActivity : NativeActivity() {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         );
+
+        // Android 13+ (API 33): POST_NOTIFICATIONS is a runtime permission.
+        // Requested separately (gated on SDK) so signal-alert notifications
+        // can fire; if denied, postSignalNotification() no-ops safely.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestMissingPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // TODO: Have the main code wait until these two permissions are available
 
@@ -451,6 +548,11 @@ class MainActivity : NativeActivity() {
         // receiver was never registered (e.g. onCreate threw before line 296).
         try {
             unregisterReceiver(usbReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Receiver was not registered — safe to ignore.
+        }
+        try {
+            unregisterReceiver(usbDetachReceiver)
         } catch (e: IllegalArgumentException) {
             // Receiver was not registered — safe to ignore.
         }
@@ -896,6 +998,139 @@ class MainActivity : NativeActivity() {
     // render thread, read from MapActivity's poll loop.
     fun updatePeerMarkers(json: String) {
         peerMarkersJson = json
+    }
+
+    // Called from native (backend::setEventMarkers) with a JSON array of
+    // heard-signal event markers. MapActivity polls this static and
+    // forwards it into the WebView event layer. @Volatile: written from the
+    // native render thread, read from MapActivity's poll loop.
+    fun updateEventMarkers(json: String) {
+        eventMarkersJson = json
+    }
+
+    // ── Signal-alert notifications ──────────────────────────────────────
+    // Called from native (backend::postNotification), typically from a
+    // non-UI thread. NotificationManager.notify() is thread-safe so we do
+    // NOT marshal to the UI thread. Uses one channel per sound/vibrate
+    // combination — Android bakes audio/vibration behaviour into the
+    // channel at creation time, so a single channel can't switch modes.
+    // If POST_NOTIFICATIONS is missing (API 33+) we no-op safely.
+    private var signalChannelsCreated = false
+
+    @Synchronized
+    private fun ensureSignalChannels() {
+        if (signalChannelsCreated) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            signalChannelsCreated = true
+            return
+        }
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        // sound + vibrate
+        val sv = NotificationChannel("predator_signal_sv", "Signal alerts (sound + vibrate)",
+            NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Heads-up signal alerts with sound and vibration"
+            enableVibration(true)
+        }
+        // sound only
+        val s = NotificationChannel("predator_signal_s", "Signal alerts (sound)",
+            NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Heads-up signal alerts with sound"
+            enableVibration(false)
+        }
+        // vibrate only
+        val v = NotificationChannel("predator_signal_v", "Signal alerts (vibrate)",
+            NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Heads-up signal alerts with vibration"
+            enableVibration(true)
+            setSound(null, null)
+        }
+        // quiet (no sound, no vibrate)
+        val quiet = NotificationChannel("predator_signal_quiet", "Signal alerts (quiet)",
+            NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Silent signal alerts"
+            enableVibration(false)
+            setSound(null, null)
+        }
+        nm.createNotificationChannel(sv)
+        nm.createNotificationChannel(s)
+        nm.createNotificationChannel(v)
+        nm.createNotificationChannel(quiet)
+        signalChannelsCreated = true
+    }
+
+    fun postSignalNotification(title: String, text: String, sound: Boolean, vibrate: Boolean) {
+        try {
+            // API 33+ runtime gate: skip silently (never crash) if the user
+            // hasn't granted POST_NOTIFICATIONS. Do NOT prompt from here —
+            // this can run on a non-UI thread.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (PermissionChecker.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    return
+                }
+            }
+            ensureSignalChannels()
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+            val channelId = when {
+                sound && vibrate -> "predator_signal_sv"
+                sound            -> "predator_signal_s"
+                vibrate          -> "predator_signal_v"
+                else             -> "predator_signal_quiet"
+            }
+
+            // Tapping the notification reopens MainActivity.
+            val tapIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val contentPi = PendingIntent.getActivity(this, 0, tapIntent, piFlags)
+
+            // Small icon: use the app icon from applicationInfo (guaranteed
+            // to exist in resources — @mipmap/ic_launcher).
+            val smallIcon = applicationInfo.icon
+
+            val notification: Notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, channelId)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setSmallIcon(smallIcon)
+                    .setAutoCancel(true)
+                    .setContentIntent(contentPi)
+                    .build()
+            } else {
+                @Suppress("DEPRECATION")
+                val b = Notification.Builder(this)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setSmallIcon(smallIcon)
+                    .setAutoCancel(true)
+                    .setContentIntent(contentPi)
+                @Suppress("DEPRECATION")
+                run {
+                    var defaults = 0
+                    if (sound)   defaults = defaults or Notification.DEFAULT_SOUND
+                    if (vibrate) defaults = defaults or Notification.DEFAULT_VIBRATE
+                    if (defaults != 0) b.setDefaults(defaults)
+                }
+                b.build()
+            }
+
+            // Rolling ID (above the service's 1337) so repeated alerts all
+            // show/refresh without clobbering the foreground notification.
+            val id = synchronized(MainActivity::class.java) {
+                val next = signalNotificationId
+                signalNotificationId = if (next >= Int.MAX_VALUE - 1) 2000 else next + 1
+                next
+            }
+            nm.notify(id, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "postSignalNotification failed", e)
+        }
     }
 
     // Called from native (backend::pollKrakenTuneRequest) once per render

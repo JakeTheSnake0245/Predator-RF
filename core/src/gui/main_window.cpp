@@ -1803,22 +1803,35 @@ void MainWindow::draw() {
     };
 
     auto blDefaultFilename = [&]() -> std::string {
+        // Operator-requested format: LAT_LON_LOWFREQ_HIGHFREQ_DATE_TIME
         char tsBuf[32];
         std::time_t t = (std::time_t)blRecStartTime;
         if (t == 0) t = std::time(nullptr);
         std::tm* tm = std::localtime(&t);
         if (tm) std::strftime(tsBuf, sizeof(tsBuf), "%Y%m%d_%H%M%S", tm);
         else    snprintf(tsBuf, sizeof(tsBuf), "unknown");
-        std::string suffix;
+        char llBuf[64];
+        snprintf(llBuf, sizeof(llBuf), "%.5f_%.5f", blRecStartLat, blRecStartLon);
+        // Lowest/highest frequency across the enabled baseline ranges; if no
+        // ranges are configured, fall back to the current spectrum view span.
+        double lo = 0.0, hi = 0.0;
         for (int r = 0; r < (int)blRanges.size(); r++) {
             if (!readJsonBool(blRanges[r], "enabled", true)) continue;
             double rs = readJsonDouble(blRanges[r], "start", 0.0);
             double re = readJsonDouble(blRanges[r], "stop",  0.0);
             if (rs > re) std::swap(rs, re);
-            if (!suffix.empty()) suffix += "_";
-            suffix += blFmtHz(rs) + "-" + blFmtHz(re);
+            if (re <= 0.0) continue;
+            if (lo == 0.0 || rs < lo) lo = rs;
+            if (re > hi) hi = re;
         }
-        return std::string(tsBuf) + (suffix.empty() ? "" : "_" + suffix) + "_baseline.csv";
+        if (hi <= 0.0) {
+            double c  = gui::waterfall.getCenterFrequency();
+            double bw = gui::waterfall.getBandwidth();
+            lo = std::max<double>(0.0, c - bw * 0.5);
+            hi = c + bw * 0.5;
+        }
+        return std::string(llBuf) + "_" + blFmtHz(lo) + "_" + blFmtHz(hi) + "_" +
+               std::string(tsBuf) + "_baseline.csv";
     };
 
     auto saveBaseline = [&]() {
@@ -2078,6 +2091,63 @@ void MainWindow::draw() {
             blRecording = false;
             saveBaseline();
         } else {
+            // ── Baseline sweep: hop across the enabled ranges like a scan ──
+            // Previously the recorder only accumulated the current view, so
+            // there was no visible movement and multi-range baselines never
+            // covered their configured spans. Hop the SDR view across every
+            // enabled range in overlapping steps, dwelling briefly on each
+            // hop so the FFT settles and accumulates.
+            {
+                static double blSweepStartKey = -1.0;   // keyed to blRecStartTime
+                static double blSweepLastHopAt = 0.0;
+                static int    blSweepRangeIdx  = 0;
+                static double blSweepFreq      = 0.0;
+                if (blSweepStartKey != blRecStartTime) {
+                    blSweepStartKey = blRecStartTime;
+                    blSweepLastHopAt = 0.0;
+                    blSweepRangeIdx = 0;
+                    blSweepFreq = 0.0;
+                }
+                std::vector<std::pair<double, double>> sweepRanges;
+                for (int r = 0; r < (int)blRanges.size(); r++) {
+                    if (!readJsonBool(blRanges[r], "enabled", true)) continue;
+                    double rs = readJsonDouble(blRanges[r], "start", 0.0);
+                    double re = readJsonDouble(blRanges[r], "stop",  0.0);
+                    if (rs > re) std::swap(rs, re);
+                    if (re > rs && re > 0.0) sweepRanges.push_back({ rs, re });
+                }
+                double viewBw = gui::waterfall.getBandwidth();
+                // Never fight the mission scan loop for the tuner: if a
+                // scan / quick-scan is running it owns retunes, and the
+                // baseline just accumulates whatever the scan visits.
+                if (!sweepRanges.empty() && viewBw > 0.0 && !predatorScanRunning) {
+                    const double dwellSec = 1.2;
+                    if (blSweepFreq <= 0.0) {
+                        blSweepRangeIdx = 0;
+                        blSweepFreq = sweepRanges[0].first + viewBw * 0.5;
+                    }
+                    if (blSweepLastHopAt <= 0.0 || (now - blSweepLastHopAt) >= dwellSec) {
+                        if (blSweepLastHopAt > 0.0) {
+                            blSweepFreq += viewBw * 0.8;   // 20% overlap between hops
+                            if ((blSweepFreq - viewBw * 0.5) > sweepRanges[blSweepRangeIdx].second) {
+                                blSweepRangeIdx = (blSweepRangeIdx + 1) % (int)sweepRanges.size();
+                                blSweepFreq = sweepRanges[blSweepRangeIdx].first + viewBw * 0.5;
+                            }
+                        }
+                        tunePredatorFrequency(blSweepFreq);
+                        blSweepLastHopAt = now;
+                    }
+                    char swBuf[128];
+                    snprintf(swBuf, sizeof(swBuf), "Recording — sweeping %s (range %d/%d)",
+                             formatFrequency(blSweepFreq).c_str(),
+                             blSweepRangeIdx + 1, (int)sweepRanges.size());
+                    blRecStatus = swBuf;
+                    // Mirror to the scan status line so the Mission Run
+                    // "Current:" readout shows live movement during
+                    // baseline capture, same as scan / quick-scan.
+                    if (!predatorScanRunning) { predatorScanStatus = swBuf; }
+                }
+            }
             int width = 0;
             float* fft = gui::waterfall.acquireLatestFFT(width);
             if (fft && width >= 8) {
@@ -2280,6 +2350,37 @@ void MainWindow::draw() {
             if (stStr != lastKrakenStatusJson) {
                 lastKrakenStatusJson = stStr;
                 backend::setKrakenTuneStatus(stStr);
+            }
+        }
+
+        // -------- Event markers → platform map --------
+        // Publish GPS-tagged events to the map so "→ Map" from the event
+        // log lands on plotted signal markers (where/when/who heard it).
+        // Throttled to ~2 s and only re-sent when a new event landed.
+        static double  lastEvMarkerPush   = 0.0;
+        static int64_t lastEvMarkerSerial = -1;
+        if (nowClock - lastEvMarkerPush >= 2.0) {
+            lastEvMarkerPush = nowClock;
+            if ((int64_t)predatorEventSerial != lastEvMarkerSerial) {
+                lastEvMarkerSerial = (int64_t)predatorEventSerial;
+                json evm = json::array();
+                int cnt = 0;
+                for (int i = 0; i < (int)events.size() && cnt < 100; i++) {
+                    double la = readJsonDouble(events[i], "lat", 0.0);
+                    double lo = readJsonDouble(events[i], "lon", 0.0);
+                    if (la == 0.0 && lo == 0.0) continue;
+                    json m;
+                    m["label"]        = readJsonString(events[i], "label", "event");
+                    m["freqHz"]       = readJsonDouble(events[i], "frequency", 0.0);
+                    m["lat"]          = la;
+                    m["lon"]          = lo;
+                    m["time"]         = readJsonString(events[i], "time", "?");
+                    m["sourceDevice"] = readJsonString(events[i], "sourceDevice", "local");
+                    m["type"]         = readJsonString(events[i], "type", "event");
+                    evm.push_back(m);
+                    cnt++;
+                }
+                backend::setEventMarkers(evm.dump());
             }
         }
     }
@@ -3378,6 +3479,16 @@ void MainWindow::draw() {
         if (frequency <= 0.0) { return false; }
 
         double bandwidth = std::max<double>(readJsonDouble(hit, "bandwidth", predatorPeakMinSpacingHz), 200.0);
+        // Operator-selected raw-IQ recording bandwidth override (20–500 kHz
+        // slider in the marker-actions popup). Channel sample rate below is
+        // anchored to the bandwidth, so tap count stays constant and the
+        // wider channel cannot stall the DSP splitter.
+        if (readJsonBool(hit, "mActIq", false)) {
+            double iqBwKhz = readJsonDouble(hit, "mActIqBwKhz", 0.0);
+            if (iqBwKhz > 0.0) {
+                bandwidth = std::clamp<double>(iqBwKhz * 1000.0, 20000.0, 500000.0);
+            }
+        }
         int markerSlot = markerSlotForHitIndex(hitIndex);
         std::string vfoName = "Predator M" + std::to_string(markerSlot);
         double wholeBandwidth = std::max<double>(gui::waterfall.getBandwidth(), bandwidth);
@@ -3536,6 +3647,24 @@ void MainWindow::draw() {
             // Fire CoT GeoChat report to configured ATAK endpoint.
             cotReporter.reportHit(frequency, strengthDb, (float)readJsonDouble(hit, "snrDb", 0.0),
                                   hitCount, state, readJsonString(hit, "name", ""));
+            // Per-hit "Notify when heard": Android notification with
+            // operator-selected audio/vibration, so a rucking operator
+            // doesn't have to stare at the hits list. Throttled to one
+            // notification per hit per 10 s on top of the duplicate-hit
+            // suppression window.
+            if (readJsonBool(hit, "mActNotify", false)) {
+                double lastNotifyClock = readJsonDouble(hit, "lastNotifyClock", -1.0e9);
+                if ((now - lastNotifyClock) >= 10.0) {
+                    hit["lastNotifyClock"] = now;
+                    char nBuf[160];
+                    snprintf(nBuf, sizeof(nBuf), "%s  %s  %.0f dB",
+                             readJsonString(hit, "name", "Hit").c_str(),
+                             formatFrequency(frequency).c_str(), strengthDb);
+                    backend::postNotification("Signal heard", nBuf,
+                        readJsonBool(hit, "mActNotifySound", true),
+                        readJsonBool(hit, "mActNotifyVibe",  true));
+                }
+            }
         }
         predatorScanStatus = "Hit " + formatFrequency(frequency);
         if (newHit && state == "unknown") { return 2; }
@@ -5845,13 +5974,29 @@ void MainWindow::draw() {
                 if (!hits.empty()) {
                     float bw = (ImGui::GetContentRegionAvail().x - 4.0f * style::uiScale) * 0.5f;
                     if (ImGui::Button(T("Clear Unknown Hits"), ImVec2(bw, 0))) {
-                        for (int i = (int)hits.size() - 1; i >= 0; i--) {
-                            if (readJsonString(hits[i], "state", "unknown") != "target") {
-                                releaseHitRoute(i);
-                                hits.erase(hits.begin() + i);
+                        ImGui::OpenPopup("##confirm_clear_unknown");
+                    }
+                    if (ImGui::BeginPopupModal("##confirm_clear_unknown", nullptr,
+                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+                        ImGui::TextUnformatted(T("Clear all non-target hits?"));
+                        ImGui::TextDisabled("%s", T("This cannot be undone."));
+                        ImGui::Spacing();
+                        float ubw = (ImGui::GetContentRegionAvail().x - 8.0f * style::uiScale) * 0.5f;
+                        if (ImGui::Button(T("Clear##unknown_yes"), ImVec2(ubw, 0))) {
+                            for (int i = (int)hits.size() - 1; i >= 0; i--) {
+                                if (readJsonString(hits[i], "state", "unknown") != "target") {
+                                    releaseHitRoute(i);
+                                    hits.erase(hits.begin() + i);
+                                }
                             }
+                            savePredatorHits(hits);
+                            ImGui::CloseCurrentPopup();
                         }
-                        savePredatorHits(hits);
+                        ImGui::SameLine(0, 8.0f * style::uiScale);
+                        if (ImGui::Button(T("Cancel##unknown_no"), ImVec2(ubw, 0))) {
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndPopup();
                     }
                     ImGui::SameLine(0, 4.0f * style::uiScale);
                     if (ImGui::Button(T("Clear All Hits"), ImVec2(bw, 0))) {
@@ -5978,7 +6123,11 @@ void MainWindow::draw() {
                         // ── Primary row: freq + SNR + marker badge ─────────
                         {
                             char badge[32] = "";
-                            if (markerAssigned) snprintf(badge, sizeof(badge), " [M]");
+                            if (markerAssigned) {
+                                int badgeSlot = (int)readJsonDouble(hits[i], "markerSlot", 0.0);
+                                if (badgeSlot > 0) snprintf(badge, sizeof(badge), " [M%d]", badgeSlot);
+                                else               snprintf(badge, sizeof(badge), " [M]");
+                            }
                             if (unreadCount > 0) {
                                 ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s  SNR %.0f dB  hits:%d%s",
                                     formatFrequency(hitFrequency).c_str(), snrDb, hitCount, badge);
@@ -6061,7 +6210,24 @@ void MainWindow::draw() {
                             if (ImGui::Checkbox(T("Record raw IQ (.wav)"), &actIq)) {
                                 hits[i]["mActIq"] = actIq;
                                 if (actIq) { (void)markerIqDir(subdir); }
+                                // Re-route so the marker VFO picks up (or
+                                // drops) the recording-bandwidth override.
+                                if (readJsonBool(hits[i], "markerAssigned", false)) { routeHitToVfo(i); }
                                 detectedHitsChanged = true;
+                            }
+                            if (actIq) {
+                                float iqBwKhz = (float)readJsonDouble(hits[i], "mActIqBwKhz", 20.0);
+                                ImGui::Indent();
+                                ImGui::SetNextItemWidth(std::max<float>(160.0f * style::uiScale,
+                                    ImGui::GetContentRegionAvail().x * 0.7f));
+                                if (ImGui::SliderFloat(T("Rec BW##iq_bw"), &iqBwKhz, 20.0f, 500.0f, "%.0f kHz")) {
+                                    iqBwKhz = std::clamp<float>(iqBwKhz, 20.0f, 500.0f);
+                                    hits[i]["mActIqBwKhz"] = (double)iqBwKhz;
+                                    if (readJsonBool(hits[i], "markerAssigned", false)) { routeHitToVfo(i); }
+                                    detectedHitsChanged = true;
+                                }
+                                ImGui::TextDisabled("%s", T("Recorded IQ bandwidth (20–500 kHz)."));
+                                ImGui::Unindent();
                             }
                             if (ImGui::Checkbox(T("Save decoded voice"), &actVoice)) {
                                 hits[i]["mActVoice"] = actVoice;
@@ -6080,6 +6246,27 @@ void MainWindow::draw() {
                                         dataFolderSelect.expandString(dataOutputPath) + "/" + subdir, ec);
                                 }
                                 detectedHitsChanged = true;
+                            }
+                            bool actNotify = readJsonBool(hits[i], "mActNotify", false);
+                            if (ImGui::Checkbox(T("Notify when heard"), &actNotify)) {
+                                hits[i]["mActNotify"] = actNotify;
+                                detectedHitsChanged = true;
+                            }
+                            if (actNotify) {
+                                bool nSound = readJsonBool(hits[i], "mActNotifySound", true);
+                                bool nVibe  = readJsonBool(hits[i], "mActNotifyVibe",  true);
+                                ImGui::Indent();
+                                if (ImGui::Checkbox(T("Audio##notify_snd"), &nSound)) {
+                                    hits[i]["mActNotifySound"] = nSound;
+                                    detectedHitsChanged = true;
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Checkbox(T("Vibration##notify_vib"), &nVibe)) {
+                                    hits[i]["mActNotifyVibe"] = nVibe;
+                                    detectedHitsChanged = true;
+                                }
+                                ImGui::TextDisabled("%s", T("Android notification each time this signal is heard."));
+                                ImGui::Unindent();
                             }
                             ImGui::Separator();
                             ImGui::TextDisabled("%s", T("Output folders (auto-created):"));
@@ -6503,14 +6690,21 @@ void MainWindow::draw() {
                     filteredEvIdx.push_back(i);
                 }
 
-                // Scrollable region — cap at 10 visible rows
-                float logH = std::min<float>((float)std::max((int)filteredEvIdx.size(), 3), 10) * ImGui::GetTextLineHeightWithSpacing() + 8.0f;
-                ImGui::BeginChild("##global_event_log", ImVec2(0, logH), true);
+                // Rows render inline (no nested scroll child) — a fixed-height
+                // embedded scroller fights the outer touch scroll for
+                // ownership of drags (same fix as the hits list above). The
+                // list is capped to the newest rows instead.
+                const int evMaxRows = 40;
+                int evShownFrom = std::max<int>(0, (int)filteredEvIdx.size() - evMaxRows);
                 if (filteredEvIdx.empty()) {
                     ImGui::TextDisabled("%s", T("No entries."));
                 } else {
+                    if (evShownFrom > 0) {
+                        ImGui::TextDisabled(T("(showing newest %d of %d — filter or clear to see older)"),
+                            evMaxRows, (int)filteredEvIdx.size());
+                    }
                     // Newest first
-                    for (int ei = (int)filteredEvIdx.size() - 1; ei >= 0; ei--) {
+                    for (int ei = (int)filteredEvIdx.size() - 1; ei >= evShownFrom; ei--) {
                         int i = filteredEvIdx[ei];
                         std::string evTime    = readJsonString(events[i], "time",      "?");
                         std::string evType    = readJsonString(events[i], "type",      "event");
@@ -6552,8 +6746,6 @@ void MainWindow::draw() {
                         }
                     }
                 }
-                applyTouchScroll();
-                ImGui::EndChild();
 
                 if (ImGui::Button(T("Clear Events"), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     ImGui::OpenPopup("##confirm_clear_events");
@@ -6567,6 +6759,10 @@ void MainWindow::draw() {
                     if (ImGui::Button(T("Clear##events_yes"), ImVec2(bw, 0))) {
                         events = json::array();
                         savePredatorEvents(events);
+                        // Bump the serial so the throttled event-marker push
+                        // publishes the now-empty set — otherwise cleared
+                        // events would linger as stale markers on the map.
+                        ++predatorEventSerial;
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine(0, 8.0f * style::uiScale);

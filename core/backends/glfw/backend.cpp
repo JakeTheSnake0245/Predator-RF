@@ -260,6 +260,15 @@ namespace backend {
         return false;
     }
 
+    bool postNotification(const std::string& title, const std::string& text,
+                          bool sound, bool vibrate) {
+        return false;
+    }
+
+    bool setEventMarkers(const std::string& eventsJson) {
+        return false;
+    }
+
     bool isTouchPrimary() {
         return false;
     }

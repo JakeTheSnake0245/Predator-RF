@@ -809,6 +809,8 @@ bool openMapView() { return false; }
 bool setPeerMarkers(const std::string& peersJson) { return false; }
 double pollKrakenTuneRequest() { return 0.0; }
 bool setKrakenTuneStatus(const std::string& statusJson) { return false; }
+bool postNotification(const std::string& title, const std::string& text, bool sound, bool vibrate) { return false; }
+bool setEventMarkers(const std::string& eventsJson) { return false; }
 float getNativeUiScale() { return 1.0f; }
 bool isTouchPrimary() { return false; }
 int getUsbDeviceCount() { return -1; }

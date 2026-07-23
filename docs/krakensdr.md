@@ -79,27 +79,43 @@ Enable in **Module Manager**.  Configure in the module panel:
 | Port | `8082` | krakensdr_doa WebSocket port |
 | Path | `/ws` | WebSocket path |
 | Node ID | `kraken-0` | Device ID sent when JSON `node_id` is empty |
-| Ctl Port | `8042` | krakensdr_doa remote-control HTTP API (same host) |
+| Ctl Port | `8081` | krakensdr_doa DoA web root (miniserve, `en_remote_control=true`; same host) |
 
 A green `● Connected` indicator confirms the WebSocket link is live.
 
 ### Remote frequency control (Kraken Control)
 
 The module panel has a **Kraken Control (RX retune)** section that drives
-the krakensdr_doa headless settings API (`core/src/predator/kraken_ctl_client.h`):
+the krakensdr_doa DoA web root the "DF Kracked" way
+(`core/src/predator/kraken_ctl_client.h`). This matches how the field
+Kraken Pi is set up: with **Remote Control** enabled
+(`en_remote_control=true` in the DoA `_share/settings.json`), the DoA
+`gui_run.sh` serves the web root via an upload-capable **miniserve** on
+port **8081** (verify with `sudo ss -ltnp | grep ':8081'`). No stock
+`POST /settings` API is required.
 
 ```
-GET  http://<host>:8042/settings   → full settings JSON ("center_freq" in Hz)
-POST http://<host>:8042/settings   → full patched blob, "ext_upd_flag": true
+GET  http://<host>:8081/settings.json  → full settings JSON ("center_freq" Hz + VFO-0)
+POST http://<host>:8081/upload?path=/   → multipart upload of patched settings.json
 ```
 
-Contract (the DOA engine rejects partial blobs):
+Contract:
 
-1. GET the full settings blob.
-2. Patch **only** `center_freq` + set `ext_upd_flag: true`.
-3. POST the complete blob back.
-4. Poll GET `/settings` until the read-back `center_freq` matches
+1. GET the full `settings.json` from the web root.
+2. Patch `center_freq`, set `ext_upd_flag: true`, and retune **VFO-0**
+   (`vfo_freq[0]` and/or `vfo_freq_0`, whichever the file uses).
+3. Upload the complete patched `settings.json` back via the multipart
+   `POST /upload?path=/` (miniserve returns `201`/2xx).
+4. The upload applies **live** — the DoA software watches
+   `settings.json` and retunes with no restart. No DAQ stop/start and no
+   sweep agent are involved: this is retune/cue only.
+5. Poll GET `/settings.json` until the read-back `center_freq` matches
    (±1 Hz) or a 30 s timeout expires.
+
+**Legacy fallback:** older remote-control installs that only expose
+`GET /settings` (e.g. on port `8042`) still work — the client detects the
+`/settings.json` 404, falls back to `GET /settings`, and writes back with
+the legacy `POST /settings` full-blob path.
 
 Retune takes **several seconds** — changing `center_freq` triggers an
 automatic coherent-calibration cycle. The panel shows the full
@@ -424,11 +440,13 @@ GET→patch→serialize→readback round trip.
    Android device.
 
 6. **Remote retune interrupts DOA output.**
-   POSTing a new `center_freq` (with `ext_upd_flag: true`) restarts the
+   Uploading a new `center_freq` (with `ext_upd_flag: true`) restarts the
    coherent-calibration cycle — `doa_result` messages stop for several
    seconds and any in-progress crosscut goes stale.  The control client
    only reports success after readback verification; if the panel shows
-   `Tune failed`, check that port 8042 is reachable (firewall on the
-   KrakenSDR RPi) and that krakensdr_doa is a version that exposes the
-   headless settings API.  Only `center_freq` is controlled remotely;
-   gain and every other setting must be changed on the Kraken web UI.
+   `Tune failed`, check that port 8081 is reachable (firewall on the
+   KrakenSDR RPi) and that **Remote Control is enabled**
+   (`en_remote_control=true`) so miniserve is serving the DoA web root
+   with upload enabled (`sudo ss -ltnp | grep ':8081'` should show
+   miniserve).  Only `center_freq`/VFO-0 are controlled remotely; gain
+   and every other setting must be changed on the Kraken web UI.
