@@ -1,0 +1,33 @@
+[Unit]
+Description=DF-Kracked LOB sensor (Kujhad v1 fleet peer for KrakenSDR)
+Documentation=https://github.com/  README.md next to sensor.py
+# Start after the network overlay (ZeroTier/Headscale) is up if present.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as the KrakenSDR operator account. Adjust User/Group to match your Pi.
+User=pi
+Group=pi
+WorkingDirectory=/opt/df_kracked_sensor
+# Optional env file: put ARGS="--lat 37.4 --lon -122.1 --name df-north" etc.
+# in /etc/default/df-kracked-sensor to customise without editing this unit.
+EnvironmentFile=-/etc/default/df-kracked-sensor
+ExecStart=/usr/bin/python3 /opt/df_kracked_sensor/sensor.py --bind 0.0.0.0 --port 9151 $ARGS
+Restart=always
+RestartSec=3
+# The persisted API key file must not be world/group readable. A tight
+# umask ensures any file the service creates (incl. df_kracked_sensor.json)
+# is owner-only; sensor.py also enforces 0600 explicitly.
+UMask=0077
+# Clean SIGTERM shutdown is handled inside sensor.py.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# Light hardening — the service only reads the local Kraken ws + serves HTTP.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

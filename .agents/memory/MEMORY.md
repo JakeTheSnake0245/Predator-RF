@@ -11,4 +11,5 @@
 - [Remote Fox Hunt (foxbeacon)](remote-fox-hunt.md) — networked beacon tasking uses a non-tx.* class to keep all tx.* jamming rejects intact; per-node opt-in atomic, GUI/worker thread gate layering.
 - [Undrained VFO stalls DSP splitter](undrained-vfo-stall.md) — a VFO output stream with no consumer back-pressures the splitter and freezes the FFT feed (STALLED); orphan/marker VFOs need a Null drain sink.
 - [Android generated assets dir](android-generated-assets.md) — android/app/assets is wiped+recopied from root/ every build; edit map HTML/JS under root/, never under android/app/assets.
+- [Fleet LOB sharing contract](fleet-lob-sharing.md) — KRAKEN_LOB rides /v1/events; freshness by local rxClock (never sensor clock); wire shape + headless Pi sensor rules.
 - [Multi-P25 decode roadmap](multi-p25-roadmap.md) — future: 5-8 concurrent P25 feeds via multi-instance DSD-FME + hold wiring; demods outrank spectrum GUI.

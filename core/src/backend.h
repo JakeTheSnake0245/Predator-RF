@@ -44,6 +44,13 @@ namespace backend {
     // plotted where/when they were heard. No-op on desktop backends.
     bool setEventMarkers(const std::string& eventsJson);
 
+    // Push fleet-wide Kraken LOB bearings to the platform map. JSON array of
+    // { bearingDeg, bearingStdDeg, confidence, freqHz, nodeLat, nodeLon,
+    //   headingDeg, time, ageSec, sourceDevice } built from local + peer
+    // KRAKEN_LOB decoder events. Android forwards to the map WebView;
+    // other backends may return false (no-op).
+    bool setFleetLobs(const std::string& lobsJson);
+
     float getNativeUiScale();
     bool isTouchPrimary();
     // Number of USB devices the platform has granted access to, or -1 when

@@ -2383,6 +2383,59 @@ void MainWindow::draw() {
                 backend::setEventMarkers(evm.dump());
             }
         }
+
+        // -------- Fleet LOB bearings → platform map --------
+        // Kraken DoA bearings arrive as decoder events (decoder=KRAKEN_LOB)
+        // both from the locally attached Kraken and — via the Kujhad event
+        // sync — from any peered sensor node (e.g. a DF-Kracked Pi on the
+        // overlay network). Aggregate the recent ones here and push them to
+        // the map so every connected device plots every node's wedges,
+        // without needing the Python fusion backend. Bearings older than
+        // 90 s are dropped (a stale LOB is worse than no LOB).
+        static double      lastLobPushAt   = 0.0;
+        static std::string lastLobJsonSent;
+        if (nowClock - lastLobPushAt >= 2.0) {
+            lastLobPushAt = nowClock;
+            json lobs = json::array();
+            int lobCnt = 0;
+            for (int i = 0; i < (int)events.size() && lobCnt < 64; i++) {
+                if (readJsonString(events[i], "decoder", "") != "KRAKEN_LOB") continue;
+                if (!events[i].contains("raw") || !events[i]["raw"].is_object()) continue;
+                const json& raw = events[i]["raw"];
+                double bearing = readJsonDouble(raw, "bearing_deg", -1.0);
+                double nLat    = readJsonDouble(raw, "gps_lat", 0.0);
+                double nLon    = readJsonDouble(raw, "gps_lon", 0.0);
+                if (bearing < 0.0 || (nLat == 0.0 && nLon == 0.0)) continue;
+                // Freshness is judged by LOCAL receive time, not the
+                // sensor's timestamp_unix — Pi sensors on a disconnected
+                // overlay routinely have skewed clocks, and judging age by
+                // their clock would silently drop every valid bearing.
+                // Lazily stamp rows with the controller clock on first
+                // sight; raw.timestamp_unix stays available for display.
+                double rx = readJsonDouble(events[i], "rxClock", 0.0);
+                if (rx <= 0.0) { events[i]["rxClock"] = nowClock; rx = nowClock; }
+                double age = nowClock - rx;
+                if (age > 90.0) continue;
+                json l;
+                l["bearingDeg"]    = bearing;
+                l["bearingStdDeg"] = readJsonDouble(raw, "bearing_std_deg", 0.0);
+                l["confidence"]    = readJsonDouble(raw, "confidence", 0.0);
+                l["freqHz"]        = readJsonDouble(events[i], "frequency", 0.0);
+                l["nodeLat"]       = nLat;
+                l["nodeLon"]       = nLon;
+                l["headingDeg"]    = readJsonDouble(raw, "heading_deg", 0.0);
+                l["time"]          = readJsonString(events[i], "time", "?");
+                l["ageSec"]        = std::max<double>(0.0, age);
+                l["sourceDevice"]  = readJsonString(events[i], "sourceDevice", "local");
+                lobs.push_back(l);
+                lobCnt++;
+            }
+            std::string lobStr = lobs.dump();
+            if (lobStr != lastLobJsonSent) {
+                lastLobJsonSent = lobStr;
+                backend::setFleetLobs(lobStr);
+            }
+        }
     }
 
     // -------- Decoder bridge ingestion (ADS-B / dump1090) --------

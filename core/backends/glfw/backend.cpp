@@ -269,6 +269,10 @@ namespace backend {
         return false;
     }
 
+    bool setFleetLobs(const std::string& lobsJson) {
+        return false;
+    }
+
     bool isTouchPrimary() {
         return false;
     }

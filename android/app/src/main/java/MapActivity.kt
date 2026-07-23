@@ -45,6 +45,7 @@ class MapActivity : AppCompatActivity() {
                 fetchAndPushTracks()
                 pushPeerMarkers()
                 pushEventMarkers()
+                pushFleetLobs()
                 mainHandler.postDelayed(this, POLL_INTERVAL_MS)
             }
         }
@@ -319,6 +320,23 @@ class MapActivity : AppCompatActivity() {
             if (mapReady) {
                 mapView.evaluateJavascript(
                     "window.PredatorRFMap && window.PredatorRFMap.updateEventMarkers($jsLiteral);",
+                    null
+                )
+            }
+        }
+    }
+
+    // Fleet-wide Kraken LOB bearings come from the native layer:
+    // MainActivity.fleetLobsJson is updated by C++ via JNI
+    // (backend::setFleetLobs). Push it to the WebView LOB-wedge layer on
+    // every poll tick, using JSONObject.quote() so no source-device string
+    // can break out of the JS literal.
+    private fun pushFleetLobs() {
+        val jsLiteral = JSONObject.quote(MainActivity.fleetLobsJson)
+        mainHandler.post {
+            if (mapReady) {
+                mapView.evaluateJavascript(
+                    "window.PredatorRFMap && window.PredatorRFMap.updateFleetLobs($jsLiteral);",
                     null
                 )
             }

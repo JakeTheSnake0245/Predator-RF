@@ -104,6 +104,12 @@ class MainActivity : NativeActivity() {
         // type} here via updateEventMarkers(); MapActivity polls it and
         // pushes to the map WebView's updateEventMarkers() JS hook.
         @JvmStatic @Volatile var eventMarkersJson: String = "[]"
+        // Fleet-wide Kraken LOB bearings bridge: backend::setFleetLobs
+        // writes a JSON array of {bearingDeg,bearingStdDeg,confidence,freqHz,
+        // nodeLat,nodeLon,headingDeg,time,ageSec,sourceDevice} here via
+        // updateFleetLobs(); MapActivity polls it and pushes to the map
+        // WebView's updateFleetLobs() JS hook.
+        @JvmStatic @Volatile var fleetLobsJson: String = "[]"
         // Rolling notification ID for signal alerts. Starts above the
         // PredatorBackendService foreground NOTIFICATION_ID (1337) so
         // repeated alerts never collide with the persistent service
@@ -1006,6 +1012,14 @@ class MainActivity : NativeActivity() {
     // native render thread, read from MapActivity's poll loop.
     fun updateEventMarkers(json: String) {
         eventMarkersJson = json
+    }
+
+    // Called from native (backend::setFleetLobs) with a JSON array of
+    // fleet-wide Kraken LOB bearings. MapActivity polls this static and
+    // forwards it into the WebView LOB layer. @Volatile: written from the
+    // native render thread, read from MapActivity's poll loop.
+    fun updateFleetLobs(json: String) {
+        fleetLobsJson = json
     }
 
     // ── Signal-alert notifications ──────────────────────────────────────

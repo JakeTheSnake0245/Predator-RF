@@ -895,6 +895,42 @@
             map.on('mouseenter', '_event_markers_layer', () => { map.getCanvas().style.cursor = 'pointer'; });
             map.on('mouseleave', '_event_markers_layer', () => { map.getCanvas().style.cursor = ''; });
 
+            // ── Fleet-wide Kraken LOB bearing wedges ──
+            // Cyan wedges from each node position along the TRUE bearing
+            // (heading already applied upstream). Separate source/layers
+            // from the Python-backend track pipeline's _lob_wedges. A small
+            // node dot marks the array origin; tapping either the wedge or
+            // the dot opens a detail popup. Per-feature opacity (via the
+            // wedge_opacity/dot_opacity properties, computed from ageSec)
+            // fades older bearings. Populated via updateFleetLobs().
+            map.addSource('_fleet_lob_wedges', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addSource('_fleet_lob_nodes',  { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addLayer({ id: '_fleet_lob_wedge_fill', source: '_fleet_lob_wedges', type: 'fill',
+                paint: { 'fill-color': '#22d3ee',
+                    'fill-opacity': ['coalesce', ['get', 'wedge_opacity'], 0.12] } });
+            map.addLayer({ id: '_fleet_lob_wedge_stroke', source: '_fleet_lob_wedges', type: 'line',
+                paint: { 'line-color': '#22d3ee', 'line-width': 1.2,
+                    'line-opacity': ['coalesce', ['get', 'stroke_opacity'], 0.6],
+                    'line-dasharray': [5, 3] } });
+            map.addLayer({ id: '_fleet_lob_node_dots', source: '_fleet_lob_nodes', type: 'circle',
+                paint: { 'circle-radius': 4, 'circle-color': '#22d3ee',
+                    'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 1.5,
+                    'circle-opacity': 0.95 } });
+
+            // ── Fleet LOB tap → bearing detail popup ──
+            // DOM-built (textContent only) like openEventPopup, since the
+            // source-device string rides on RF-derived data. Both the wedge
+            // and node dot open the same popup.
+            const _onFleetLobClick = (e) => {
+                const f = e.features && e.features[0];
+                if (!f) return;
+                openFleetLobPopup(e.lngLat, f.properties || {});
+            };
+            map.on('click', '_fleet_lob_wedge_fill', _onFleetLobClick);
+            map.on('click', '_fleet_lob_node_dots', _onFleetLobClick);
+            map.on('mouseenter', '_fleet_lob_node_dots', () => { map.getCanvas().style.cursor = 'pointer'; });
+            map.on('mouseleave', '_fleet_lob_node_dots', () => { map.getCanvas().style.cursor = ''; });
+
             // ── Emitter tap → Kraken DF tasking popup ──
             // Tapping an emitter dot opens a popup with the track details
             // and (when running inside the Android app, where the
@@ -1070,6 +1106,116 @@
             eventPopup.on('close', () => { eventPopup = null; });
         }
 
+        /* ── Fleet-wide Kraken LOB bearing wedges ── */
+        // Build wedge + node-dot FeatureCollections from an array of
+        // {bearingDeg,bearingStdDeg,confidence,freqHz,nodeLat,nodeLon,
+        // headingDeg,time,ageSec,sourceDevice}. bearingDeg is already TRUE
+        // (heading applied upstream) — do NOT re-add headingDeg here.
+        // Opacity fades with ageSec (fresh = strong). Reuses lobWedgeRing.
+        const FLEET_LOB_RANGE_M = 5000;   // fixed ~5 km fan length
+        function fleetLobWedgeGeoJSON(lobs) {
+            const features = [];
+            for (const l of lobs) {
+                if (!l) continue;
+                const nLat = Number(l.nodeLat);
+                const nLon = Number(l.nodeLon);
+                const bearing = Number(l.bearingDeg);
+                if (!isFinite(nLat) || !isFinite(nLon) || !isFinite(bearing)) continue;
+                if (nLat === 0 && nLon === 0) continue;
+                const halfAngle = Math.max(2, Number(l.bearingStdDeg) || 0);
+                // Age-scaled opacity: fresh (0 s) → strong, ~90 s → faint.
+                const age = Number(l.ageSec);
+                const ageFrac = isFinite(age) ? Math.max(0, Math.min(1, age / 90)) : 0;
+                const fade = 1 - 0.75 * ageFrac;    // 1.0 → 0.25
+                const props = {
+                    bearingDeg:    bearing,
+                    bearingStdDeg: isFinite(Number(l.bearingStdDeg)) ? Number(l.bearingStdDeg) : 0,
+                    confidence:    isFinite(Number(l.confidence)) ? Number(l.confidence) : 0,
+                    freqStr:       fmtEventFreq(l.freqHz),
+                    ageSec:        isFinite(age) ? age : 0,
+                    sourceDevice:  l.sourceDevice != null ? String(l.sourceDevice) : '',
+                    wedge_opacity:  0.20 * fade,
+                    stroke_opacity: 0.75 * fade
+                };
+                features.push({
+                    type: 'Feature',
+                    properties: props,
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [lobWedgeRing(nLat, nLon, bearing, halfAngle, FLEET_LOB_RANGE_M)]
+                    }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        function fleetLobNodeGeoJSON(lobs) {
+            const features = [];
+            for (const l of lobs) {
+                if (!l) continue;
+                const nLat = Number(l.nodeLat);
+                const nLon = Number(l.nodeLon);
+                if (!isFinite(nLat) || !isFinite(nLon)) continue;
+                if (nLat === 0 && nLon === 0) continue;
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        bearingDeg:    isFinite(Number(l.bearingDeg)) ? Number(l.bearingDeg) : 0,
+                        bearingStdDeg: isFinite(Number(l.bearingStdDeg)) ? Number(l.bearingStdDeg) : 0,
+                        confidence:    isFinite(Number(l.confidence)) ? Number(l.confidence) : 0,
+                        freqStr:       fmtEventFreq(l.freqHz),
+                        ageSec:        isFinite(Number(l.ageSec)) ? Number(l.ageSec) : 0,
+                        sourceDevice:  l.sourceDevice != null ? String(l.sourceDevice) : ''
+                    },
+                    geometry: { type: 'Point', coordinates: [nLon, nLat] }
+                });
+            }
+            return { type: 'FeatureCollection', features };
+        }
+
+        let fleetLobPopup = null;
+        // DOM-built popup (textContent only) — source-device rides on RF data.
+        function openFleetLobPopup(lngLat, props) {
+            const root = document.createElement('div');
+            root.style.cssText = 'font-family:monospace;font-size:12px;color:#d7e4d9;min-width:160px;';
+
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:bold;margin-bottom:2px;color:#67e8f9;';
+            title.textContent = props.freqStr || 'LOB bearing';
+            root.appendChild(title);
+
+            const bearing = document.createElement('div');
+            bearing.style.cssText = 'color:#9fb8a3;';
+            const bDeg = Number(props.bearingDeg) || 0;
+            const bStd = Number(props.bearingStdDeg) || 0;
+            bearing.textContent = 'bearing ' + bDeg.toFixed(1) + '° ±' + bStd.toFixed(1) + '°';
+            root.appendChild(bearing);
+
+            const conf = document.createElement('div');
+            conf.style.cssText = 'color:#9fb8a3;';
+            conf.textContent = 'confidence ' + (Number(props.confidence) || 0).toFixed(2);
+            root.appendChild(conf);
+
+            const age = document.createElement('div');
+            age.style.cssText = 'color:#9fb8a3;';
+            age.textContent = 'age ' + Math.round(Number(props.ageSec) || 0) + ' s';
+            root.appendChild(age);
+
+            if (props.sourceDevice) {
+                const src = document.createElement('div');
+                src.style.cssText = 'color:#9fb8a3;margin-top:2px;';
+                src.textContent = 'from: ' + props.sourceDevice;
+                root.appendChild(src);
+            }
+
+            if (fleetLobPopup) { try { fleetLobPopup.remove(); } catch (e) {} }
+            fleetLobPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '240px' })
+                .setLngLat(lngLat)
+                .setDOMContent(root)
+                .addTo(map);
+            fleetLobPopup.on('close', () => { fleetLobPopup = null; });
+        }
+
         map.on('load', () => {
             styleReady = true;
             discoverLayers();
@@ -1220,6 +1366,23 @@
                 if (!Array.isArray(events)) return;
                 try {
                     map.getSource('_event_markers').setData(eventMarkerGeoJSON(events));
+                } catch(e) {}
+            },
+
+            // Fleet-wide Kraken LOB bearings pushed from MapActivity every
+            // poll tick: JSON array of {bearingDeg,bearingStdDeg,confidence,
+            // freqHz,nodeLat,nodeLon,headingDeg,time,ageSec,sourceDevice}.
+            // Replaces the whole set each call. bearingDeg is TRUE bearing
+            // (heading already applied upstream). Skips (0,0)/non-finite.
+            updateFleetLobs(lobsJson) {
+                if (!styleReady) return;
+                let lobs;
+                try { lobs = typeof lobsJson === 'string' ? JSON.parse(lobsJson) : lobsJson; }
+                catch(e) { return; }
+                if (!Array.isArray(lobs)) return;
+                try {
+                    map.getSource('_fleet_lob_wedges').setData(fleetLobWedgeGeoJSON(lobs));
+                    map.getSource('_fleet_lob_nodes').setData(fleetLobNodeGeoJSON(lobs));
                 } catch(e) {}
             }
         };
