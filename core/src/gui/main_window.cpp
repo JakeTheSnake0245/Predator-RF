@@ -64,6 +64,12 @@ static std::string nodeSdrType = "unknown";
 static double nodeAntennaGainDb = 0.0;
 static predator::GpsdClient nodeGpsd;
 
+// Deterministic teardown for the gpsd poll thread — called from the app
+// shutdown path (core.cpp) so we never rely on static destruction order.
+void predatorShutdownNodeServices() {
+    nodeGpsd.stop();
+}
+
 static void nodeEquipPersist() {
     std::lock_guard<std::mutex> lk(nodeEquipMtx);
     core::configManager.acquire();

@@ -756,8 +756,12 @@ inline std::string kujhadNodeSetupHtml() {
 "async function loadCfg(){try{const r=await fetch('/v1/node-config',{headers:hdrs()});"
 "if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();"
 "sdrOptions=j.sdrOptions||[];"
-"$('sdr').innerHTML=sdrOptions.map(s=>`<option value='${s.id}'>${s.label} (${s.offsetDb>=0?'+':''}${s.offsetDb} dB)</option>`).join('');"
-"$('antpreset').innerHTML=(j.antennaPresets||[]).map(p=>`<option value='${p.label==='Custom'?'custom':p.gainDb}'>${p.label}</option>`).join('');"
+// Options built via DOM APIs (textContent), never innerHTML, so labels
+// can become config-driven later without opening an injection surface.
+"$('sdr').replaceChildren(...sdrOptions.map(s=>{const o=document.createElement('option');"
+"o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
+"$('antpreset').replaceChildren(...(j.antennaPresets||[]).map(p=>{const o=document.createElement('option');"
+"o.value=(p.label==='Custom'?'custom':String(p.gainDb));o.textContent=p.label;return o}));"
 "$('antpreset').value='custom';"
 "$('lat').value=j.lat||'';$('lon').value=j.lon||'';$('gpsd').checked=!!j.gpsdEnabled;"
 "$('sdr').value=j.sdrType||'unknown';$('antgain').value=j.antennaGainDb||0;recalc();"

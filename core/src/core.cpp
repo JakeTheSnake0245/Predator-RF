@@ -571,6 +571,10 @@ int sdrpp_main(int argc, char* argv[]) {
         mod.end();
     }
 
+    // Stop the static-node gpsd poll thread deterministically (joins the
+    // worker) before backend teardown.
+    predatorShutdownNodeServices();
+
     // Terminate backend (TODO: CHECK RETURN VALUE)
     backend::end();
 

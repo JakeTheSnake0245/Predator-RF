@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <fcntl.h>
 #endif
@@ -72,11 +73,22 @@ private:
             struct timeval tv { 2, 0 };
             setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-            sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons((uint16_t)port_);
-            if (inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) != 1
-                || ::connect(fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
+            // Resolve host via getaddrinfo so hostnames work, not only
+            // numeric IPs (a bare inet_pton would fail silently on them).
+            bool connected = false;
+            {
+                struct addrinfo hints {};
+                hints.ai_family = AF_INET;
+                hints.ai_socktype = SOCK_STREAM;
+                struct addrinfo* res = nullptr;
+                char portStr[16];
+                snprintf(portStr, sizeof(portStr), "%d", port_);
+                if (::getaddrinfo(host_.c_str(), portStr, &hints, &res) == 0 && res) {
+                    connected = (::connect(fd, res->ai_addr, (socklen_t)res->ai_addrlen) == 0);
+                }
+                if (res) ::freeaddrinfo(res);
+            }
+            if (!connected) {
                 ::close(fd);
                 sleepWhileRunning(backoffS);
                 backoffS = std::min(backoffS * 2, 30);

@@ -26,6 +26,10 @@
 
 namespace predator { class KujhadControllerClient; }
 
+// Deterministic teardown of static-node services (gpsd poll thread);
+// called from the core.cpp shutdown path. Defined in main_window.cpp.
+void predatorShutdownNodeServices();
+
 class MainWindow {
 public:
     void init();
