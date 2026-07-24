@@ -24,6 +24,19 @@ I/O is batched by the ConfigManager autosave thread. Never reintroduce a
 debounced/skippable event save. Also stamp `rxClock` (local receive time)
 at insert so LOB freshness survives the save/reload round-trip.
 
+## Map liveness: rendering pauses while the map screen is open
+
+On Android, the map is a separate activity — bringing it up fires
+APP_CMD_TERM_WINDOW and pauses the whole draw() loop, freezing every
+map-facing push (a "snapshot" map). Fix: all peer draining + map bridges
+(event markers, fleet LOB wedges, Kraken tune drain/status) live in
+`MainWindow::backgroundMapTick()` (self-throttled 1 Hz), called from the
+Android render loop unconditionally (even while paused) AND at the TOP of
+draw() — it must run BEFORE draw()'s per-frame `events` snapshot, or
+later same-frame saves of the stale copy erase the tick's inserts
+(reviewer-caught regression of the evaporating-rows class). New map data
+work belongs in the tick, not in draw().
+
 Diagnostic that found it: `[FleetLOB] diag` heartbeat logging
 events/kraken/noRaw/badPos/stale counters every 5 s — `events=0` while
 peer drains logged steadily proved the two code paths saw different data.
