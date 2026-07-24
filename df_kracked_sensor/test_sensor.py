@@ -189,6 +189,19 @@ class TestEventRing(unittest.TestCase):
                          [base + 3, base + 4, base + 5])
         self.assertEqual(last_id, base + 5)
 
+    def test_since_caps_backlog_to_newest_rows(self):
+        # A fresh cursor (since=0 after peer add) must not replay the whole
+        # ring — only the newest SINCE_MAX_ROWS, with lastId at the head so
+        # the skipped backlog is never re-sent.
+        ring = EventRing()
+        base = ring.last_serial
+        for _ in range(EventRing.SINCE_MAX_ROWS * 2 + 20):
+            self._row(ring)
+        events, last_id = ring.since(base)
+        self.assertEqual(len(events), EventRing.SINCE_MAX_ROWS)
+        self.assertEqual(last_id, ring.last_serial)
+        self.assertEqual(events[-1]["serial"], ring.last_serial)  # newest kept
+
     def test_serial_base_survives_restart(self):
         # A fresh ring (simulated restart) must start ABOVE any serial a
         # controller could have seen from the previous run, else its

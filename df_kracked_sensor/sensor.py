@@ -305,8 +305,16 @@ class EventRing:
     def last_serial(self) -> int:
         return self._serial
 
+    # Bearings are perishable: on a fresh cursor (peer add / app restart the
+    # controller polls since=0) do NOT replay the whole ring — a 500-row
+    # backlog flood thrashes the controller's event log and plots long-stale
+    # wedges as fresh. Return only the newest rows; lastId still advances to
+    # the head so the cursor skips the rest.
+    SINCE_MAX_ROWS = 50
+
     def since(self, since: int) -> Tuple[List[Dict[str, Any]], int]:
-        """Return (events oldest-first with serial > since, lastId)."""
+        """Return (newest ≤SINCE_MAX_ROWS events with serial > since,
+        oldest-first, lastId)."""
         out: List[Dict[str, Any]] = []
         last_id = since
         # deque is oldest→newest already; the controller appends in order.
@@ -319,6 +327,8 @@ class EventRing:
             out.append(row)
             if serial > last_id:
                 last_id = serial
+        if len(out) > self.SINCE_MAX_ROWS:
+            out = out[-self.SINCE_MAX_ROWS:]
         return out, last_id
 
 

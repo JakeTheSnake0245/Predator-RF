@@ -2394,7 +2394,7 @@ void MainWindow::draw() {
         // 90 s are dropped (a stale LOB is worse than no LOB).
         static double      lastLobPushAt   = 0.0;
         static std::string lastLobJsonSent;
-        if (nowClock - lastLobPushAt >= 2.0) {
+        if (nowClock - lastLobPushAt >= 1.0) {
             lastLobPushAt = nowClock;
             json lobs = json::array();
             int lobCnt = 0;
@@ -6748,16 +6748,23 @@ void MainWindow::draw() {
                 // ownership of drags (same fix as the hits list above). The
                 // list is capped to the newest rows instead.
                 const int evMaxRows = 40;
-                int evShownFrom = std::max<int>(0, (int)filteredEvIdx.size() - evMaxRows);
                 if (filteredEvIdx.empty()) {
                     ImGui::TextDisabled("%s", T("No entries."));
                 } else {
-                    if (evShownFrom > 0) {
+                    if ((int)filteredEvIdx.size() > evMaxRows) {
                         ImGui::TextDisabled(T("(showing newest %d of %d — filter or clear to see older)"),
                             evMaxRows, (int)filteredEvIdx.size());
                     }
-                    // Newest first
-                    for (int ei = (int)filteredEvIdx.size() - 1; ei >= evShownFrom; ei--) {
+                    // Newest first. Every ingest path inserts at
+                    // events.begin(), so index 0 is the NEWEST row and the
+                    // 200-cap evicts from the tail. The visible window must
+                    // therefore be the FRONT of the list — rendering the tail
+                    // showed the oldest rows, which under a high-rate feed
+                    // (e.g. a Kraken bearing stream) are exactly the rows
+                    // being evicted each batch, so the log appeared to
+                    // draw rows and instantly clear them.
+                    int evShownTo = std::min<int>((int)filteredEvIdx.size(), evMaxRows);
+                    for (int ei = 0; ei < evShownTo; ei++) {
                         int i = filteredEvIdx[ei];
                         std::string evTime    = readJsonString(events[i], "time",      "?");
                         std::string evType    = readJsonString(events[i], "type",      "event");
