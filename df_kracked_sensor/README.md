@@ -13,7 +13,7 @@ Predator RF `backend/`.
 ## What it does
 
 ```
-krakensdr_doa  ──ws://127.0.0.1:8081/ws──▶  sensor.py  ──HTTP+JSON (Kujhad v1)──▶  controller / phone
+krakensdr_doa  ──ws://127.0.0.1:8082/ws──▶  sensor.py  ──HTTP+JSON (Kujhad v1)──▶  controller / phone
    (DoA engine)      doa_result frames       KRAKEN_LOB events        X-Kujhad-Key auth
 ```
 
@@ -30,7 +30,7 @@ krakensdr_doa  ──ws://127.0.0.1:8081/ws──▶  sensor.py  ──HTTP+JSON
 
 - `krakensdr_doa` running on the Pi with:
   - **`en_remote_control = true`** (so the DoA engine exposes its data feed),
-  - the DoA data server / miniserve reachable at **`ws://127.0.0.1:8081/ws`**
+  - the DoA data server / miniserve reachable at **`ws://127.0.0.1:8082/ws`**
     (this is the default; override with `--ws` if your build differs).
 - Python 3.8+ (`python3`), `pip3`.
 - Overlay network up (ZeroTier or Headscale/Tailscale) so peers can reach the Pi.
@@ -75,7 +75,7 @@ Key CLI flags:
 | `--port` | HTTP port (default `9151`) |
 | `--key`  | API key; if omitted, one is generated and persisted to `df_kracked_sensor.json` next to the script and reused |
 | `--name` | device name on `/v1/identify` (default hostname) |
-| `--ws`   | Kraken DoA websocket URL (default `ws://127.0.0.1:8081/ws`) |
+| `--ws`   | Kraken DoA websocket URL (default `ws://127.0.0.1:8082/ws`) |
 | `--lat` / `--lon` / `--heading` | fixed-site position (heading default 0) |
 | `--gpsd` | poll `gpsd` on `localhost:2947` for live position (degrades gracefully) |
 

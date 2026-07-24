@@ -6,7 +6,7 @@ This service turns a KrakenSDR Raspberry Pi into a lightweight, sensor-only
 peer on the Predator RF "Kujhad" fleet. It:
 
   * connects to the local krakensdr_doa DoA WebSocket (default
-    ws://127.0.0.1:8081/ws), read-only, parsing "doa_result" frames;
+    ws://127.0.0.1:8082/ws), read-only, parsing "doa_result" frames;
   * converts each usable frame into a KRAKEN_LOB "decoder" event row that is
     byte-for-byte compatible with the rows the Predator RF controller builds
     from its own native decoders (see core/src/gui/main_window.cpp and
@@ -56,7 +56,7 @@ log = logging.getLogger("df_kracked_sensor")
 
 EVENT_RING_MAX = 500
 DEFAULT_PORT = 9151
-DEFAULT_WS_URL = "ws://127.0.0.1:8081/ws"
+DEFAULT_WS_URL = "ws://127.0.0.1:8082/ws"
 # Throttle: at most ~2 events/s, and coalesce identical bearings within 0.5 s.
 MIN_EMIT_INTERVAL_S = 0.5
 DEDUP_WINDOW_S = 0.5
