@@ -113,16 +113,19 @@ def doa_result_to_event_row(
     else:
         freq_hz = _num(msg.get("freq_hz"), 0.0)
 
-    # Uncertainty: bearing_std_deg or doa_std_deg, default 10.
+    confidence = _num(msg.get("confidence"), 0.5)
+    confidence = max(0.0, min(1.0, confidence))
+
+    # Uncertainty: an explicit bearing_std_deg / doa_std_deg wins. When the
+    # feed doesn't carry one (the DF Aggregator XML only reports CONF), derive
+    # it from confidence so the controller's wedge width is a live trust
+    # indicator: conf 1.0 → 4° (tight sliver), conf 0.0 → 20° (wide fan).
     if "bearing_std_deg" in msg and _is_num(msg["bearing_std_deg"]):
         bearing_std = float(msg["bearing_std_deg"])
     elif "doa_std_deg" in msg and _is_num(msg["doa_std_deg"]):
         bearing_std = float(msg["doa_std_deg"])
     else:
-        bearing_std = 10.0
-
-    confidence = _num(msg.get("confidence"), 0.5)
-    confidence = max(0.0, min(1.0, confidence))
+        bearing_std = 20.0 - 16.0 * confidence
     power_dbfs = _num(msg.get("power_dbfs"), 0.0)
     snr_db = _num(msg.get("snr_db"), 0.0)
 
