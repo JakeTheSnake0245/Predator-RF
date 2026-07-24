@@ -223,6 +223,29 @@ Practical guidance: pick **Airspy R2** or **LimeSDR** for serious TDOA work (low
 
 ---
 
+## Downloading — grab only what your device needs
+
+The repo carries everything (Android app, desktop SDR++ fork, Python TOC backend, Pi sensor service). Most machines only need a slice of it — use a **sparse checkout** so a field node doesn't pull the whole fork:
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse \
+    https://github.com/JakeTheSnake0245/Predator-RF.git ~/predator-rf
+cd ~/predator-rf
+git sparse-checkout set <folders for your role — see table below>
+```
+
+| Device / role | `git sparse-checkout set …` | Then |
+|---|---|---|
+| **Android phone (operator)** | *(nothing — don't clone)* | Sideload the APK from Releases; see [Installation — Android](#installation--android) |
+| **Android build machine** | *(full clone — no `--sparse`)* | The APK build compiles `core/`, `decoder_modules/`, `misc_modules/`, and packages `root/` assets; see [Building from Source](#building-from-source) |
+| **KrakenSDR Pi (DF sensor)** | `df_kracked_sensor` | `cd df_kracked_sensor && SERVICE_USER=$(whoami) sudo -E ./install.sh`; full guide in [`df_kracked_sensor/README.md`](df_kracked_sensor/README.md) |
+| **Linux TOC (Python backend)** | `backend deploy dashboard predator-rfctl` | Follow [Installation — Python backend](#installation--python-backend-path-2) (venv + systemd unit from `deploy/`) |
+| **Linux desktop (full SDR++ GUI / headless web node)** | *(full clone — no `--sparse`)* | CMake build; see [Building from Source](#building-from-source) |
+
+Updating any sparse node later is just `git pull` in `~/predator-rf` (the sparse filter sticks), then re-run that role's installer — all installers are idempotent.
+
+---
+
 ## Installation — Android
 
 ### Requirements
@@ -256,7 +279,7 @@ sudo mkdir -p /opt/predator-rf /etc/predator-rf /var/lib/predator-rf/backups
 sudo git clone https://github.com/JakeTheSnake0245/Predator-SDR.git /opt/predator-rf
 cd /opt/predator-rf
 sudo python3 -m venv venv
-sudo venv/bin/pip install -r requirements.txt
+sudo venv/bin/pip install -r backend/requirements.txt
 sudo cp deploy/predator-rf.env.example /etc/predator-rf/predator-rf.env
 sudoedit /etc/predator-rf/predator-rf.env       # set FLEET_NODES, API_BEARER_TOKEN
 sudo cp deploy/predator-rf.service /etc/systemd/system/

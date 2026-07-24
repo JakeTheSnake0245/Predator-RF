@@ -16,7 +16,19 @@ set -euo pipefail
 INSTALL_DIR="/opt/df_kracked_sensor"
 UNIT_NAME="df-kracked-sensor.service"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_USER="${SERVICE_USER:-pi}"
+# Service account: explicit $SERVICE_USER wins; otherwise the invoking user
+# (sudo preserves it in $SUDO_USER); 'pi' only as a last resort. A hardcoded
+# 'pi' default bit a KrakenSDR image whose user is 'krakenrf' — the unit
+# shipped User=pi and systemd failed with status=217/USER.
+if [ -z "${SERVICE_USER:-}" ]; then
+    SERVICE_USER="${SUDO_USER:-$(id -un)}"
+    if [ "${SERVICE_USER}" = "root" ]; then SERVICE_USER="pi"; fi
+fi
+if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
+    echo "ERROR: service user '${SERVICE_USER}' does not exist on this system." >&2
+    echo "       Re-run as:  SERVICE_USER=<your-user> sudo -E ./install.sh" >&2
+    exit 1
+fi
 
 echo "== DF-Kracked LOB sensor installer =="
 
