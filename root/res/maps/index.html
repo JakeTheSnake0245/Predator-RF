@@ -236,6 +236,9 @@
             color: #d8c96a;
         }
 
+        /* Keep the bottom-left control stack clear of the GPS status pill */
+        .maplibregl-ctrl-bottom-left { bottom: 52px; }
+
         /* Pulse ring when snapping to north */
         @keyframes snap-pulse {
             0%   { transform: scale(1);   opacity: 0.8; }
@@ -311,6 +314,13 @@
                     <span class="toggle-track"></span>
                 </label>
             </div>
+            <div class="layer-row">
+                <span class="layer-label" id="aou-status">AOU: off</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-aou" onchange="if(!this.checked) selectAou(null);">
+                    <span class="toggle-track"></span>
+                </label>
+            </div>
         </div>
 
         <div class="ctrl-section">
@@ -368,7 +378,9 @@
             antialias: true
         });
 
-        map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showCompass: false }), 'bottom-right');
+        // Nav controls live bottom-LEFT: the Android follow/recenter buttons
+        // occupy the bottom-right corner and were covering these.
+        map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showCompass: false }), 'bottom-left');
         map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
         /* ── Compass logic ── */
@@ -925,6 +937,22 @@
                 if (!f) return;
                 openFleetLobPopup(e.lngLat, f.properties || {});
             };
+            // ── Transmitter AOU probability grid ──
+            // Per-signal probability cells computed natively (grid-based
+            // localization fusing Kraken bearings + RSSI power differences
+            // from bearingless SDRs). Only the operator-selected signal is
+            // rendered — see selectAou(). Color ramps with probability.
+            map.addSource('_aou_cells', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addSource('_aou_peak',  { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addLayer({ id: '_aou_cells_fill', source: '_aou_cells', type: 'fill',
+                paint: {
+                    'fill-color': ['interpolate', ['linear'], ['get', 'pn'],
+                        0.0, '#155e75', 0.4, '#0891b2', 0.7, '#facc15', 1.0, '#ef4444'],
+                    'fill-opacity': ['+', 0.10, ['*', 0.45, ['get', 'pn']]] } });
+            map.addLayer({ id: '_aou_peak_dot', source: '_aou_peak', type: 'circle',
+                paint: { 'circle-radius': 6, 'circle-color': '#ef4444',
+                    'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 2 } });
+
             map.on('click', '_fleet_lob_wedge_fill', _onFleetLobClick);
             map.on('click', '_fleet_lob_node_dots', _onFleetLobClick);
             map.on('mouseenter', '_fleet_lob_node_dots', () => { map.getCanvas().style.cursor = 'pointer'; });
@@ -1097,6 +1125,30 @@
                 root.appendChild(src);
             }
 
+            // AOU selector: pick this signal to overlay its converged
+            // probable-location grid; "Hidden" clears the overlay.
+            const freqHz = Number(props.freqHz) || 0;
+            if (freqHz > 0) {
+                const key = aouKeyForFreq(freqHz);
+                const sel = document.createElement('select');
+                sel.style.cssText = 'width:100%;margin-top:6px;padding:5px 6px;background:#10150f;' +
+                    'color:#d7e4d9;border:1px solid #4a6b4e;border-radius:4px;' +
+                    'font-family:monospace;font-size:12px;';
+                const optOff = document.createElement('option');
+                optOff.value = '';
+                optOff.textContent = 'AOU overlay: hidden';
+                sel.appendChild(optOff);
+                const optOn = document.createElement('option');
+                optOn.value = String(key);
+                optOn.textContent = 'AOU: probable location of this signal';
+                sel.appendChild(optOn);
+                sel.value = (aouSelectedKey === key) ? String(key) : '';
+                sel.addEventListener('change', () => {
+                    selectAou(sel.value === '' ? null : key);
+                });
+                root.appendChild(sel);
+            }
+
             if (eventPopup) { try { eventPopup.remove(); } catch (e) {} }
             eventPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '240px' })
                 .setLngLat(lngLat)
@@ -1180,6 +1232,69 @@
 
         let fleetLobPopup = null;
         // DOM-built popup (textContent only) — source-device rides on RF data.
+        /* ── Transmitter AOU overlay state ── */
+        // aouData: array of {key,freqHz,label,peakLat,peakLon,cellSizeM,
+        // cells:[[lat,lon,p],...]} pushed from native. Only the signal the
+        // operator selected (aouSelectedKey) is rendered.
+        let aouData = [];
+        let aouSelectedKey = null;
+
+        function aouKeyForFreq(freqHz) {
+            return Math.round(freqHz / 5000) * 5000;
+        }
+
+        function selectAou(key) {
+            aouSelectedKey = key;
+            const cb = document.getElementById('toggle-aou');
+            const st = document.getElementById('aou-status');
+            if (cb) cb.checked = (key !== null);
+            if (st) st.textContent = (key === null) ? 'AOU: off'
+                : 'AOU: ' + (key / 1e6).toFixed(4) + ' MHz';
+            renderAou();
+        }
+
+        function renderAou() {
+            const cellsSrc = map.getSource('_aou_cells');
+            const peakSrc  = map.getSource('_aou_peak');
+            if (!cellsSrc || !peakSrc) return;
+            const empty = { type: 'FeatureCollection', features: [] };
+            const entry = (aouSelectedKey === null) ? null
+                : aouData.find(a => Number(a.key) === aouSelectedKey);
+            if (!entry || !Array.isArray(entry.cells) || !entry.cells.length) {
+                cellsSrc.setData(empty);
+                peakSrc.setData(empty);
+                const st = document.getElementById('aou-status');
+                if (st && aouSelectedKey !== null) {
+                    st.textContent = 'AOU: converging\u2026';
+                }
+                return;
+            }
+            // Cells arrive sorted by descending probability; normalize the
+            // color ramp to the peak cell.
+            const half = Number(entry.cellSizeM) / 2;
+            const pMax = Number(entry.cells[0][2]) || 1;
+            const feats = [];
+            for (const c of entry.cells) {
+                const la = Number(c[0]), lo = Number(c[1]), p = Number(c[2]);
+                if (!isFinite(la) || !isFinite(lo)) continue;
+                const dLat = half / 111320;
+                const dLon = half / (111320 * Math.cos(la * Math.PI / 180));
+                feats.push({
+                    type: 'Feature',
+                    properties: { pn: p / pMax },
+                    geometry: { type: 'Polygon', coordinates: [[
+                        [lo - dLon, la - dLat], [lo + dLon, la - dLat],
+                        [lo + dLon, la + dLat], [lo - dLon, la + dLat],
+                        [lo - dLon, la - dLat]]] }
+                });
+            }
+            cellsSrc.setData({ type: 'FeatureCollection', features: feats });
+            peakSrc.setData({ type: 'FeatureCollection', features: [{
+                type: 'Feature', properties: {},
+                geometry: { type: 'Point', coordinates: [Number(entry.peakLon), Number(entry.peakLat)] }
+            }] });
+        }
+
         function openFleetLobPopup(lngLat, props) {
             const root = document.createElement('div');
             root.style.cssText = 'font-family:monospace;font-size:12px;color:#d7e4d9;min-width:160px;';
@@ -1390,6 +1505,19 @@
                     map.getSource('_fleet_lob_wedges').setData(fleetLobWedgeGeoJSON(lobs));
                     map.getSource('_fleet_lob_nodes').setData(fleetLobNodeGeoJSON(lobs));
                 } catch(e) {}
+            },
+
+            // Transmitter AOU probability grids, pushed from MapActivity's
+            // poll tick. Replaces the whole set; the overlay re-renders
+            // only for the operator-selected signal.
+            updateAouGrid(aouJson) {
+                if (!styleReady) return;
+                let arr;
+                try { arr = typeof aouJson === 'string' ? JSON.parse(aouJson) : aouJson; }
+                catch(e) { return; }
+                if (!Array.isArray(arr)) return;
+                aouData = arr;
+                try { renderAou(); } catch(e) {}
             }
         };
     </script>

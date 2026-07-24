@@ -273,6 +273,12 @@ namespace backend {
         return false;
     }
 
+    bool setAouGrid(const std::string& aouJson) {
+        // Desktop build has no embedded map WebView (yet); the AOU is still
+        // computed in shared core and served to peers via the fleet API.
+        return false;
+    }
+
     bool isTouchPrimary() {
         return false;
     }

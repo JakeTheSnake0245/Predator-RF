@@ -46,6 +46,7 @@ class MapActivity : AppCompatActivity() {
                 pushPeerMarkers()
                 pushEventMarkers()
                 pushFleetLobs()
+                pushAouGrid()
                 mainHandler.postDelayed(this, POLL_INTERVAL_MS)
             }
         }
@@ -337,6 +338,21 @@ class MapActivity : AppCompatActivity() {
             if (mapReady) {
                 mapView.evaluateJavascript(
                     "window.PredatorRFMap && window.PredatorRFMap.updateFleetLobs($jsLiteral);",
+                    null
+                )
+            }
+        }
+    }
+
+    // Transmitter AOU probability grids (per signal), computed natively in
+    // backgroundMapTick() and stashed in MainActivity.aouGridJson via JNI.
+    // Same quoting rule as pushFleetLobs — labels ride on RF-derived data.
+    private fun pushAouGrid() {
+        val jsLiteral = JSONObject.quote(MainActivity.aouGridJson)
+        mainHandler.post {
+            if (mapReady) {
+                mapView.evaluateJavascript(
+                    "window.PredatorRFMap && window.PredatorRFMap.updateAouGrid($jsLiteral);",
                     null
                 )
             }

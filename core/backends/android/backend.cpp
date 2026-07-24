@@ -576,6 +576,42 @@ namespace backend {
         return (jni_return == JNI_OK);
     }
 
+    // Same MainActivity-static bridge pattern as setFleetLobs: stash the
+    // AOU grid JSON where MapActivity's poll can pick it up.
+    bool setAouGrid(const std::string& aouJson) {
+        JavaVM* java_vm = app->activity->vm;
+        JNIEnv* java_env = NULL;
+
+        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
+        if (jni_return == JNI_ERR) { return false; }
+
+        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
+        if (jni_return != JNI_OK) { return false; }
+
+        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
+        if (native_activity_clazz == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "updateAouGrid", "(Ljava/lang/String;)V");
+        if (method_id == NULL) {
+            if (java_env->ExceptionCheck()) { java_env->ExceptionClear(); }
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+
+        jstring jstr = java_env->NewStringUTF(aouJson.c_str());
+        if (jstr == NULL) {
+            java_vm->DetachCurrentThread();
+            return false;
+        }
+        java_env->CallVoidMethod(app->activity->clazz, method_id, jstr);
+        java_env->DeleteLocalRef(jstr);
+        jni_return = java_vm->DetachCurrentThread();
+        return (jni_return == JNI_OK);
+    }
+
     int renderLoop() {
         while (true) {
             int out_events;

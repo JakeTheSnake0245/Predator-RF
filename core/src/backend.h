@@ -51,6 +51,11 @@ namespace backend {
     // other backends may return false (no-op).
     bool setFleetLobs(const std::string& lobsJson);
 
+    // Push the transmitter AOU (area-of-uncertainty) grid overlay to the
+    // platform map: JSON array of per-signal grids, each with a peak
+    // estimate and probability cells. See predator/aou_grid.h.
+    bool setAouGrid(const std::string& aouJson);
+
     float getNativeUiScale();
     bool isTouchPrimary();
     // Number of USB devices the platform has granted access to, or -1 when

@@ -110,6 +110,11 @@ class MainActivity : NativeActivity() {
         // updateFleetLobs(); MapActivity polls it and pushes to the map
         // WebView's updateFleetLobs() JS hook.
         @JvmStatic @Volatile var fleetLobsJson: String = "[]"
+
+        // Transmitter AOU grid overlay (per-signal probability cells),
+        // pushed by backend::setAouGrid via updateAouGrid(); MapActivity
+        // polls it into the map WebView's updateAouGrid() JS hook.
+        @JvmStatic @Volatile var aouGridJson: String = "[]"
         // Rolling notification ID for signal alerts. Starts above the
         // PredatorBackendService foreground NOTIFICATION_ID (1337) so
         // repeated alerts never collide with the persistent service
@@ -1020,6 +1025,13 @@ class MainActivity : NativeActivity() {
     // native render thread, read from MapActivity's poll loop.
     fun updateFleetLobs(json: String) {
         fleetLobsJson = json
+    }
+
+    // Called from native (backend::setAouGrid) with the per-signal AOU
+    // grid JSON. MapActivity's poll loop forwards it to the WebView.
+    @Suppress("unused")
+    fun updateAouGrid(json: String) {
+        aouGridJson = json
     }
 
     // ── Signal-alert notifications ──────────────────────────────────────

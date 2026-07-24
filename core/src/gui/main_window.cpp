@@ -48,6 +48,7 @@
 #include "../predator/kujhad_rns.h"
 #include "../predator/native_decoder_registry.h"
 #include "../predator/kraken_tune_bus.h"
+#include "../predator/aou_grid.h"
 #include "../predator/hold_binding_registry.h"
 #include "../predator/cot_reporter.h"
 #include <ctime>
@@ -904,6 +905,107 @@ void MainWindow::backgroundMapTick() {
             flog::info("[FleetLOB] diag: events={} kraken={} noRaw={} badPos={} stale={} wedges={}",
                        (int)events.size(), diagKraken, diagNoRaw,
                        diagBadPos, diagStale, lobCnt);
+        }
+    }
+
+    // -------- 5) Transmitter AOU grid → platform map --------
+    // Grid-based localization (KrakenSDR "vehicular ops" approach): every
+    // observation paints likelihood onto a geographic grid and the hot
+    // region converges to the transmitter's area of uncertainty. Fuses:
+    //  - Kraken DoA bearings (KRAKEN_LOB events, local + peers)
+    //  - RSSI hits from bearingless SDRs (RTL-SDR / HackRF / ...): any
+    //    GPS-tagged event row with a strength reading. Pairwise power
+    //    differences between spatially separated hits constrain range.
+    // Signals are clustered by frequency (5 kHz bins); the top clusters
+    // are recomputed every 5 s and pushed keyed by cluster so the map can
+    // show the AOU for one operator-selected signal.
+    {
+        static double lastAouAt = 0.0;
+        static std::string lastAouJsonSent;
+        if (nowClock - lastAouAt >= 5.0) {
+            lastAouAt = nowClock;
+            struct ClusterObs {
+                std::vector<predator::aou::BearingObs> bearings;
+                std::vector<predator::aou::RssiObs> rssi;
+                double freqHz = 0.0;
+                std::string label;
+                double newest = 0.0;   // newest observation weight (recency rank)
+            };
+            std::map<int64_t, ClusterObs> clusters;
+            const double kAouHalfLife = 300.0;   // 5 min observation memory
+            for (int i = 0; i < (int)events.size(); i++) {
+                double freq = bgJsonDouble(events[i], "frequency", 0.0);
+                if (freq <= 0.0) continue;
+                int64_t key = (int64_t)llround(freq / 5000.0) * 5000;
+                double rx = bgJsonDouble(events[i], "rxClock", 0.0);
+                double age = (rx > 0.0) ? std::max(0.0, nowClock - rx) : 45.0;
+                double w = std::exp(-age / kAouHalfLife);
+                if (w < 0.05) continue;
+                if (bgJsonString(events[i], "decoder", "") == "KRAKEN_LOB"
+                    && events[i].contains("raw") && events[i]["raw"].is_object()) {
+                    const json& raw = events[i]["raw"];
+                    double bearing = bgJsonDouble(raw, "bearing_deg", -1.0);
+                    double la = bgJsonDouble(raw, "gps_lat", 0.0);
+                    double lo = bgJsonDouble(raw, "gps_lon", 0.0);
+                    if (bearing < 0.0 || (la == 0.0 && lo == 0.0)) continue;
+                    predator::aou::BearingObs b;
+                    b.lat = la; b.lon = lo;
+                    b.bearingDeg = bearing;
+                    b.stdDeg = bgJsonDouble(raw, "bearing_std_deg", 10.0);
+                    b.weight = w;
+                    auto& cl = clusters[key];
+                    if (cl.bearings.size() < 64) cl.bearings.push_back(b);
+                    cl.freqHz = freq;
+                    if (cl.label.empty()) cl.label = bgJsonString(events[i], "label", "");
+                    cl.newest = std::max(cl.newest, w);
+                }
+                else {
+                    // Bearingless RSSI hit — needs a real position and a
+                    // real strength reading to contribute.
+                    double la = bgJsonDouble(events[i], "lat", 0.0);
+                    double lo = bgJsonDouble(events[i], "lon", 0.0);
+                    double s  = bgJsonDouble(events[i], "strengthDb", 0.0);
+                    if ((la == 0.0 && lo == 0.0) || s == 0.0) continue;
+                    predator::aou::RssiObs r;
+                    r.lat = la; r.lon = lo; r.rssiDb = s; r.weight = w;
+                    auto& cl = clusters[key];
+                    if (cl.rssi.size() < 64) cl.rssi.push_back(r);
+                    cl.freqHz = freq;
+                    if (cl.label.empty()) cl.label = bgJsonString(events[i], "label", "");
+                    cl.newest = std::max(cl.newest, w);
+                }
+            }
+            // Rank clusters (freshest first) and compute the top few — the
+            // grid is ~9k cells per cluster, keep the tick cheap.
+            std::vector<std::pair<int64_t, const ClusterObs*>> ranked;
+            for (auto& kv : clusters) ranked.push_back({ kv.first, &kv.second });
+            std::sort(ranked.begin(), ranked.end(),
+                      [](auto& a, auto& b) { return a.second->newest > b.second->newest; });
+            if (ranked.size() > 6) ranked.resize(6);
+            json aouArr = json::array();
+            for (auto& [key, cl] : ranked) {
+                auto res = predator::aou::computeAou(cl->bearings, cl->rssi);
+                if (!res.valid) continue;
+                json a;
+                a["key"]       = key;
+                a["freqHz"]    = cl->freqHz;
+                a["label"]     = cl->label;
+                a["peakLat"]   = res.peakLat;
+                a["peakLon"]   = res.peakLon;
+                a["cellSizeM"] = res.cellSizeM;
+                json cells = json::array();
+                for (auto& c : res.cells) {
+                    cells.push_back(json::array({ c.lat, c.lon, c.p }));
+                }
+                a["cells"] = cells;
+                aouArr.push_back(a);
+            }
+            std::string aouStr = aouArr.dump();
+            if (aouStr != lastAouJsonSent) {
+                lastAouJsonSent = aouStr;
+                backend::setAouGrid(aouStr);
+                flog::info("[AOU] push {} signal grids", (int)aouArr.size());
+            }
         }
     }
 }
