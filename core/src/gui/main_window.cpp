@@ -680,6 +680,225 @@ struct BaselineBin {
 // Device, 2 = Mission tab top.
 static int predatorJumpSection = 0;
 
+// Fleet peer clients live at file scope so BOTH draw() (which reconciles
+// them against the persisted peer config) and backgroundMapTick() (which
+// drains their event queues even while rendering is paused) can reach them.
+// Both run on the render-loop thread, so no locking is needed.
+static std::vector<std::unique_ptr<predator::KujhadControllerClient>> kujhadClients;
+static std::vector<json> kujhadActivePeers; // mirror of persisted peers
+
+// Small JSON field readers shared by backgroundMapTick(); draw() has its
+// own identical lambdas.
+static bool bgJsonBool(const json& row, const char* key, bool fallback) {
+    if (!row.is_object() || !row.contains(key) || !row[key].is_boolean()) return fallback;
+    return (bool)row[key];
+}
+static double bgJsonDouble(const json& row, const char* key, double fallback) {
+    if (!row.is_object() || !row.contains(key) || !row[key].is_number()) return fallback;
+    return (double)row[key];
+}
+static std::string bgJsonString(const json& row, const char* key, const std::string& fallback) {
+    if (!row.is_object() || !row.contains(key) || !row[key].is_string()) return fallback;
+    return (std::string)row[key];
+}
+
+// Map-bridge tick — keeps everything the platform map consumes live even
+// when the ImGui surface is gone (Android: MapActivity in front fires
+// APP_CMD_TERM_WINDOW, which pauses draw() entirely; without this the map
+// froze on whatever was pushed before it opened). Called from draw() every
+// frame AND from the Android render loop while paused; self-throttled to
+// ~1 Hz so the double call is harmless.
+void MainWindow::backgroundMapTick() {
+    if (!bgMapTickReady) return;
+    double nowClock = (double)std::time(nullptr);
+    static double lastTickAt = 0.0;
+    if (nowClock - lastTickAt < 1.0) return;
+    lastTickAt = nowClock;
+
+    // Work on a fresh copy of the persisted event log — same contract as
+    // draw(): any insert must be saved back in the same tick or it
+    // evaporates on the next reload.
+    core::configManager.acquire();
+    json events = (core::configManager.conf.contains("predatorEvents")
+                   && core::configManager.conf["predatorEvents"].is_array())
+                  ? core::configManager.conf["predatorEvents"] : json::array();
+    core::configManager.release(false);
+
+    // -------- 1) Drain peer events into the local event log --------
+    bool anyPeerEventsInserted = false;
+    for (size_t i = 0; i < kujhadClients.size() && i < kujhadActivePeers.size(); i++) {
+        auto& c = kujhadClients[i];
+        if (!c) continue;
+        std::string peerName = bgJsonString(kujhadActivePeers[i], "name", "peer");
+        auto pendingEvents = c->drainEvents(64);
+        if (!pendingEvents.empty()) {
+            flog::info("[Fleet] drained {} events from peer '{}'",
+                       (int)pendingEvents.size(), peerName);
+        }
+        for (auto& e : pendingEvents) {
+            if (!e.is_object()) continue;
+            json row = e;
+            row["sourceDevice"] = peerName;
+            if (!row.contains("source")) row["source"] = "Peer:" + peerName;
+            // Re-stamp serial locally: the peer's serial may collide with ours.
+            row["peerSerial"] = row.value("serial", (uint64_t)0);
+            // Local receive time for the LOB freshness check.
+            row["rxClock"] = nowClock;
+            row["serial"] = ++predatorEventSerial;
+            events.insert(events.begin(), row);
+            anyPeerEventsInserted = true;
+        }
+        while (events.size() > 200) events.erase(events.end() - 1);
+    }
+    if (anyPeerEventsInserted) {
+        core::configManager.acquire();
+        core::configManager.conf["predatorEvents"] = events;
+        core::configManager.release(true);
+    }
+
+    // -------- 2) Kraken DF tasking bridge (map ↔ kraken_lob_decoder) ----
+    // Drain "Tune Kraken" taps from the map popup and push the tune
+    // lifecycle snapshot back so the popup shows live feedback.
+    {
+        double mapTuneHz = backend::pollKrakenTuneRequest();
+        if (mapTuneHz > 0.0) {
+            if (predator::requestKrakenTune(mapTuneHz)) {
+                flog::info("Map Kraken tasking: retune request {} Hz accepted", (int64_t)mapTuneHz);
+            }
+            else {
+                flog::warn("Map Kraken tasking: retune request {} Hz rejected (no tuner or busy)", (int64_t)mapTuneHz);
+            }
+        }
+        static std::string lastKrakenStatusJson;
+        predator::KrakenTuneSnapshot snap = predator::krakenTuneSnapshot();
+        json st;
+        st["available"]   = snap.available;
+        st["running"]     = snap.running;
+        st["reachable"]   = snap.reachable;
+        st["state"]       = snap.state;
+        st["status"]      = snap.status;
+        st["freqHz"]      = snap.currentHz;
+        st["requestedHz"] = snap.requestedHz;
+        std::string stStr = st.dump();
+        if (stStr != lastKrakenStatusJson) {
+            lastKrakenStatusJson = stStr;
+            backend::setKrakenTuneStatus(stStr);
+        }
+    }
+
+    // -------- 3) Event markers → platform map --------
+    // GPS-tagged events plotted as signal markers. Re-sent only when a
+    // new event landed (serial watermark), rechecked every 2 s.
+    {
+        static double  lastEvMarkerPush   = 0.0;
+        static int64_t lastEvMarkerSerial = -1;
+        if (nowClock - lastEvMarkerPush >= 2.0) {
+            lastEvMarkerPush = nowClock;
+            if ((int64_t)predatorEventSerial != lastEvMarkerSerial) {
+                lastEvMarkerSerial = (int64_t)predatorEventSerial;
+                json evm = json::array();
+                int cnt = 0;
+                for (int i = 0; i < (int)events.size() && cnt < 100; i++) {
+                    double la = bgJsonDouble(events[i], "lat", 0.0);
+                    double lo = bgJsonDouble(events[i], "lon", 0.0);
+                    if (la == 0.0 && lo == 0.0) continue;
+                    json m;
+                    m["label"]        = bgJsonString(events[i], "label", "event");
+                    m["freqHz"]       = bgJsonDouble(events[i], "frequency", 0.0);
+                    m["lat"]          = la;
+                    m["lon"]          = lo;
+                    m["time"]         = bgJsonString(events[i], "time", "?");
+                    m["sourceDevice"] = bgJsonString(events[i], "sourceDevice", "local");
+                    m["type"]         = bgJsonString(events[i], "type", "event");
+                    evm.push_back(m);
+                    cnt++;
+                }
+                backend::setEventMarkers(evm.dump());
+            }
+        }
+    }
+
+    // -------- 4) Fleet LOB bearings → platform map --------
+    // Aggregate recent KRAKEN_LOB events (local + peer) into wedge pushes.
+    // Bearings older than 90 s leave the live set; each source's newest
+    // bearing is then held as a ghosted "last known" wedge.
+    {
+        static std::string lastLobJsonSent;
+        json lobs = json::array();
+        int lobCnt = 0;
+        int diagKraken = 0, diagNoRaw = 0, diagBadPos = 0, diagStale = 0;
+        for (int i = 0; i < (int)events.size() && lobCnt < 64; i++) {
+            if (bgJsonString(events[i], "decoder", "") != "KRAKEN_LOB") continue;
+            diagKraken++;
+            if (!events[i].contains("raw") || !events[i]["raw"].is_object()) { diagNoRaw++; continue; }
+            const json& raw = events[i]["raw"];
+            double bearing = bgJsonDouble(raw, "bearing_deg", -1.0);
+            double nLat    = bgJsonDouble(raw, "gps_lat", 0.0);
+            double nLon    = bgJsonDouble(raw, "gps_lon", 0.0);
+            if (bearing < 0.0 || (nLat == 0.0 && nLon == 0.0)) { diagBadPos++; continue; }
+            // Freshness by LOCAL receive time (sensor clocks skew). Rows
+            // are stamped at ingest; an unstamped row counts as fresh-now
+            // but can't be persisted here (this tick doesn't own a write
+            // to rows it didn't insert), so treat missing as nowClock.
+            double rx = bgJsonDouble(events[i], "rxClock", 0.0);
+            if (rx <= 0.0) rx = nowClock;
+            double age = nowClock - rx;
+            if (age > 90.0) { diagStale++; continue; }
+            json l;
+            l["bearingDeg"]    = bearing;
+            l["bearingStdDeg"] = bgJsonDouble(raw, "bearing_std_deg", 0.0);
+            l["confidence"]    = bgJsonDouble(raw, "confidence", 0.0);
+            l["freqHz"]        = bgJsonDouble(events[i], "frequency", 0.0);
+            l["nodeLat"]       = nLat;
+            l["nodeLon"]       = nLon;
+            l["headingDeg"]    = bgJsonDouble(raw, "heading_deg", 0.0);
+            l["time"]          = bgJsonString(events[i], "time", "?");
+            l["ageSec"]        = std::max<double>(0.0, age);
+            l["sourceDevice"]  = bgJsonString(events[i], "sourceDevice", "local");
+            lobs.push_back(l);
+            lobCnt++;
+        }
+        // Hold-last-bearing: remember each source's newest live wedge
+        // (events are newest-first, so the first wedge per source is the
+        // freshest). Silent sources keep a ghosted "last known" wedge.
+        static std::map<std::string, json> lastLobBySrc;
+        static std::map<std::string, double> lastLobRxBySrc;
+        std::set<std::string> liveSrcs;
+        for (auto& l : lobs) {
+            std::string src = bgJsonString(l, "sourceDevice", "local");
+            if (liveSrcs.count(src)) continue;   // keep only the newest
+            liveSrcs.insert(src);
+            lastLobBySrc[src] = l;
+            lastLobRxBySrc[src] = nowClock - bgJsonDouble(l, "ageSec", 0.0);
+        }
+        for (auto& kv : lastLobBySrc) {
+            if (liveSrcs.count(kv.first)) continue;
+            if (lobCnt >= 64) break;
+            json held = kv.second;
+            held["held"] = true;
+            held["ageSec"] = std::max<double>(0.0, nowClock - lastLobRxBySrc[kv.first]);
+            lobs.push_back(held);
+            lobCnt++;
+        }
+        std::string lobStr = lobs.dump();
+        if (lobStr != lastLobJsonSent) {
+            lastLobJsonSent = lobStr;
+            bool pushed = backend::setFleetLobs(lobStr);
+            flog::info("[FleetLOB] push {} wedges (bridge {})",
+                       lobCnt, pushed ? "ok" : "FAILED");
+        }
+        // Heartbeat (every 5 s) so a silently-empty wedge set is visible
+        // in logcat with the reason rows were skipped.
+        static double lastLobDiagAt = 0.0;
+        if (nowClock - lastLobDiagAt >= 5.0) {
+            lastLobDiagAt = nowClock;
+            flog::info("[FleetLOB] diag: events={} kraken={} noRaw={} badPos={} stale={} wedges={}",
+                       (int)events.size(), diagKraken, diagNoRaw,
+                       diagBadPos, diagStale, lobCnt);
+        }
+    }
+}
+
 void MainWindow::draw() {
     ImGui::Begin("Main", NULL, WINDOW_FLAGS);
     ImVec4 textCol = ImGui::GetStyleColorVec4(ImGuiCol_Text);
@@ -1471,6 +1690,9 @@ void MainWindow::draw() {
                     if (s > predatorEventSerial) predatorEventSerial = s;
                 }
             }
+            // Serial watermark restored — the background map tick may now
+            // ingest peer events without risking serial reuse.
+            bgMapTickReady = true;
         }
     }
     networkAliases = core::configManager.conf.contains("predatorNetworkAliases") && core::configManager.conf["predatorNetworkAliases"].is_object() ? core::configManager.conf["predatorNetworkAliases"] : json::object();
@@ -2308,169 +2530,11 @@ void MainWindow::draw() {
         }
     }
 
-    // -------- Kraken DF tasking bridge (map ↔ kraken_lob_decoder) --------
-    // The Android map WebView (root/res/maps/index.html) lets the operator
-    // tap an emitter marker and hit "Tune Kraken". MapActivity stashes the
-    // frequency in a MainActivity static; we drain it here once per frame
-    // and hand it to the tune bus. In the other direction we push the tune
-    // lifecycle snapshot (sending → calibrating → confirmed / failed) back
-    // to the platform so the map popup shows live feedback. Throttled to
-    // ~1 Hz and only re-sent on change to keep the JNI hop cheap.
-    {
-        double mapTuneHz = backend::pollKrakenTuneRequest();
-        if (mapTuneHz > 0.0) {
-            if (predator::requestKrakenTune(mapTuneHz)) {
-                flog::info("Map Kraken tasking: retune request {} Hz accepted", (int64_t)mapTuneHz);
-            }
-            else {
-                flog::warn("Map Kraken tasking: retune request {} Hz rejected (no tuner or busy)", (int64_t)mapTuneHz);
-            }
-        }
-
-        static double      lastKrakenStatusPush = 0.0;
-        static std::string lastKrakenStatusJson;
-        double nowClock = (double)std::time(nullptr);
-        if (nowClock - lastKrakenStatusPush >= 1.0) {
-            lastKrakenStatusPush = nowClock;
-            predator::KrakenTuneSnapshot snap = predator::krakenTuneSnapshot();
-            json st;
-            st["available"]   = snap.available;
-            st["running"]     = snap.running;
-            st["reachable"]   = snap.reachable;
-            st["state"]       = snap.state;
-            st["status"]      = snap.status;
-            st["freqHz"]      = snap.currentHz;
-            st["requestedHz"] = snap.requestedHz;
-            std::string stStr = st.dump();
-            if (stStr != lastKrakenStatusJson) {
-                lastKrakenStatusJson = stStr;
-                backend::setKrakenTuneStatus(stStr);
-            }
-        }
-
-        // -------- Event markers → platform map --------
-        // Publish GPS-tagged events to the map so "→ Map" from the event
-        // log lands on plotted signal markers (where/when/who heard it).
-        // Throttled to ~2 s and only re-sent when a new event landed.
-        static double  lastEvMarkerPush   = 0.0;
-        static int64_t lastEvMarkerSerial = -1;
-        if (nowClock - lastEvMarkerPush >= 2.0) {
-            lastEvMarkerPush = nowClock;
-            if ((int64_t)predatorEventSerial != lastEvMarkerSerial) {
-                lastEvMarkerSerial = (int64_t)predatorEventSerial;
-                json evm = json::array();
-                int cnt = 0;
-                for (int i = 0; i < (int)events.size() && cnt < 100; i++) {
-                    double la = readJsonDouble(events[i], "lat", 0.0);
-                    double lo = readJsonDouble(events[i], "lon", 0.0);
-                    if (la == 0.0 && lo == 0.0) continue;
-                    json m;
-                    m["label"]        = readJsonString(events[i], "label", "event");
-                    m["freqHz"]       = readJsonDouble(events[i], "frequency", 0.0);
-                    m["lat"]          = la;
-                    m["lon"]          = lo;
-                    m["time"]         = readJsonString(events[i], "time", "?");
-                    m["sourceDevice"] = readJsonString(events[i], "sourceDevice", "local");
-                    m["type"]         = readJsonString(events[i], "type", "event");
-                    evm.push_back(m);
-                    cnt++;
-                }
-                backend::setEventMarkers(evm.dump());
-            }
-        }
-
-        // -------- Fleet LOB bearings → platform map --------
-        // Kraken DoA bearings arrive as decoder events (decoder=KRAKEN_LOB)
-        // both from the locally attached Kraken and — via the Kujhad event
-        // sync — from any peered sensor node (e.g. a DF-Kracked Pi on the
-        // overlay network). Aggregate the recent ones here and push them to
-        // the map so every connected device plots every node's wedges,
-        // without needing the Python fusion backend. Bearings older than
-        // 90 s are dropped (a stale LOB is worse than no LOB).
-        static double      lastLobPushAt   = 0.0;
-        static std::string lastLobJsonSent;
-        if (nowClock - lastLobPushAt >= 1.0) {
-            lastLobPushAt = nowClock;
-            json lobs = json::array();
-            int lobCnt = 0;
-            int diagKraken = 0, diagNoRaw = 0, diagBadPos = 0, diagStale = 0;
-            for (int i = 0; i < (int)events.size() && lobCnt < 64; i++) {
-                if (readJsonString(events[i], "decoder", "") != "KRAKEN_LOB") continue;
-                diagKraken++;
-                if (!events[i].contains("raw") || !events[i]["raw"].is_object()) { diagNoRaw++; continue; }
-                const json& raw = events[i]["raw"];
-                double bearing = readJsonDouble(raw, "bearing_deg", -1.0);
-                double nLat    = readJsonDouble(raw, "gps_lat", 0.0);
-                double nLon    = readJsonDouble(raw, "gps_lon", 0.0);
-                if (bearing < 0.0 || (nLat == 0.0 && nLon == 0.0)) { diagBadPos++; continue; }
-                // Freshness is judged by LOCAL receive time, not the
-                // sensor's timestamp_unix — Pi sensors on a disconnected
-                // overlay routinely have skewed clocks, and judging age by
-                // their clock would silently drop every valid bearing.
-                // Lazily stamp rows with the controller clock on first
-                // sight; raw.timestamp_unix stays available for display.
-                double rx = readJsonDouble(events[i], "rxClock", 0.0);
-                if (rx <= 0.0) { events[i]["rxClock"] = nowClock; rx = nowClock; }
-                double age = nowClock - rx;
-                if (age > 90.0) { diagStale++; continue; }
-                json l;
-                l["bearingDeg"]    = bearing;
-                l["bearingStdDeg"] = readJsonDouble(raw, "bearing_std_deg", 0.0);
-                l["confidence"]    = readJsonDouble(raw, "confidence", 0.0);
-                l["freqHz"]        = readJsonDouble(events[i], "frequency", 0.0);
-                l["nodeLat"]       = nLat;
-                l["nodeLon"]       = nLon;
-                l["headingDeg"]    = readJsonDouble(raw, "heading_deg", 0.0);
-                l["time"]          = readJsonString(events[i], "time", "?");
-                l["ageSec"]        = std::max<double>(0.0, age);
-                l["sourceDevice"]  = readJsonString(events[i], "sourceDevice", "local");
-                lobs.push_back(l);
-                lobCnt++;
-            }
-            // Hold-last-bearing: remember each source's newest live wedge
-            // (events are newest-first, so the first wedge per source is
-            // the freshest). When a source goes silent past the 90 s live
-            // window, keep pushing its last bearing as a ghosted "last
-            // known" wedge instead of letting the trail vanish entirely.
-            // Held wedges survive event-log eviction because they live in
-            // this static map, not in `events`.
-            static std::map<std::string, json> lastLobBySrc;
-            static std::map<std::string, double> lastLobRxBySrc;
-            std::set<std::string> liveSrcs;
-            for (auto& l : lobs) {
-                std::string src = readJsonString(l, "sourceDevice", "local");
-                if (liveSrcs.count(src)) continue;   // keep only the newest
-                liveSrcs.insert(src);
-                lastLobBySrc[src] = l;
-                lastLobRxBySrc[src] = nowClock - readJsonDouble(l, "ageSec", 0.0);
-            }
-            for (auto& kv : lastLobBySrc) {
-                if (liveSrcs.count(kv.first)) continue;
-                if (lobCnt >= 64) break;
-                json held = kv.second;
-                held["held"] = true;
-                held["ageSec"] = std::max<double>(0.0, nowClock - lastLobRxBySrc[kv.first]);
-                lobs.push_back(held);
-                lobCnt++;
-            }
-            std::string lobStr = lobs.dump();
-            if (lobStr != lastLobJsonSent) {
-                lastLobJsonSent = lobStr;
-                bool pushed = backend::setFleetLobs(lobStr);
-                flog::info("[FleetLOB] push {} wedges (bridge {})",
-                           lobCnt, pushed ? "ok" : "FAILED");
-            }
-            // Unconditional heartbeat (every 5 s) so a silently-empty wedge
-            // set is visible in logcat with the reason rows were skipped.
-            static double lastLobDiagAt = 0.0;
-            if (nowClock - lastLobDiagAt >= 5.0) {
-                lastLobDiagAt = nowClock;
-                flog::info("[FleetLOB] diag: events={} kraken={} noRaw={} badPos={} stale={} wedges={}",
-                           (int)events.size(), diagKraken, diagNoRaw,
-                           diagBadPos, diagStale, lobCnt);
-            }
-        }
-    }
+    // -------- Map bridges (Kraken tasking, event markers, fleet LOBs) ----
+    // All map-facing pushes moved to backgroundMapTick() so the map stays
+    // live while the ImGui surface is paused (Android map screen in front).
+    // The Android render loop also calls this directly while paused.
+    backgroundMapTick();
 
     // -------- Decoder bridge ingestion (ADS-B / dump1090) --------
     // BaseStation port 30003 CSV feed from dump1090 / readsb. Each MSG line
@@ -3159,8 +3223,8 @@ void MainWindow::draw() {
     // Controller side: persisted peers turn into per-peer worker clients.
     // We diff the persisted list against the live client list each frame
     // and reconcile (add new, remove deleted, restart on config change).
-    static std::vector<std::unique_ptr<predator::KujhadControllerClient>> kujhadClients;
-    static std::vector<json> kujhadActivePeers; // mirror of persisted peers
+    // kujhadClients / kujhadActivePeers are file-scope statics now (see
+    // above backgroundMapTick) so the tick can drain them while paused.
     {
         json& persistedPeers = core::configManager.conf["kujhadPeers"];
         if (!persistedPeers.is_array()) persistedPeers = json::array();
@@ -3215,50 +3279,9 @@ void MainWindow::draw() {
             kujhadClients.clear();
             kujhadActivePeers.clear();
         }
-        // Drain peer events into the local event log, tagged with the
-        // sourceDevice = peer name so the Hits/Network tables can show
-        // origin without a join.
-        bool anyPeerEventsInserted = false;
-        for (size_t i = 0; i < kujhadClients.size() && i < kujhadActivePeers.size(); i++) {
-            auto& c = kujhadClients[i];
-            if (!c) continue;
-            std::string peerName = readJsonString(kujhadActivePeers[i], "name", "peer");
-            auto pendingEvents = c->drainEvents(64);
-            if (!pendingEvents.empty()) {
-                flog::info("[Fleet] drained {} events from peer '{}'",
-                           (int)pendingEvents.size(), peerName);
-            }
-            for (auto& e : pendingEvents) {
-                if (!e.is_object()) continue;
-                json row = e;
-                row["sourceDevice"] = peerName;
-                if (!row.contains("source")) row["source"] = "Peer:" + peerName;
-                // Re-stamp serial on local insertion so the local
-                // /v1/events stream has its own monotonic cursor —
-                // the peer's own serial may collide with ours.
-                row["peerSerial"] = row.value("serial", (uint64_t)0);
-                // Stamp local receive time immediately so the fleet-LOB
-                // freshness check never mistakes a just-arrived bearing
-                // for a stale one after a save/reload round-trip.
-                row["rxClock"] = (double)std::time(nullptr);
-                row["serial"] = ++predatorEventSerial;
-                events.insert(events.begin(), row);
-                anyPeerEventsInserted = true;
-            }
-            while (events.size() > 200) events.erase(events.end() - 1);
-        }
-        // CRITICAL: `events` is a per-frame local copy of
-        // conf["predatorEvents"] (reloaded at the top of draw()). Every
-        // ingest path must persist its inserts or they evaporate on the
-        // next frame — which is exactly what happened to peer-drained
-        // rows: the event log flashed them for one frame ("twitching")
-        // and the fleet-LOB aggregator always saw an empty list.
-        // Save immediately (not via the debounced scheduleEventSave) —
-        // a debounce-skipped save would permanently drop the rows, since
-        // the per-frame reload discards unsaved inserts. release(true)
-        // only marks the in-memory tree dirty; disk I/O stays batched in
-        // the ConfigManager autosave thread.
-        if (anyPeerEventsInserted) savePredatorEvents(events);
+        // Peer event draining now lives in backgroundMapTick() so it
+        // keeps running while rendering is paused (map screen open).
+        // Reconcile above still owns client lifecycle.
         // Refresh the active-client raw pointer AFTER reconcile so it can
         // never dangle: clients are only destroyed above on this same
         // thread, and the pointer is re-derived every frame.

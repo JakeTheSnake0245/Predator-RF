@@ -30,6 +30,12 @@ class MainWindow {
 public:
     void init();
     void draw();
+    // Map-bridge tick: peer event drain + all map-facing pushes (event
+    // markers, fleet LOB wedges, Kraken tune drain/status). Runs from
+    // draw() on every backend, and ALSO directly from the Android render
+    // loop while rendering is paused (MapActivity in front) so the map
+    // stays live instead of freezing on a snapshot. Self-throttled ~1 Hz.
+    void backgroundMapTick();
     void setViewBandwidthSlider(float bandwidth);
     bool sdrIsRunning();
     void setFirstMenuRender();
@@ -395,6 +401,11 @@ private:
     // emit an incremental tail to controllers and avoid re-pushing the
     // same rows on every poll.
     uint64_t predatorEventSerial = 0;
+
+    // Set once draw() has restored the event-serial watermark; the
+    // background map tick must not ingest events before that or new rows
+    // would reuse persisted serials.
+    bool bgMapTickReady = false;
 
     bool initComplete = false;
     bool autostart = false;

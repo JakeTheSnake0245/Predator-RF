@@ -596,6 +596,14 @@ namespace backend {
                 }
             }
 
+            // Keep the map bridges alive while the GUI surface is gone —
+            // MapActivity in front fires APP_CMD_TERM_WINDOW, which pauses
+            // rendering entirely; without this tick the map would freeze on
+            // whatever was pushed before it opened. Self-throttled to ~1 Hz
+            // inside, so calling it every loop iteration is cheap, and it
+            // runs on this same thread as draw() (no locking needed).
+            gui::mainWindow.backgroundMapTick();
+
             if (_EglDisplay == EGL_NO_DISPLAY) { continue; }
 
             // Warm-restart race guard: TERM_WINDOW (processed in the poll
