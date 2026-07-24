@@ -55,6 +55,8 @@
 #include <string>
 #include <thread>
 
+#include <utils/flog.h>
+
 #include "../json.hpp"
 #include "decoder_ingest.h"   // predator_socket_t + platform socket macros
 
@@ -237,6 +239,7 @@ private:
     void doTune(double freqHz) {
         tuneState_ = (int)KrakenTuneState::SENDING;
         setStatus("Fetching Kraken settings…");
+        flog::info("[KrakenCtl] tune {} Hz → {}:{}", (int64_t)freqHz, host_, port_);
 
         nlohmann::json settings;
         if (!getSettings(settings)) {
@@ -245,6 +248,9 @@ private:
             return;
         }
         reachable_ = true;
+        flog::info("[KrakenCtl] settings GET ok (mode={}, center_freq={} Hz)",
+                   legacyMode_ ? "legacy" : "miniserve",
+                   (int64_t)krakenSettingsCenterFreq(settings));
 
         nlohmann::json patched = krakenPatchSettings(settings, freqHz);
         if (patched.is_null()) {
@@ -270,11 +276,14 @@ private:
             if (!getSettings(rb)) continue;   // transient — keep polling
             double f = krakenSettingsCenterFreq(rb);
             if (f > 0.0) currentFreqMilliHz_ = (int64_t)(f * 1000.0);
+            flog::info("[KrakenCtl] readback center_freq={} Hz (want {} Hz)",
+                       (int64_t)f, (int64_t)freqHz);
             if (krakenFreqMatches(f, freqHz)) {
                 tuneState_ = (int)KrakenTuneState::CONFIRMED;
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Confirmed at %.4f MHz", f / 1e6);
                 setStatus(buf);
+                flog::info("[KrakenCtl] tune confirmed at {} Hz", (int64_t)f);
                 return;
             }
         }
@@ -286,6 +295,7 @@ private:
     void fail(const std::string& why) {
         tuneState_ = (int)KrakenTuneState::FAILED;
         setStatus(why);
+        flog::warn("[KrakenCtl] tune FAILED: {} (host={}:{})", why, host_, port_);
     }
 
     // ── HTTP plumbing ────────────────────────────────────────────────────
@@ -357,6 +367,7 @@ private:
             "\r\n" + body;
         std::string resp;
         int status = httpRoundTrip(req, resp);
+        flog::info("[KrakenCtl] miniserve upload → HTTP {}", status);
         // miniserve answers a successful form upload with 303 See Other
         // (redirect back to the listing), not 2xx — field-verified.
         return (status >= 200 && status < 300) || status == 303;
@@ -374,6 +385,7 @@ private:
             "\r\n" + payload;
         std::string body;
         int status = httpRoundTrip(req, body);
+        flog::info("[KrakenCtl] legacy POST /settings → HTTP {}", status);
         return status >= 200 && status < 300;
     }
 
