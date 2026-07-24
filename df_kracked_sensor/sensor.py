@@ -438,6 +438,17 @@ class KrakenIngester:
         the websocket or the DF Aggregator HTTP poller)."""
         self.events_received += 1
 
+        # Adopt the Kraken's own per-frame GPS as the node position so
+        # /v1/gps reports a fix without --lat/--lon or gpsd on the Pi.
+        # Runs BEFORE throttling: even coalesced frames refresh the fix.
+        f_lat, f_lon = msg.get("gps_lat"), msg.get("gps_lon")
+        if _is_num(f_lat) and _is_num(f_lon) and not (f_lat == 0.0 and f_lon == 0.0):
+            self.pos.lat = float(f_lat)
+            self.pos.lon = float(f_lon)
+            if _is_num(msg.get("heading_deg")):
+                self.pos.heading = float(msg["heading_deg"])
+            self.pos.have_fix = True
+
         bearing = msg.get("doa_max_deg")
         if not _is_num(bearing):
             bearing = msg.get("bearing_deg")
@@ -622,6 +633,9 @@ class KujhadSensorApp:
         }
         return web.json_response(body)
 
+    # NOTE: /v1/gps serves self.pos, which the ingester keeps in sync with
+    # the Kraken's own per-frame GPS (see handle_doa_msg) so phones show a
+    # fix without needing --lat/--lon or gpsd on the Pi.
     async def handle_gps(self, request: "web.Request") -> "web.Response":
         if not self._authorized(request):
             return self._unauthorized()
