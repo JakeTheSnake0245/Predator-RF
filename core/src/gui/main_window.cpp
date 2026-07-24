@@ -3197,6 +3197,7 @@ void MainWindow::draw() {
         // Drain peer events into the local event log, tagged with the
         // sourceDevice = peer name so the Hits/Network tables can show
         // origin without a join.
+        bool anyPeerEventsInserted = false;
         for (size_t i = 0; i < kujhadClients.size() && i < kujhadActivePeers.size(); i++) {
             auto& c = kujhadClients[i];
             if (!c) continue;
@@ -3215,11 +3216,28 @@ void MainWindow::draw() {
                 // /v1/events stream has its own monotonic cursor —
                 // the peer's own serial may collide with ours.
                 row["peerSerial"] = row.value("serial", (uint64_t)0);
+                // Stamp local receive time immediately so the fleet-LOB
+                // freshness check never mistakes a just-arrived bearing
+                // for a stale one after a save/reload round-trip.
+                row["rxClock"] = (double)std::time(nullptr);
                 row["serial"] = ++predatorEventSerial;
                 events.insert(events.begin(), row);
+                anyPeerEventsInserted = true;
             }
             while (events.size() > 200) events.erase(events.end() - 1);
         }
+        // CRITICAL: `events` is a per-frame local copy of
+        // conf["predatorEvents"] (reloaded at the top of draw()). Every
+        // ingest path must persist its inserts or they evaporate on the
+        // next frame — which is exactly what happened to peer-drained
+        // rows: the event log flashed them for one frame ("twitching")
+        // and the fleet-LOB aggregator always saw an empty list.
+        // Save immediately (not via the debounced scheduleEventSave) —
+        // a debounce-skipped save would permanently drop the rows, since
+        // the per-frame reload discards unsaved inserts. release(true)
+        // only marks the in-memory tree dirty; disk I/O stays batched in
+        // the ConfigManager autosave thread.
+        if (anyPeerEventsInserted) savePredatorEvents(events);
         // Refresh the active-client raw pointer AFTER reconcile so it can
         // never dangle: clients are only destroyed above on this same
         // thread, and the pointer is re-derived every frame.
