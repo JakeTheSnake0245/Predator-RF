@@ -907,11 +907,10 @@
             map.addSource('_fleet_lob_nodes',  { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
             map.addLayer({ id: '_fleet_lob_wedge_fill', source: '_fleet_lob_wedges', type: 'fill',
                 paint: { 'fill-color': '#22d3ee',
-                    'fill-opacity': ['coalesce', ['get', 'wedge_opacity'], 0.12] } });
+                    'fill-opacity': ['coalesce', ['get', 'wedge_opacity'], 0.25] } });
             map.addLayer({ id: '_fleet_lob_wedge_stroke', source: '_fleet_lob_wedges', type: 'line',
-                paint: { 'line-color': '#22d3ee', 'line-width': 1.2,
-                    'line-opacity': ['coalesce', ['get', 'stroke_opacity'], 0.6],
-                    'line-dasharray': [5, 3] } });
+                paint: { 'line-color': '#22d3ee', 'line-width': 1.5,
+                    'line-opacity': ['coalesce', ['get', 'stroke_opacity'], 0.9] } });
             map.addLayer({ id: '_fleet_lob_node_dots', source: '_fleet_lob_nodes', type: 'circle',
                 paint: { 'circle-radius': 4, 'circle-color': '#22d3ee',
                     'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 1.5,
@@ -1112,7 +1111,7 @@
         // headingDeg,time,ageSec,sourceDevice}. bearingDeg is already TRUE
         // (heading applied upstream) — do NOT re-add headingDeg here.
         // Opacity fades with ageSec (fresh = strong). Reuses lobWedgeRing.
-        const FLEET_LOB_RANGE_M = 5000;   // fixed ~5 km fan length
+        const FLEET_LOB_RANGE_M = 10000;  // fixed ~10 km fan length
         function fleetLobWedgeGeoJSON(lobs) {
             const features = [];
             for (const l of lobs) {
@@ -1134,8 +1133,10 @@
                     freqStr:       fmtEventFreq(l.freqHz),
                     ageSec:        isFinite(age) ? age : 0,
                     sourceDevice:  l.sourceDevice != null ? String(l.sourceDevice) : '',
-                    wedge_opacity:  0.20 * fade,
-                    stroke_opacity: 0.75 * fade
+                    // Solid outline + 25% fill (operator preference); both
+                    // still fade as the bearing ages toward 90 s.
+                    wedge_opacity:  0.25 * fade,
+                    stroke_opacity: 1.0 * fade
                 };
                 features.push({
                     type: 'Feature',
