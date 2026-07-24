@@ -247,15 +247,16 @@ void test_multiple_sequential_messages() {
 // ── Kraken control client (kraken_ctl_client.h pure logic) ──────────────────
 
 void test_ctl_patch_settings_sets_freq_and_flag() {
+    // center_freq is in MHz in the DoA settings file (field-verified).
     nlohmann::json settings = {
-        {"center_freq", 433920000.0},
+        {"center_freq", 433.92},
         {"gain", 30.0},
         {"ext_upd_flag", false},
         {"ant_arrangement", "UCA"}
     };
     auto out = predator::krakenPatchSettings(settings, 868300000.0);
     CHECK(out.is_object());
-    CHECK_NEAR(out.value("center_freq", 0.0), 868300000.0, 0.001);
+    CHECK_NEAR(out.value("center_freq", 0.0), 868.3, 1e-6);
     CHECK_EQ(out.value("ext_upd_flag", false), true);
     // All other keys pass through untouched (full-blob contract).
     CHECK_NEAR(out.value("gain", 0.0), 30.0, 0.001);
@@ -266,7 +267,7 @@ void test_ctl_patch_settings_sets_freq_and_flag() {
 void test_ctl_patch_settings_vfo_array() {
     // VFO-0 stored as an array element: element 0 retuned, rest untouched.
     nlohmann::json settings = {
-        {"center_freq", 433920000.0},
+        {"center_freq", 433.92},
         {"ext_upd_flag", false},
         {"vfo_freq", {433920000.0, 100000000.0, 200000000.0}}
     };
@@ -283,7 +284,7 @@ void test_ctl_patch_settings_vfo_array() {
 void test_ctl_patch_settings_vfo_scalar() {
     // VFO-0 stored as a scalar key.
     nlohmann::json settings = {
-        {"center_freq", 433920000.0},
+        {"center_freq", 433.92},
         {"ext_upd_flag", false},
         {"vfo_freq_0", 433920000.0}
     };
@@ -295,21 +296,21 @@ void test_ctl_patch_settings_vfo_scalar() {
 void test_ctl_patch_settings_absent_vfo_stays_absent() {
     // No VFO keys present → none invented.
     nlohmann::json settings = {
-        {"center_freq", 433920000.0},
+        {"center_freq", 433.92},
         {"ext_upd_flag", false}
     };
     auto out = predator::krakenPatchSettings(settings, 868300000.0);
     CHECK(out.is_object());
     CHECK(!out.contains("vfo_freq"));
     CHECK(!out.contains("vfo_freq_0"));
-    CHECK_NEAR(out.value("center_freq", 0.0), 868300000.0, 0.001);
+    CHECK_NEAR(out.value("center_freq", 0.0), 868.3, 1e-6);
     CHECK_EQ(out.value("ext_upd_flag", false), true);
 }
 
 void test_ctl_patch_settings_both_vfo_forms() {
     // If both forms are present, both element 0 and the scalar are retuned.
     nlohmann::json settings = {
-        {"center_freq", 100e6},
+        {"center_freq", 100.0},
         {"vfo_freq", {100e6}},
         {"vfo_freq_0", 100e6}
     };
@@ -325,7 +326,8 @@ void test_ctl_patch_settings_rejects_non_object() {
 }
 
 void test_ctl_settings_center_freq_extraction() {
-    nlohmann::json ok = {{"center_freq", 145500000.0}};
+    // File stores MHz; extraction converts to Hz.
+    nlohmann::json ok = {{"center_freq", 145.5}};
     CHECK_NEAR(predator::krakenSettingsCenterFreq(ok), 145500000.0, 0.001);
     nlohmann::json missing = {{"gain", 30.0}};
     CHECK_NEAR(predator::krakenSettingsCenterFreq(missing), 0.0, 0.001);
@@ -336,8 +338,8 @@ void test_ctl_settings_center_freq_extraction() {
 
 void test_ctl_freq_match_tolerance() {
     CHECK(predator::krakenFreqMatches(433920000.0, 433920000.0));
-    CHECK(predator::krakenFreqMatches(433920000.5, 433920000.0));  // ≤1 Hz slack
-    CHECK(!predator::krakenFreqMatches(433920002.0, 433920000.0)); // >1 Hz off
+    CHECK(predator::krakenFreqMatches(433920050.0, 433920000.0));  // ≤100 Hz slack (MHz float rounding)
+    CHECK(!predator::krakenFreqMatches(433920200.0, 433920000.0)); // >100 Hz off
     CHECK(!predator::krakenFreqMatches(0.0, 433920000.0));         // no readback
 }
 
@@ -363,7 +365,7 @@ void test_ctl_patch_roundtrip_through_http_body() {
     // Simulate the full GET→patch→readback verification cycle at the
     // pure-logic level: settings blob → patched blob → serialized → parsed
     // back → readback freq matches.
-    nlohmann::json settings = {{"center_freq", 100e6}, {"ext_upd_flag", false}};
+    nlohmann::json settings = {{"center_freq", 100.0}, {"ext_upd_flag", false}};
     auto patched = predator::krakenPatchSettings(settings, 462562500.0);
     std::string wire = patched.dump();
     auto readback = nlohmann::json::parse(wire);

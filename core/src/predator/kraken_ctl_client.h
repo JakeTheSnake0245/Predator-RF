@@ -81,7 +81,9 @@ inline nlohmann::json krakenPatchSettings(const nlohmann::json& settings,
                                           double centerFreqHz) {
     if (!settings.is_object()) return nlohmann::json();
     nlohmann::json out = settings;
-    out["center_freq"]  = centerFreqHz;
+    // krakensdr_doa stores center_freq in MHz (field unit convention of the
+    // DoA settings file — e.g. 97.9), while VFO frequencies are in Hz.
+    out["center_freq"]  = centerFreqHz / 1e6;
     out["ext_upd_flag"] = true;
     // VFO-0 as an array: patch element 0 only, leave the rest untouched.
     auto arrIt = out.find("vfo_freq");
@@ -96,19 +98,19 @@ inline nlohmann::json krakenPatchSettings(const nlohmann::json& settings,
     return out;
 }
 
-// Extract the current centre frequency (Hz) from a settings blob.
-// Returns 0.0 when absent / non-numeric.
+// Extract the current centre frequency from a settings blob, converted to
+// Hz (the file stores MHz). Returns 0.0 when absent / non-numeric.
 inline double krakenSettingsCenterFreq(const nlohmann::json& settings) {
     if (!settings.is_object()) return 0.0;
     auto it = settings.find("center_freq");
     if (it == settings.end() || !it->is_number()) return 0.0;
-    return it->get<double>();
+    return it->get<double>() * 1e6;
 }
 
-// Readback match test: krakensdr_doa stores center_freq as a float; allow
-// 1 Hz slack for representation error.
+// Readback match test: krakensdr_doa stores center_freq as an MHz float;
+// allow 100 Hz slack for MHz-unit representation/rounding error.
 inline bool krakenFreqMatches(double readbackHz, double requestedHz) {
-    return std::abs(readbackHz - requestedHz) <= 1.0;
+    return std::abs(readbackHz - requestedHz) <= 100.0;
 }
 
 // Minimal HTTP/1.1 response splitter. Returns status code (0 on parse
@@ -352,7 +354,9 @@ private:
             "\r\n" + body;
         std::string resp;
         int status = httpRoundTrip(req, resp);
-        return status >= 200 && status < 300;
+        // miniserve answers a successful form upload with 303 See Other
+        // (redirect back to the listing), not 2xx — field-verified.
+        return (status >= 200 && status < 300) || status == 303;
     }
 
     // Legacy remote-control write path (older installs, e.g. :8042).

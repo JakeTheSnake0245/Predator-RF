@@ -95,7 +95,7 @@ port **8081** (verify with `sudo ss -ltnp | grep ':8081'`). No stock
 `POST /settings` API is required.
 
 ```
-GET  http://<host>:8081/settings.json  → full settings JSON ("center_freq" Hz + VFO-0)
+GET  http://<host>:8081/settings.json  → full settings JSON ("center_freq" **MHz** + VFO-0 in Hz)
 POST http://<host>:8081/upload?path=/   → multipart upload of patched settings.json
 ```
 
@@ -105,12 +105,17 @@ Contract:
 2. Patch `center_freq`, set `ext_upd_flag: true`, and retune **VFO-0**
    (`vfo_freq[0]` and/or `vfo_freq_0`, whichever the file uses).
 3. Upload the complete patched `settings.json` back via the multipart
-   `POST /upload?path=/` (miniserve returns `201`/2xx).
+   `POST /upload?path=/` (miniserve returns `303 See Other` on success —
+   field-verified — or occasionally another 2xx; both are accepted).
 4. The upload applies **live** — the DoA software watches
    `settings.json` and retunes with no restart. No DAQ stop/start and no
    sweep agent are involved: this is retune/cue only.
 5. Poll GET `/settings.json` until the read-back `center_freq` matches
-   (±1 Hz) or a 30 s timeout expires.
+   (±100 Hz — the file stores MHz floats) or a 30 s timeout expires.
+
+**Unit gotcha (field-verified):** the DoA settings file stores `center_freq`
+in **MHz** (e.g. `97.9`) while `vfo_freq` entries are in **Hz**. The client
+converts on both read and write; never write Hz into `center_freq`.
 
 **Legacy fallback:** older remote-control installs that only expose
 `GET /settings` (e.g. on port `8042`) still work — the client detects the
