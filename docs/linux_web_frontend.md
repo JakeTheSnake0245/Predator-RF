@@ -79,6 +79,42 @@ Relevant `config.json` keys:
   `true` only when the operator explicitly needs the dashboard reachable from
   other hosts on the LAN. Must be paired with a strong `kujhadApiKey`.
 
+## Node commissioning — `/setup` portal
+
+Every node serves a browser commissioning page at
+`http://<node-ip>:5555/setup` (same port as the dashboard). Use it when
+standing up a static sensor so its RSSI readings are comparable fleet-wide.
+The page itself is public; **saving** requires the node's API key
+(`X-Kujhad-Key`), which the page prompts for and keeps in browser
+localStorage.
+
+What it configures:
+
+- **Static position** — lat/lon for nodes without GPS, or enable the
+  **gpsd** toggle to poll a local `gpsd` on `127.0.0.1:2947` (15 s
+  freshness window). Hit rows record which source was used (`gpsSource`).
+- **SDR profile** — hardware read-offset table (RTL-SDR v3 is the 0 dB
+  reference; v4, clones, NESDR, HackRF, Airspy Mini have preset offsets).
+- **Antenna gain curve** — up to 16 `(MHz, dB)` points, interpolated in
+  log-frequency; presets add a point at the band (GMRS, 900 ISM, …). Empty
+  curve = 0 dB.
+- **Terrain class** — sets the node's path-loss exponent used by AOU
+  localization (open/rural 2.2 … dense high-rise 4.0; mixed 3.0 default).
+- **Antenna siting** — placement bias + trust penalty (mast = reference;
+  ground, body-worn, vehicle roof, side-of-building, rooftop, treetop,
+  indoor-window each have a dB offset and extra RSSI sigma).
+
+The portal previews the resulting `calDb` correction, exponent `n`, and
+sigma live. The same settings are editable in the app's System tab.
+
+Related endpoints (key required): `GET/POST /v1/node-config`,
+`GET /v1/pairing` (returns the same JSON payload as the pairing QR).
+
+Persisted `config.json` keys: `predatorNodeLat`, `predatorNodeLon`,
+`predatorNodeGpsd`, `predatorSdrType`, `predatorAntennaCurve`
+(array of `{f, g}`), `predatorNodeTerrain`, `predatorNodeSiting`.
+Unset keys keep legacy behavior (no correction, n=3.0, sigma=6 dB).
+
 ## Kujhad plain-HTTP lockout on overlay networks (tailnet / ZeroTier)
 
 The Kujhad fleet server (the device-side peer protocol listener, distinct
