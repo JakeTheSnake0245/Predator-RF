@@ -2433,7 +2433,9 @@ void MainWindow::draw() {
             std::string lobStr = lobs.dump();
             if (lobStr != lastLobJsonSent) {
                 lastLobJsonSent = lobStr;
-                backend::setFleetLobs(lobStr);
+                bool pushed = backend::setFleetLobs(lobStr);
+                flog::info("[FleetLOB] push {} wedges (bridge {})",
+                           lobCnt, pushed ? "ok" : "FAILED");
             }
         }
     }
@@ -3144,6 +3146,13 @@ void MainWindow::draw() {
             // Tear down current clients and rebuild from scratch — the
             // peer count is small (typically 1-4) so a full rebuild is
             // simpler than incremental diffing.
+            //
+            // Diagnostic: a rebuild also RESETS each client's event cursor,
+            // so if this fires repeatedly the event log fills with the same
+            // re-drained rows (churn) and wedges never stabilise. Log every
+            // rebuild — in a healthy session this appears once per peer edit.
+            flog::info("[Fleet] rebuilding peer clients: changed={} clients={} peers={}",
+                       changed, (int)kujhadClients.size(), (int)persistedPeers.size());
             for (auto& c : kujhadClients) { if (c) c->stop(); }
             kujhadClients.clear();
             kujhadActivePeers.clear();
@@ -3182,6 +3191,10 @@ void MainWindow::draw() {
             if (!c) continue;
             std::string peerName = readJsonString(kujhadActivePeers[i], "name", "peer");
             auto pendingEvents = c->drainEvents(64);
+            if (!pendingEvents.empty()) {
+                flog::info("[Fleet] drained {} events from peer '{}'",
+                           (int)pendingEvents.size(), peerName);
+            }
             for (auto& e : pendingEvents) {
                 if (!e.is_object()) continue;
                 json row = e;
