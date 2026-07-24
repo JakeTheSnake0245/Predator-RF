@@ -993,6 +993,39 @@ void MainWindow::backgroundMapTick() {
                 a["peakLat"]   = res.peakLat;
                 a["peakLon"]   = res.peakLon;
                 a["cellSizeM"] = res.cellSizeM;
+                a["sigmaMajorM"]     = res.sigmaMajorM;
+                a["sigmaMinorM"]     = res.sigmaMinorM;
+                a["majorBearingDeg"] = res.majorBearingDeg;
+                if (res.guideValid) {
+                    a["guide"] = json{
+                        { "bearingLat", res.guideBearingLat },
+                        { "bearingLon", res.guideBearingLon },
+                        { "rssiLat",    res.guideRssiLat },
+                        { "rssiLon",    res.guideRssiLon }
+                    };
+                }
+                // Convergence alert: when a signal's AOU first tightens
+                // below ~500 m (1-sigma major axis), tell the operator the
+                // math has decided. Hysteresis (re-arm above 1 km) so a
+                // signal hovering at the threshold can't spam.
+                {
+                    static std::map<int64_t, bool> aouConverged;
+                    bool& conv = aouConverged[key];
+                    if (!conv && res.sigmaMajorM > 0.0 && res.sigmaMajorM < 500.0) {
+                        conv = true;
+                        char buf[160];
+                        double fMhz = cl->freqHz / 1e6;
+                        snprintf(buf, sizeof(buf),
+                                 "%s%s%.4f MHz localized, AOU ~%.0f m",
+                                 cl->label.c_str(), cl->label.empty() ? "" : " ",
+                                 fMhz, res.sigmaMajorM);
+                        backend::postNotification("Signal converged", buf, true, true);
+                        flog::info("[AOU] converged: {}", buf);
+                    }
+                    else if (conv && res.sigmaMajorM > 1000.0) {
+                        conv = false;
+                    }
+                }
                 json cells = json::array();
                 for (auto& c : res.cells) {
                     cells.push_back(json::array({ c.lat, c.lon, c.p }));

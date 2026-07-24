@@ -61,6 +61,24 @@ struct Result {
     // Cells sorted by descending probability, truncated to the smallest
     // set covering `coverage` of total probability mass.
     std::vector<Cell> cells;
+
+    // Shape of the uncertainty (from the full probability grid's mean and
+    // covariance): 1-sigma extents along the major/minor axes and the
+    // compass bearing of the major (long) axis, 0..180.
+    double meanLat = 0.0, meanLon = 0.0;
+    double sigmaMajorM = 0.0, sigmaMinorM = 0.0;
+    double majorBearingDeg = 0.0;
+
+    // Operator guidance: where to send a walker to shrink the AOU fastest.
+    //  - guideBearing*: stand here with a DF-capable sensor (Kraken). A
+    //    bearing constrains position across the line of sight, so the best
+    //    vantage looks ACROSS the long axis of the uncertainty.
+    //  - guideRssi*: walk toward here with a bearingless SDR (RTL/HackRF).
+    //    Pairwise power differences discriminate range, so moving ALONG
+    //    the long axis produces the strongest RSSI gradient.
+    bool guideValid = false;
+    double guideBearingLat = 0.0, guideBearingLon = 0.0;
+    double guideRssiLat = 0.0, guideRssiLon = 0.0;
 };
 
 inline double _degWrap(double d) {
@@ -208,6 +226,69 @@ inline Result computeAou(const std::vector<BearingObs>& bearings,
     out.peakLon = out.cells.empty() ? cLon : out.cells[0].lon;
     out.cellSizeM = cellM;
     out.valid = !out.cells.empty();
+
+    // ---- Uncertainty shape: weighted mean + covariance of the grid ----
+    double mxE = 0.0, myN = 0.0;
+    for (size_t i = 0; i < p.size(); i++) {
+        int gy = (int)(i / gridN), gx = (int)(i % gridN);
+        double x = (gx + 0.5) * cellM - halfSpanM;
+        double y = (gy + 0.5) * cellM - halfSpanM;
+        mxE += p[i] * x;
+        myN += p[i] * y;
+    }
+    double sxx = 0.0, syy = 0.0, sxy = 0.0;
+    for (size_t i = 0; i < p.size(); i++) {
+        int gy = (int)(i / gridN), gx = (int)(i % gridN);
+        double x = (gx + 0.5) * cellM - halfSpanM - mxE;
+        double y = (gy + 0.5) * cellM - halfSpanM - myN;
+        sxx += p[i] * x * x;
+        syy += p[i] * y * y;
+        sxy += p[i] * x * y;
+    }
+    out.meanLat = cLat + myN / kLat;
+    out.meanLon = cLon + mxE / kLon;
+    double tr = (sxx + syy) * 0.5;
+    double dt = std::sqrt(std::max(0.0, ((sxx - syy) * 0.5) * ((sxx - syy) * 0.5) + sxy * sxy));
+    out.sigmaMajorM = std::sqrt(std::max(0.0, tr + dt));
+    out.sigmaMinorM = std::sqrt(std::max(0.0, tr - dt));
+    // Major-axis eigenvector angle (CCW from east) -> compass bearing 0..180.
+    double thetaE = 0.5 * std::atan2(2.0 * sxy, sxx - syy);
+    double bDeg = 90.0 - thetaE * 180.0 / M_PI;
+    while (bDeg < 0.0) bDeg += 180.0;
+    while (bDeg >= 180.0) bDeg -= 180.0;
+    out.majorBearingDeg = bDeg;
+
+    // ---- Walker guidance points ----
+    // Both standoffs scale with the current uncertainty and are clamped to
+    // walkable/drivable distances. Sides are chosen toward the centroid of
+    // existing observers (least travel from where the team already is).
+    if (out.valid && out.sigmaMajorM > 1.0) {
+        double ocE = 0.0, ocN = 0.0;
+        int ocnt = 0;
+        for (auto& b : bearings) { ocE += (b.lon - cLon) * kLon; ocN += (b.lat - cLat) * kLat; ocnt++; }
+        for (auto& r : rssi)     { ocE += (r.lon - cLon) * kLon; ocN += (r.lat - cLat) * kLat; ocnt++; }
+        if (ocnt > 0) { ocE /= ocnt; ocN /= ocnt; }
+        double majR = out.majorBearingDeg * M_PI / 180.0;
+        // Unit vectors (east, north) along and across the major axis.
+        double alongE = std::sin(majR),  alongN = std::cos(majR);
+        double crossE = std::cos(majR),  crossN = -std::sin(majR);
+        auto pickSide = [&](double ux, double uy) {
+            // +1 or -1: the side of the mean nearer the observer centroid.
+            double d = (ocE - mxE) * ux + (ocN - myN) * uy;
+            return (d >= 0.0) ? 1.0 : -1.0;
+        };
+        double clampD = [](double v, double lo, double hi) {
+            return std::max(lo, std::min(hi, v));
+        }(2.5 * out.sigmaMajorM, 800.0, 5000.0);
+        double sB = pickSide(crossE, crossN);
+        out.guideBearingLat = cLat + (myN + sB * clampD * crossN) / kLat;
+        out.guideBearingLon = cLon + (mxE + sB * clampD * crossE) / kLon;
+        double rD = std::max(600.0, std::min(4000.0, 2.0 * out.sigmaMajorM));
+        double sR = pickSide(alongE, alongN);
+        out.guideRssiLat = cLat + (myN + sR * rD * alongN) / kLat;
+        out.guideRssiLon = cLon + (mxE + sR * rD * alongE) / kLon;
+        out.guideValid = true;
+    }
     return out;
 }
 

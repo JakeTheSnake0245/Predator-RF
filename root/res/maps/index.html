@@ -952,6 +952,30 @@
             map.addLayer({ id: '_aou_peak_dot', source: '_aou_peak', type: 'circle',
                 paint: { 'circle-radius': 6, 'circle-color': '#ef4444',
                     'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 2 } });
+            // Walker guidance waypoints: where to send a DF sensor (cross
+            // the AOU's long axis) or an RSSI-only SDR (walk along it).
+            map.addSource('_aou_guide', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+            map.addLayer({ id: '_aou_guide_dots', source: '_aou_guide', type: 'circle',
+                filter: ['==', ['geometry-type'], 'Point'],
+                paint: { 'circle-radius': 7,
+                    'circle-color': ['match', ['get', 'kind'], 'bearing', '#38bdf8', '#facc15'],
+                    'circle-stroke-color': '#0b0e0a', 'circle-stroke-width': 2 } });
+            map.addLayer({ id: '_aou_guide_lines', source: '_aou_guide', type: 'line',
+                filter: ['==', ['geometry-type'], 'LineString'],
+                paint: { 'line-color': '#9fb8a3', 'line-width': 1.2, 'line-dasharray': [2, 2],
+                    'line-opacity': 0.6 } }, '_aou_guide_dots');
+            map.on('click', '_aou_peak_dot', (e) => {
+                if (e.features && e.features.length) {
+                    openAouPeakPopup(e.features[0].geometry.coordinates.slice(),
+                                     e.features[0].properties || {});
+                }
+            });
+            map.on('click', '_aou_guide_dots', (e) => {
+                if (e.features && e.features.length) {
+                    openAouGuidePopup(e.features[0].geometry.coordinates.slice(),
+                                      e.features[0].properties || {});
+                }
+            });
 
             map.on('click', '_fleet_lob_wedge_fill', _onFleetLobClick);
             map.on('click', '_fleet_lob_node_dots', _onFleetLobClick);
@@ -1258,12 +1282,14 @@
             const cellsSrc = map.getSource('_aou_cells');
             const peakSrc  = map.getSource('_aou_peak');
             if (!cellsSrc || !peakSrc) return;
+            const guideSrc = map.getSource('_aou_guide');
             const empty = { type: 'FeatureCollection', features: [] };
             const entry = (aouSelectedKey === null) ? null
                 : aouData.find(a => Number(a.key) === aouSelectedKey);
             if (!entry || !Array.isArray(entry.cells) || !entry.cells.length) {
                 cellsSrc.setData(empty);
                 peakSrc.setData(empty);
+                if (guideSrc) guideSrc.setData(empty);
                 const st = document.getElementById('aou-status');
                 if (st && aouSelectedKey !== null) {
                     st.textContent = 'AOU: converging\u2026';
@@ -1290,10 +1316,123 @@
                 });
             }
             cellsSrc.setData({ type: 'FeatureCollection', features: feats });
+            const pkLon = Number(entry.peakLon), pkLat = Number(entry.peakLat);
             peakSrc.setData({ type: 'FeatureCollection', features: [{
-                type: 'Feature', properties: {},
-                geometry: { type: 'Point', coordinates: [Number(entry.peakLon), Number(entry.peakLat)] }
+                type: 'Feature',
+                properties: {
+                    label: entry.label != null ? String(entry.label) : '',
+                    freqHz: Number(entry.freqHz) || 0,
+                    sigmaMajorM: Number(entry.sigmaMajorM) || 0,
+                    sigmaMinorM: Number(entry.sigmaMinorM) || 0,
+                    majorBearingDeg: Number(entry.majorBearingDeg) || 0
+                },
+                geometry: { type: 'Point', coordinates: [pkLon, pkLat] }
             }] });
+            if (guideSrc) {
+                const gfeats = [];
+                const g = entry.guide;
+                if (g && isFinite(Number(g.bearingLat))) {
+                    const bLon = Number(g.bearingLon), bLat = Number(g.bearingLat);
+                    const rLon = Number(g.rssiLon),    rLat = Number(g.rssiLat);
+                    gfeats.push({ type: 'Feature', properties: { kind: 'bearing' },
+                        geometry: { type: 'Point', coordinates: [bLon, bLat] } });
+                    gfeats.push({ type: 'Feature', properties: { kind: 'rssi' },
+                        geometry: { type: 'Point', coordinates: [rLon, rLat] } });
+                    gfeats.push({ type: 'Feature', properties: {},
+                        geometry: { type: 'LineString', coordinates: [[bLon, bLat], [pkLon, pkLat]] } });
+                    gfeats.push({ type: 'Feature', properties: {},
+                        geometry: { type: 'LineString', coordinates: [[rLon, rLat], [pkLon, pkLat]] } });
+                }
+                guideSrc.setData({ type: 'FeatureCollection', features: gfeats });
+            }
+        }
+
+        // Tap popup on the red AOU peak dot: the "emitter is here" card.
+        // DOM built via textContent only (never innerHTML).
+        function openAouPeakPopup(lngLat, props) {
+            const root = document.createElement('div');
+            root.style.cssText = 'font-family:monospace;font-size:12px;color:#d7e4d9;min-width:170px;';
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:bold;margin-bottom:2px;color:#ef4444;';
+            title.textContent = 'Probable emitter';
+            root.appendChild(title);
+            const freq = Number(props.freqHz) || 0;
+            if (props.label || freq > 0) {
+                const l = document.createElement('div');
+                l.style.cssText = 'color:#9fb8a3;';
+                l.textContent = (props.label ? props.label + '  ' : '')
+                    + (freq > 0 ? (freq / 1e6).toFixed(4) + ' MHz' : '');
+                root.appendChild(l);
+            }
+            const lat = lngLat[1], lon = lngLat[0];
+            const coord = document.createElement('div');
+            coord.style.cssText = 'color:#e6eed7;margin-top:4px;user-select:text;-webkit-user-select:text;';
+            coord.textContent = lat.toFixed(5) + ', ' + lon.toFixed(5);
+            root.appendChild(coord);
+            const sMaj = Number(props.sigmaMajorM) || 0;
+            const sMin = Number(props.sigmaMinorM) || 0;
+            if (sMaj > 0) {
+                const sz = document.createElement('div');
+                sz.style.cssText = 'color:#9fb8a3;margin-top:2px;';
+                sz.textContent = 'AOU \u2248 ' + Math.round(sMin) + ' \u00d7 '
+                    + Math.round(sMaj) + ' m @ '
+                    + Math.round(Number(props.majorBearingDeg) || 0) + '\u00b0';
+                root.appendChild(sz);
+            }
+            const btn = document.createElement('button');
+            btn.style.cssText = 'width:100%;margin-top:6px;padding:5px 6px;background:#10150f;' +
+                'color:#d7e4d9;border:1px solid #4a6b4e;border-radius:4px;' +
+                'font-family:monospace;font-size:12px;';
+            btn.textContent = 'Copy coordinates';
+            btn.addEventListener('click', () => {
+                const txt = lat.toFixed(6) + ',' + lon.toFixed(6);
+                const done = () => { btn.textContent = 'Copied'; };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(txt).then(done).catch(() => {});
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = txt;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); done(); } catch (e) {}
+                    document.body.removeChild(ta);
+                }
+            });
+            root.appendChild(btn);
+            if (eventPopup) { try { eventPopup.remove(); } catch (e) {} }
+            eventPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '260px' })
+                .setLngLat(lngLat)
+                .setDOMContent(root)
+                .addTo(map);
+            eventPopup.on('close', () => { eventPopup = null; });
+        }
+
+        // Tap popup on a walker-guidance waypoint.
+        function openAouGuidePopup(lngLat, props) {
+            const root = document.createElement('div');
+            root.style.cssText = 'font-family:monospace;font-size:12px;color:#d7e4d9;min-width:170px;';
+            const isBearing = props.kind === 'bearing';
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:bold;margin-bottom:2px;color:'
+                + (isBearing ? '#38bdf8' : '#facc15') + ';';
+            title.textContent = isBearing ? 'DF vantage point' : 'RSSI walk point';
+            root.appendChild(title);
+            const why = document.createElement('div');
+            why.style.cssText = 'color:#9fb8a3;';
+            why.textContent = isBearing
+                ? 'Take a Kraken bearing from here \u2014 it cuts across the long axis of the uncertainty.'
+                : 'Walk here logging hits with any SDR \u2014 signal-strength change along this line separates near from far.';
+            root.appendChild(why);
+            const coord = document.createElement('div');
+            coord.style.cssText = 'color:#e6eed7;margin-top:4px;user-select:text;-webkit-user-select:text;';
+            coord.textContent = lngLat[1].toFixed(5) + ', ' + lngLat[0].toFixed(5);
+            root.appendChild(coord);
+            if (eventPopup) { try { eventPopup.remove(); } catch (e) {} }
+            eventPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '260px' })
+                .setLngLat(lngLat)
+                .setDOMContent(root)
+                .addTo(map);
+            eventPopup.on('close', () => { eventPopup = null; });
         }
 
         function openFleetLobPopup(lngLat, props) {
