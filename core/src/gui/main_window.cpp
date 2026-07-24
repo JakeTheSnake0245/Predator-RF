@@ -62,6 +62,8 @@ static double nodeStaticLon = 0.0;
 static bool nodeGpsdEnabled = false;
 static std::string nodeSdrType = "unknown";
 static predator::equipment::AntennaCurve nodeAntennaCurve;
+static std::string nodeTerrain = "mixed";
+static std::string nodeSiting = "mast";
 static predator::GpsdClient nodeGpsd;
 
 // Deterministic teardown for the gpsd poll thread — called from the app
@@ -84,6 +86,8 @@ static void nodeEquipPersist() {
         }
         core::configManager.conf["predatorAntennaCurve"] = arr;
     }
+    core::configManager.conf["predatorNodeTerrain"] = nodeTerrain;
+    core::configManager.conf["predatorNodeSiting"] = nodeSiting;
     core::configManager.release(true);
 }
 #include "../predator/hold_binding_registry.h"
@@ -372,6 +376,8 @@ void MainWindow::init() {
                     nodeAntennaCurve.push_back({ 400.0, flat });
                 }
             }
+            nodeTerrain = cfg.value("predatorNodeTerrain", std::string("mixed"));
+            nodeSiting = cfg.value("predatorNodeSiting", std::string("mast"));
         }
         // Migration: older configs only have the mirror bool.
         kujhadPeerViewMode = std::clamp<int>(
@@ -1048,6 +1054,8 @@ void MainWindow::backgroundMapTick() {
                     s -= bgJsonDouble(events[i], "calDb", 0.0);
                     predator::aou::RssiObs r;
                     r.lat = la; r.lon = lo; r.rssiDb = s; r.weight = w;
+                    r.exponent = bgJsonDouble(events[i], "plExp", 3.0);
+                    r.sigmaDb = bgJsonDouble(events[i], "rssiSigmaDb", 6.0);
                     auto& cl = clusters[key];
                     if (cl.rssi.size() < 64) cl.rssi.push_back(r);
                     cl.freqHz = freq;
@@ -2505,7 +2513,12 @@ void MainWindow::draw() {
         {
             double hitFreq = row.value("frequency", 0.0);
             std::lock_guard<std::mutex> lk(nodeEquipMtx);
-            row["calDb"] = predator::equipment::calDbAt(nodeSdrType, nodeAntennaCurve, hitFreq);
+            row["calDb"] = predator::equipment::calDbAt(nodeSdrType, nodeAntennaCurve, hitFreq, nodeSiting);
+            // Environment terms for the AOU power math: this node's
+            // path-loss exponent (terrain) and RSSI trust sigma (siting).
+            row["plExp"] = predator::equipment::terrainExponent(nodeTerrain);
+            row["rssiSigmaDb"] = predator::equipment::baseRssiSigmaDb()
+                                 + predator::equipment::sitingProfile(nodeSiting).sigmaExtraDb;
         }
         row["serial"] = ++predatorEventSerial;
         events.insert(events.begin(), row);
@@ -3053,6 +3066,8 @@ void MainWindow::draw() {
                     curve.push_back(json{ { "f", p.freqMhz }, { "g", p.gainDb } });
                 }
                 j["antennaCurve"] = curve;
+                j["terrain"] = nodeTerrain;
+                j["siting"] = nodeSiting;
             }
             double gLat = 0.0, gLon = 0.0;
             j["gpsdFix"] = nodeGpsd.getFix(gLat, gLon);
@@ -3068,6 +3083,17 @@ void MainWindow::draw() {
                 presets.push_back(json{ { "label", p.label }, { "freqMhz", p.freqMhz }, { "gainDb", p.gainDb } });
             }
             j["antennaPresets"] = presets;
+            json terr = json::array();
+            for (auto& p : predator::equipment::terrainProfiles()) {
+                terr.push_back(json{ { "id", p.id }, { "label", p.label }, { "exponent", p.exponent } });
+            }
+            j["terrainOptions"] = terr;
+            json sit = json::array();
+            for (auto& p : predator::equipment::sitingProfiles()) {
+                sit.push_back(json{ { "id", p.id }, { "label", p.label },
+                                    { "offsetDb", p.offsetDb }, { "sigmaExtraDb", p.sigmaExtraDb } });
+            }
+            j["sitingOptions"] = sit;
             return j;
         });
         kujhadServer.setNodeConfigApplier([this](const json& in, std::string& err) {
@@ -3103,6 +3129,22 @@ void MainWindow::draw() {
                 if (sdr == p.id) { known = true; break; }
             }
             if (!known) { err = "unknown sdrType"; return false; }
+            std::string terr = in.value("terrain", std::string("mixed"));
+            {
+                bool ok = false;
+                for (auto& p : predator::equipment::terrainProfiles()) {
+                    if (terr == p.id) { ok = true; break; }
+                }
+                if (!ok) { err = "unknown terrain"; return false; }
+            }
+            std::string sit = in.value("siting", std::string("mast"));
+            {
+                bool ok = false;
+                for (auto& p : predator::equipment::sitingProfiles()) {
+                    if (sit == p.id) { ok = true; break; }
+                }
+                if (!ok) { err = "unknown siting"; return false; }
+            }
             {
                 std::lock_guard<std::mutex> lk(nodeEquipMtx);
                 nodeStaticLat = la;
@@ -3110,6 +3152,8 @@ void MainWindow::draw() {
                 nodeGpsdEnabled = in.value("gpsdEnabled", false);
                 nodeSdrType = sdr;
                 nodeAntennaCurve = curve;
+                nodeTerrain = terr;
+                nodeSiting = sit;
             }
             nodeEquipPersist();
             return true;
@@ -10279,13 +10323,14 @@ void MainWindow::draw() {
                 // whenever it has a fix; these are the no-fix fallback.
                 double eLat, eLon;
                 bool eGpsd;
-                std::string eSdr;
+                std::string eSdr, eTerr, eSit;
                 predator::equipment::AntennaCurve eCurve;
                 {
                     std::lock_guard<std::mutex> lk(nodeEquipMtx);
                     eLat = nodeStaticLat; eLon = nodeStaticLon;
                     eGpsd = nodeGpsdEnabled; eSdr = nodeSdrType;
                     eCurve = nodeAntennaCurve;
+                    eTerr = nodeTerrain; eSit = nodeSiting;
                 }
                 bool changed = false;
                 ImGui::TextDisabled("%s", T("Static position (used when no GPS fix)"));
@@ -10359,11 +10404,43 @@ void MainWindow::draw() {
                     if (eCurve.empty()) {
                         ImGui::TextDisabled("%s", T("No points: antenna treated as 0 dB at all frequencies."));
                     }
-                    else {
+                    // Environment: terrain sets the path-loss exponent this
+                    // node's power obeys; siting sets a systematic read
+                    // bias + extra uncertainty. Both ride on every hit.
+                    {
+                        const auto& terrs = predator::equipment::terrainProfiles();
+                        int tIdx = predator::equipment::terrainProfileIndex(eTerr);
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+                        if (ImGui::BeginCombo(T("Terrain here##nodeequip"), terrs[tIdx].label)) {
+                            for (int i = 0; i < (int)terrs.size(); i++) {
+                                if (ImGui::Selectable(terrs[i].label, i == tIdx)) {
+                                    eTerr = terrs[i].id;
+                                    changed = true;
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        const auto& sits = predator::equipment::sitingProfiles();
+                        int sIdx = predator::equipment::sitingProfileIndex(eSit);
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+                        if (ImGui::BeginCombo(T("Antenna placement##nodeequip"), sits[sIdx].label)) {
+                            for (int i = 0; i < (int)sits.size(); i++) {
+                                if (ImGui::Selectable(sits[i].label, i == sIdx)) {
+                                    eSit = sits[i].id;
+                                    changed = true;
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                    }
+                    {
                         double fRx = (double)gui::freqSelect.frequency;
-                        ImGui::TextDisabled(T("Correction at %.3f MHz: %.1f dB (SDR + antenna)"),
+                        ImGui::TextDisabled(T("Correction at %.3f MHz: %.1f dB | path-loss n=%.1f | RSSI sigma %.1f dB"),
                                             fRx / 1e6,
-                                            predator::equipment::calDbAt(eSdr, eCurve, fRx));
+                                            predator::equipment::calDbAt(eSdr, eCurve, fRx, eSit),
+                                            predator::equipment::terrainExponent(eTerr),
+                                            predator::equipment::baseRssiSigmaDb()
+                                            + predator::equipment::sitingProfile(eSit).sigmaExtraDb);
                     }
                 }
                 if (changed) {
@@ -10374,6 +10451,8 @@ void MainWindow::draw() {
                         nodeGpsdEnabled = eGpsd;
                         nodeSdrType = eSdr;
                         nodeAntennaCurve = eCurve;
+                        nodeTerrain = eTerr;
+                        nodeSiting = eSit;
                     }
                     nodeEquipPersist();
                 }

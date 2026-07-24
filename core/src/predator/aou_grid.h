@@ -44,6 +44,11 @@ struct BearingObs {
 };
 
 struct RssiObs {
+    // Per-node environment: path-loss exponent from the node's declared
+    // terrain (pairs average the two nodes' values) and the node's RSSI
+    // noise sigma (base 6 dB inflated by siting, e.g. body-worn).
+    double exponent = 3.0;
+    double sigmaDb = 6.0;
     double lat = 0.0, lon = 0.0;   // observer position at time of hit
     double rssiDb = 0.0;           // received strength (dB, any consistent ref)
     double weight = 1.0;           // time-decay weight (0..1]
@@ -153,8 +158,9 @@ inline Result computeAou(const std::vector<BearingObs>& bearings,
               [](const RPair& x, const RPair& y) { return x.w > y.w; });
     if (rpairs.size() > 64) rpairs.resize(64);
 
-    const double pathLossN = 3.0;   // suburban-ish path loss exponent
-    const double pdoaSigma = 6.0;   // dB — RSSI is noisy; keep this loose
+    // Path-loss exponent and RSSI sigma are now PER-NODE (declared
+    // terrain/siting); each pair averages the exponents and combines the
+    // sigmas in quadrature. Defaults (3.0 / 6 dB) match the old behavior.
 
     for (int gy = 0; gy < gridN; gy++) {
         for (int gx = 0; gx < gridN; gx++) {
@@ -176,9 +182,12 @@ inline Result computeAou(const std::vector<BearingObs>& bearings,
                 double bx = (pr.b->lon - cLon) * kLon, by = (pr.b->lat - cLat) * kLat;
                 double da = std::max(30.0, std::hypot(x - ax, y - ay));
                 double db = std::max(30.0, std::hypot(x - bx, y - by));
-                double predicted = -10.0 * pathLossN * std::log10(da / db);
+                double pairN = 0.5 * (pr.a->exponent + pr.b->exponent);
+                double pairSigma = std::max(3.0, std::sqrt(0.5 * (pr.a->sigmaDb * pr.a->sigmaDb
+                                                                  + pr.b->sigmaDb * pr.b->sigmaDb)));
+                double predicted = -10.0 * pairN * std::log10(da / db);
                 double meas = pr.a->rssiDb - pr.b->rssiDb;
-                double e = (meas - predicted) / pdoaSigma;
+                double e = (meas - predicted) / pairSigma;
                 acc += pr.w * (-0.5 * e * e);
             }
             logL[(size_t)gy * gridN + gx] = acc;

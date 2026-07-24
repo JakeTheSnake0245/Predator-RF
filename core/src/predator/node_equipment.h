@@ -128,12 +128,105 @@ inline const std::vector<AntennaPreset>& antennaPresets() {
     return t;
 }
 
+/*
+ * Environment profiles — WHERE the node sits changes the RSSI math twice:
+ *
+ * 1. TERRAIN around the node sets the path-loss EXPONENT n used in the
+ *    pairwise power-difference model (Δp ≈ −10·n·log10(d1/d2)). Signal
+ *    decays much faster through dense city or forest than over open
+ *    ground; a fixed n=3 systematically mis-ranges nodes in other
+ *    clutter. Per-pair, the AOU math averages the two nodes' exponents.
+ *
+ * 2. SITING (mounting) of the antenna sets a systematic dB bias and an
+ *    extra uncertainty term. A body-worn radio reads several dB low and
+ *    erratically (body shadowing as the wearer turns); a rooftop node
+ *    reads high (height gain). The bias folds into calDb like the SDR
+ *    offset; the extra sigma widens how loosely that node's power is
+ *    trusted. Reference (0 dB, +0 sigma) = clear mast/tripod ~2 m up.
+ */
+
+struct TerrainProfile {
+    const char* id;
+    const char* label;
+    double exponent;   // path-loss exponent n
+};
+
+inline const std::vector<TerrainProfile>& terrainProfiles() {
+    static const std::vector<TerrainProfile> t = {
+        { "open_rural",   "Open / rural / flat ground",      2.2 },
+        { "suburban",     "Suburban / light clutter",        2.8 },
+        { "light_forest", "Light forest / parkland",         3.0 },
+        { "dense_forest", "Dense forest",                    3.6 },
+        { "urban",        "City / urban",                    3.3 },
+        { "dense_urban",  "Dense high-rise city",            4.0 },
+        { "mixed",        "Mixed / unknown",                 3.0 },
+    };
+    return t;
+}
+
+inline double terrainExponent(const std::string& id) {
+    for (auto& p : terrainProfiles()) {
+        if (id == p.id) return p.exponent;
+    }
+    return 3.0;
+}
+
+inline int terrainProfileIndex(const std::string& id) {
+    const auto& t = terrainProfiles();
+    for (size_t i = 0; i < t.size(); i++) {
+        if (id == t[i].id) return (int)i;
+    }
+    return (int)t.size() - 1;   // "mixed"
+}
+
+struct SitingProfile {
+    const char* id;
+    const char* label;
+    double offsetDb;      // systematic read bias vs clear-mast reference
+    double sigmaExtraDb;  // extra RSSI uncertainty from this placement
+};
+
+inline const std::vector<SitingProfile>& sitingProfiles() {
+    static const std::vector<SitingProfile> t = {
+        { "mast",          "Mast / tripod, clear (~2 m) — reference",  0.0, 0.0 },
+        { "ground",        "On the ground",                           -4.0, 1.5 },
+        { "body_worn",     "Body-worn / carried",                     -6.0, 3.0 },
+        { "vehicle_roof",  "Vehicle roof",                            -1.0, 0.5 },
+        { "side_building", "Side of building",                        -3.0, 2.5 },
+        { "rooftop",       "Top of large structure / rooftop",         4.0, 1.0 },
+        { "treetop",       "Tied to top of tree",                      2.0, 1.5 },
+        { "indoor_window", "Indoors near window",                     -8.0, 4.0 },
+        { "unknown",       "Other / unknown",                          0.0, 1.0 },
+    };
+    return t;
+}
+
+inline const SitingProfile& sitingProfile(const std::string& id) {
+    const auto& t = sitingProfiles();
+    for (auto& p : t) {
+        if (id == p.id) return p;
+    }
+    return t.back();   // "unknown"
+}
+
+inline int sitingProfileIndex(const std::string& id) {
+    const auto& t = sitingProfiles();
+    for (size_t i = 0; i < t.size(); i++) {
+        if (id == t[i].id) return (int)i;
+    }
+    return (int)t.size() - 1;
+}
+
+// Base RSSI noise sigma before siting inflation (matches the AOU default).
+inline double baseRssiSigmaDb() { return 6.0; }
+
 // The number stamped onto hit rows as row["calDb"], evaluated at the
 // hit's frequency.
-inline double calDbAt(const std::string& sdrId, const AntennaCurve& curve, double freqHz) {
+inline double calDbAt(const std::string& sdrId, const AntennaCurve& curve, double freqHz,
+                      const std::string& sitingId = "mast") {
     double a = antennaGainAt(curve, freqHz);
     if (!std::isfinite(a)) a = 0.0;
-    return sdrOffsetDb(sdrId) + a;
+    return sdrOffsetDb(sdrId) + a + sitingProfile(sitingId).offsetDb;
 }
 
 } // namespace predator::equipment
