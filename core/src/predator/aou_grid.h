@@ -183,6 +183,10 @@ inline Result computeAou(const std::vector<BearingObs>& bearings,
                 double da = std::max(30.0, std::hypot(x - ax, y - ay));
                 double db = std::max(30.0, std::hypot(x - bx, y - by));
                 double pairN = 0.5 * (pr.a->exponent + pr.b->exponent);
+                // NOTE: RMS of the two sigmas (two default-6dB nodes → 6dB,
+                // matching the old fixed constant), deliberately NOT full
+                // difference quadrature sqrt(sa²+sb²) — chosen for backward
+                // compatibility. Revisit if mixed-siting AOUs overconverge.
                 double pairSigma = std::max(3.0, std::sqrt(0.5 * (pr.a->sigmaDb * pr.a->sigmaDb
                                                                   + pr.b->sigmaDb * pr.b->sigmaDb)));
                 double predicted = -10.0 * pairN * std::log10(da / db);
