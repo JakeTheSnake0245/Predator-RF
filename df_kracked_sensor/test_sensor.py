@@ -212,6 +212,68 @@ class TestThrottleDedup(unittest.TestCase):
         self.assertIsNone(r)
 
 
+# ── DF Aggregator XML polling (stock krakensdr_doa bearing feed) ────────────
+
+# Field-verified sample from the operator's Kraken Pi.
+DFA_SAMPLE = (
+    "<DATA><STATION_ID>STATIC</STATION_ID><TIME>1784858533581</TIME>"
+    "<GPS_TIME>0</GPS_TIME><FREQUENCY>854.182592</FREQUENCY>"
+    "<LOCATION><LATITUDE>39.1928</LATITUDE><LONGITUDE>-76.7241</LONGITUDE>"
+    "<HEADING>180</HEADING></LOCATION><DOA>181.0</DOA><PWR>59.7</PWR>"
+    "<CONF>122</CONF><LATENCY>436</LATENCY><PROCESSING_TIME>10</PROCESSING_TIME></DATA>"
+)
+
+
+class TestDfAggregatorParse(unittest.TestCase):
+    def test_field_verified_sample(self):
+        msgs = sensor.parse_df_aggregator_xml(DFA_SAMPLE)
+        self.assertEqual(len(msgs), 1)
+        m = msgs[0]
+        self.assertEqual(m["type"], "doa_result")
+        # True bearing = DOA(181) + HEADING(180) mod 360 = 1.0
+        self.assertAlmostEqual(m["bearing_deg"], 1.0)
+        self.assertAlmostEqual(m["heading_deg"], 180.0)
+        self.assertAlmostEqual(m["frequency_hz"], 854182592.0, delta=1.0)
+        self.assertAlmostEqual(m["timestamp_unix"], 1784858533.581, places=3)
+        self.assertAlmostEqual(m["power_dbfs"], 59.7)
+        self.assertEqual(m["confidence"], 1.0)   # CONF 122 clamps to 1.0
+        self.assertAlmostEqual(m["gps_lat"], 39.1928)
+        self.assertAlmostEqual(m["gps_lon"], -76.7241)
+        self.assertEqual(m["station_id"], "STATIC")
+
+    def test_doa_is_true_skips_heading_add(self):
+        m = sensor.parse_df_aggregator_xml(DFA_SAMPLE, doa_is_true=True)[0]
+        self.assertAlmostEqual(m["bearing_deg"], 181.0)
+
+    def test_zero_latlon_omitted(self):
+        blob = DFA_SAMPLE.replace("39.1928", "0.0").replace("-76.7241", "0.0")
+        m = sensor.parse_df_aggregator_xml(blob)[0]
+        self.assertNotIn("gps_lat", m)
+
+    def test_garbage_and_missing_doa(self):
+        self.assertEqual(sensor.parse_df_aggregator_xml("not xml"), [])
+        self.assertEqual(sensor.parse_df_aggregator_xml(""), [])
+        self.assertEqual(
+            sensor.parse_df_aggregator_xml("<DATA><TIME>1</TIME></DATA>"), [])
+        self.assertEqual(sensor.parse_df_aggregator_xml(None), [])
+
+    def test_multiple_data_blocks(self):
+        msgs = sensor.parse_df_aggregator_xml(DFA_SAMPLE + DFA_SAMPLE.replace(
+            "181.0", "90.0"))
+        self.assertEqual(len(msgs), 2)
+
+    def test_parsed_msg_flows_into_event_row(self):
+        ring = EventRing()
+        pos = NodePosition(0, 0, 0, False)
+        ing = KrakenIngester("http://x/DOA_value.html", ring, pos, "n", "s")
+        m = sensor.parse_df_aggregator_xml(DFA_SAMPLE)[0]
+        row = ing.handle_doa_msg(m)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["decoder"], "KRAKEN_LOB")
+        self.assertAlmostEqual(row["raw"]["bearing_deg"], 1.0)
+        self.assertAlmostEqual(row["lat"], 39.1928)
+
+
 # ── aiohttp server auth + endpoints ─────────────────────────────────────────
 
 @unittest.skipUnless(os.name == "posix", "POSIX file-mode semantics required")

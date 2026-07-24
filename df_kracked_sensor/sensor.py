@@ -27,6 +27,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import sys
@@ -57,6 +58,13 @@ log = logging.getLogger("df_kracked_sensor")
 EVENT_RING_MAX = 500
 DEFAULT_PORT = 9151
 DEFAULT_WS_URL = "ws://127.0.0.1:8082/ws"
+# Stock krakensdr_doa has no websocket: it continuously rewrites a bearing
+# file in the web root served by miniserve on :8081. With
+# doa_data_format = "DF Aggregator" that file is a one-line XML blob
+# (field-verified). HTTP polling of this URL is therefore the DEFAULT
+# ingest mode; --ws switches to the websocket for custom builds.
+DEFAULT_DOA_URL = "http://127.0.0.1:8081/DOA_value.html"
+DOA_POLL_INTERVAL_S = 0.5
 # Throttle: at most ~2 events/s, and coalesce identical bearings within 0.5 s.
 MIN_EMIT_INTERVAL_S = 0.5
 DEDUP_WINDOW_S = 0.5
@@ -190,6 +198,71 @@ def doa_result_to_event_row(
         "serial": serial,
     }
     return row
+
+
+# ── DF Aggregator XML → doa_result-shaped messages ─────────────────────────
+#
+# Example frame (single line, one <DATA> block per active VFO):
+#   <DATA><STATION_ID>STATIC</STATION_ID><TIME>1784858533581</TIME>
+#   <GPS_TIME>0</GPS_TIME><FREQUENCY>854.182592</FREQUENCY>
+#   <LOCATION><LATITUDE>39.1928</LATITUDE><LONGITUDE>-76.7241</LONGITUDE>
+#   <HEADING>180</HEADING></LOCATION><DOA>181.0</DOA><PWR>59.7</PWR>
+#   <CONF>122</CONF><LATENCY>436</LATENCY>...
+#
+# TIME is epoch ms, FREQUENCY is MHz, DOA is the array-relative bearing
+# (the aggregator is expected to add HEADING — that's why HEADING is in
+# the frame at all). CONF is the krakensdr confidence metric (roughly
+# 0-99+, uncalibrated).
+
+_DFA_TAG = re.compile(r"<(STATION_ID|TIME|FREQUENCY|LATITUDE|LONGITUDE|HEADING|DOA|PWR|CONF)>([^<]*)</\1>")
+
+
+def parse_df_aggregator_xml(text: str, doa_is_true: bool = False) -> List[Dict[str, Any]]:
+    """Parse a DF Aggregator DOA_value.html blob into doa_result-shaped
+    dicts (one per <DATA> block) consumable by doa_result_to_event_row.
+
+    True bearing = (DOA + HEADING) mod 360 unless doa_is_true is set
+    (some builds write an already-heading-corrected DOA).
+    Blocks without a parseable DOA are skipped. Never raises.
+    """
+    out: List[Dict[str, Any]] = []
+    if not isinstance(text, str):
+        return out
+    for block in text.split("<DATA>"):
+        if "DOA" not in block:
+            continue
+        fields = {m.group(1): m.group(2).strip() for m in _DFA_TAG.finditer(block)}
+        try:
+            doa = float(fields["DOA"])
+        except (KeyError, ValueError):
+            continue
+        def _f(key: str, default: float = 0.0) -> float:
+            try:
+                return float(fields.get(key, ""))
+            except ValueError:
+                return default
+        heading = _f("HEADING", 0.0)
+        bearing = doa if doa_is_true else (doa + heading)
+        bearing %= 360.0
+        msg: Dict[str, Any] = {
+            "type": "doa_result",
+            "bearing_deg": bearing,
+            "heading_deg": heading,
+            "frequency_hz": _f("FREQUENCY") * 1e6,
+            "power_dbfs": _f("PWR"),
+            # CONF is uncalibrated (can exceed 100); clamp into [0,1].
+            "confidence": max(0.0, min(1.0, _f("CONF") / 100.0)),
+            "timestamp_unix": _f("TIME") / 1000.0,
+        }
+        lat, lon = _f("LATITUDE"), _f("LONGITUDE")
+        if lat != 0.0 or lon != 0.0:
+            msg["gps_lat"] = lat
+            msg["gps_lon"] = lon
+        sid = fields.get("STATION_ID")
+        if sid and sid not in ("", "NOCALL"):
+            msg["station_id"] = sid
+        out.append(msg)
+    return out
 
 
 def _is_num(v: Any) -> bool:
@@ -352,6 +425,11 @@ class KrakenIngester:
             return None
         if not isinstance(msg, dict) or msg.get("type") != "doa_result":
             return None  # ignore status/config frames silently
+        return self.handle_doa_msg(msg)
+
+    def handle_doa_msg(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Throttle/dedup + publish one doa_result-shaped dict (from either
+        the websocket or the DF Aggregator HTTP poller)."""
         self.events_received += 1
 
         bearing = msg.get("doa_max_deg")
@@ -378,6 +456,52 @@ class KrakenIngester:
         self._last_bearing = float(bearing)
         self._last_bearing_t = now
         return row
+
+    async def run_http(self, stop: asyncio.Event, url: str,
+                       doa_is_true: bool = False,
+                       interval_s: float = DOA_POLL_INTERVAL_S) -> None:
+        """Poll a DF Aggregator DOA_value.html and publish new frames.
+
+        A frame is 'new' when its TIME (timestamp_unix) advances — the DoA
+        software rewrites the file continuously, so an unchanged TIME means
+        no new measurement (e.g. squelch closed / recalibrating).
+        """
+        last_ts = 0.0
+        failures = 0
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=4.0))
+        try:
+            log.info("kraken: polling %s every %.1fs (DF Aggregator XML)",
+                     url, interval_s)
+            while not stop.is_set():
+                try:
+                    async with session.get(url) as resp:
+                        text = await resp.text()
+                    if resp.status != 200:
+                        raise RuntimeError(f"HTTP {resp.status}")
+                    if not self.connected:
+                        log.info("kraken: CONNECTED (HTTP poll)")
+                    self.connected = True
+                    failures = 0
+                    for msg in parse_df_aggregator_xml(text, doa_is_true):
+                        ts = _num(msg.get("timestamp_unix"), 0.0)
+                        if ts > last_ts:
+                            last_ts = ts
+                            self.handle_doa_msg(msg)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - keep polling
+                    failures += 1
+                    if self.connected or failures == 1:
+                        log.warning("kraken: poll failed (%s)", e)
+                    self.connected = False
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=interval_s)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            self.connected = False
+            await session.close()
 
     async def run(self, stop: asyncio.Event) -> None:
         if websockets is None:
@@ -724,8 +848,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                    help="API key; if omitted, generated & persisted next to sensor.py")
     p.add_argument("--name", default=None,
                    help="device name advertised on /v1/identify (default hostname)")
-    p.add_argument("--ws", default=DEFAULT_WS_URL,
-                   help=f"Kraken DoA websocket URL (default {DEFAULT_WS_URL})")
+    p.add_argument("--ws", default=None,
+                   help="Kraken DoA websocket URL (custom builds only, e.g. "
+                        f"{DEFAULT_WS_URL}). Default ingest is HTTP polling "
+                        "of --doa-url — stock krakensdr_doa has no websocket.")
+    p.add_argument("--doa-url", default=DEFAULT_DOA_URL,
+                   help="DF Aggregator bearing file to poll "
+                        f"(default {DEFAULT_DOA_URL}; requires "
+                        "doa_data_format='DF Aggregator' in the DoA settings)")
+    p.add_argument("--doa-is-true", action="store_true",
+                   help="treat the XML DOA field as an already-true bearing "
+                        "instead of adding HEADING (use if plotted LOBs are "
+                        "consistently off by the array heading)")
     p.add_argument("--node-id", default=None,
                    help="node_id label for events (default derived from name)")
     p.add_argument("--lat", type=float, default=None, help="fixed site latitude")
@@ -759,7 +893,8 @@ def build_runtime(args: argparse.Namespace) -> Tuple[
     )
 
     ring = EventRing(EVENT_RING_MAX)
-    ingester = KrakenIngester(args.ws, ring, pos, node_id, source_label)
+    ingester = KrakenIngester(args.ws or args.doa_url, ring, pos, node_id,
+                              source_label)
     app = KujhadSensorApp(key, device_name, ring, pos, ingester,
                           advertise=args.advertise)
     return app, ingester, pos, ring, key, device_name
@@ -787,7 +922,11 @@ async def run(args: argparse.Namespace) -> None:
 
     print_pairing_block(args.bind, args.port, key)
 
-    tasks = [asyncio.create_task(ingester.run(stop))]
+    if args.ws:
+        tasks = [asyncio.create_task(ingester.run(stop))]
+    else:
+        tasks = [asyncio.create_task(ingester.run_http(
+            stop, args.doa_url, doa_is_true=args.doa_is_true))]
     if args.gpsd:
         tasks.append(asyncio.create_task(gpsd_poll_loop(pos)))
 

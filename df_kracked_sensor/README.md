@@ -13,11 +13,19 @@ Predator RF `backend/`.
 ## What it does
 
 ```
-krakensdr_doa  ──ws://127.0.0.1:8082/ws──▶  sensor.py  ──HTTP+JSON (Kujhad v1)──▶  controller / phone
-   (DoA engine)      doa_result frames       KRAKEN_LOB events        X-Kujhad-Key auth
+krakensdr_doa  ──:8081/DOA_value.html──▶  sensor.py  ──HTTP+JSON (Kujhad v1)──▶  controller / phone
+   (DoA engine)    DF Aggregator XML poll    KRAKEN_LOB events        X-Kujhad-Key auth
 ```
 
-- Connects **read-only** to the Kraken DoA WebSocket. It does not upload,
+- **Default ingest: HTTP-polls the DF Aggregator bearing file** that stock
+  krakensdr_doa rewrites in its miniserve web root
+  (`http://127.0.0.1:8081/DOA_value.html`, 2 Hz). Requires
+  `doa_data_format = "DF Aggregator"` in the DoA settings. True bearing is
+  computed as `(DOA + HEADING) mod 360`; if your plotted LOBs are off by
+  exactly the array heading, pass `--doa-is-true`.
+- Custom builds with a DoA websocket can use `--ws ws://127.0.0.1:8082/ws`
+  instead.
+- Either way it is **read-only** against the Kraken. It does not upload,
   retune, or otherwise touch the Kraken — it just listens, so it does **not
   conflict** with the decoder module or the controller's own Kraken control.
 - Converts each usable `doa_result` frame into a `KRAKEN_LOB` event row whose
@@ -29,9 +37,9 @@ krakensdr_doa  ──ws://127.0.0.1:8082/ws──▶  sensor.py  ──HTTP+JSON
 ## Prerequisites
 
 - `krakensdr_doa` running on the Pi with:
-  - **`en_remote_control = true`** (so the DoA engine exposes its data feed),
-  - the DoA data server / miniserve reachable at **`ws://127.0.0.1:8082/ws`**
-    (this is the default; override with `--ws` if your build differs).
+  - **`en_remote_control = true`** (so miniserve serves the web root on :8081),
+  - **`doa_data_format = "DF Aggregator"`** (so `DOA_value.html` contains the
+    XML bearing frame this sensor parses).
 - Python 3.8+ (`python3`), `pip3`.
 - Overlay network up (ZeroTier or Headscale/Tailscale) so peers can reach the Pi.
 
@@ -75,7 +83,9 @@ Key CLI flags:
 | `--port` | HTTP port (default `9151`) |
 | `--key`  | API key; if omitted, one is generated and persisted to `df_kracked_sensor.json` next to the script and reused |
 | `--name` | device name on `/v1/identify` (default hostname) |
-| `--ws`   | Kraken DoA websocket URL (default `ws://127.0.0.1:8082/ws`) |
+| `--doa-url` | DF Aggregator bearing file to poll (default `http://127.0.0.1:8081/DOA_value.html`) |
+| `--doa-is-true` | treat the XML `DOA` field as already heading-corrected (skip `+ HEADING`) |
+| `--ws`   | opt-in: DoA websocket URL for custom builds (e.g. `ws://127.0.0.1:8082/ws`); disables polling |
 | `--lat` / `--lon` / `--heading` | fixed-site position (heading default 0) |
 | `--gpsd` | poll `gpsd` on `localhost:2947` for live position (degrades gracefully) |
 
