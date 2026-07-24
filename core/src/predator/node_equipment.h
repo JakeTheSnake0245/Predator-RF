@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 
 /*
  * Node equipment calibration table.
@@ -10,10 +11,10 @@
  * works if every node reports power on a comparable scale. Real hardware
  * doesn't: an RTL-SDR v3, an RTL clone, and a HackRF all read the same
  * signal several dB apart, and antenna gain adds on top. Each node
- * therefore declares its SDR type and antenna gain, and every hit row is
- * stamped with a single correction term:
+ * therefore declares its SDR type and antenna gain curve, and every hit
+ * row is stamped with a correction term evaluated AT THE HIT'S FREQUENCY:
  *
- *     calDb = sdrOffsetDb(type) + antennaGainDb
+ *     calDb(hit) = sdrOffsetDb(type) + antennaGainAt(curve, hit.freq)
  *     comparable_power = strengthDb - calDb
  *
  * The offsets below are engineering approximations of typical front-end
@@ -61,27 +62,74 @@ inline int sdrProfileIndex(const std::string& id) {
     return (int)t.size() - 1;   // "unknown"
 }
 
+/*
+ * Antenna gain is FREQUENCY-DEPENDENT: a GMRS whip that's +5 dB at
+ * 465 MHz is typically well below isotropic at 900 MHz ISM, and a
+ * 900 MHz yagi is useless at VHF. Since the fleet hunts arbitrary
+ * frequencies (not one standard band), each node declares its antenna
+ * as a gain CURVE — a few (freqMhz, gainDb) points — and every hit is
+ * corrected at the hit's own frequency.
+ *
+ * Interpolation is linear in log10(frequency) (antenna responses are
+ * smoother in log-f); outside the declared points the nearest end
+ * value is held. A single-point curve therefore acts as a flat gain.
+ */
+
+struct GainPoint {
+    double freqMhz;
+    double gainDb;
+};
+using AntennaCurve = std::vector<GainPoint>;
+
+inline double antennaGainAt(const AntennaCurve& curve, double freqHz) {
+    if (curve.empty()) return 0.0;
+    AntennaCurve s = curve;
+    std::sort(s.begin(), s.end(), [](const GainPoint& a, const GainPoint& b) {
+        return a.freqMhz < b.freqMhz;
+    });
+    double f = freqHz / 1e6;
+    if (!std::isfinite(f) || f <= 0.0 || f <= s.front().freqMhz) return s.front().gainDb;
+    if (f >= s.back().freqMhz) return s.back().gainDb;
+    for (size_t i = 1; i < s.size(); i++) {
+        if (f <= s[i].freqMhz) {
+            double f0 = std::log10(std::max(s[i - 1].freqMhz, 0.001));
+            double f1 = std::log10(std::max(s[i].freqMhz, 0.001));
+            double t = (f1 > f0) ? (std::log10(f) - f0) / (f1 - f0) : 0.0;
+            t = std::clamp(t, 0.0, 1.0);
+            return s[i - 1].gainDb + t * (s[i].gainDb - s[i - 1].gainDb);
+        }
+    }
+    return s.back().gainDb;
+}
+
+// Presets are starting POINTS, not whole curves: picking one adds a
+// (freq, gain) point at the band the antenna is actually built for. The
+// operator adds more points to describe off-band behavior.
 struct AntennaPreset {
     const char* label;
+    double freqMhz;
     double gainDb;
 };
 
 inline const std::vector<AntennaPreset>& antennaPresets() {
     static const std::vector<AntennaPreset> t = {
-        { "Stock whip / rubber duck (0 dB)", 0.0 },
-        { "Dipole kit (2 dB)",               2.0 },
-        { "GMRS 3 dB",                       3.0 },
-        { "GMRS 5 dB",                       5.0 },
-        { "Discone (2 dB)",                  2.0 },
-        { "Yagi 7 dB",                       7.0 },
-        { "Custom",                          0.0 },
+        { "Stock whip / rubber duck (0 dB, wideband)", 400.0, 0.0 },
+        { "VHF dipole (2 dB @ 150 MHz)",               150.0, 2.0 },
+        { "GMRS 3 dB @ 465 MHz",                       465.0, 3.0 },
+        { "GMRS 5 dB @ 465 MHz",                       465.0, 5.0 },
+        { "900 MHz ISM 5 dB @ 915 MHz",                915.0, 5.0 },
+        { "900 MHz ISM 8 dB @ 915 MHz",                915.0, 8.0 },
+        { "Discone (2 dB, wideband @ 400 MHz)",        400.0, 2.0 },
+        { "Yagi 7 dB @ 465 MHz",                       465.0, 7.0 },
     };
     return t;
 }
 
-// The single number stamped onto hit rows as row["calDb"].
-inline double calDb(const std::string& sdrId, double antennaGainDb) {
-    double a = std::isfinite(antennaGainDb) ? antennaGainDb : 0.0;
+// The number stamped onto hit rows as row["calDb"], evaluated at the
+// hit's frequency.
+inline double calDbAt(const std::string& sdrId, const AntennaCurve& curve, double freqHz) {
+    double a = antennaGainAt(curve, freqHz);
+    if (!std::isfinite(a)) a = 0.0;
     return sdrOffsetDb(sdrId) + a;
 }
 

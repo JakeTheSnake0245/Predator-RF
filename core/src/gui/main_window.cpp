@@ -61,7 +61,7 @@ static double nodeStaticLat = 0.0;
 static double nodeStaticLon = 0.0;
 static bool nodeGpsdEnabled = false;
 static std::string nodeSdrType = "unknown";
-static double nodeAntennaGainDb = 0.0;
+static predator::equipment::AntennaCurve nodeAntennaCurve;
 static predator::GpsdClient nodeGpsd;
 
 // Deterministic teardown for the gpsd poll thread — called from the app
@@ -77,7 +77,13 @@ static void nodeEquipPersist() {
     core::configManager.conf["predatorNodeLon"] = nodeStaticLon;
     core::configManager.conf["predatorNodeGpsd"] = nodeGpsdEnabled;
     core::configManager.conf["predatorSdrType"] = nodeSdrType;
-    core::configManager.conf["predatorAntennaGainDb"] = nodeAntennaGainDb;
+    {
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto& p : nodeAntennaCurve) {
+            arr.push_back(nlohmann::json{ { "f", p.freqMhz }, { "g", p.gainDb } });
+        }
+        core::configManager.conf["predatorAntennaCurve"] = arr;
+    }
     core::configManager.release(true);
 }
 #include "../predator/hold_binding_registry.h"
@@ -347,7 +353,25 @@ void MainWindow::init() {
             nodeStaticLon = cfg.value("predatorNodeLon", 0.0);
             nodeGpsdEnabled = cfg.value("predatorNodeGpsd", false);
             nodeSdrType = cfg.value("predatorSdrType", std::string("unknown"));
-            nodeAntennaGainDb = cfg.value("predatorAntennaGainDb", 0.0);
+            nodeAntennaCurve.clear();
+            if (cfg.contains("predatorAntennaCurve") && cfg["predatorAntennaCurve"].is_array()) {
+                for (auto& p : cfg["predatorAntennaCurve"]) {
+                    if (!p.is_object()) continue;
+                    double f = p.value("f", 0.0), g = p.value("g", 0.0);
+                    if (f > 0.0 && std::isfinite(g)) {
+                        nodeAntennaCurve.push_back({ f, g });
+                    }
+                    if (nodeAntennaCurve.size() >= 16) break;
+                }
+            }
+            else {
+                // Migration from the older single flat gain value: a
+                // one-point curve behaves identically (constant gain).
+                double flat = cfg.value("predatorAntennaGainDb", 0.0);
+                if (flat != 0.0) {
+                    nodeAntennaCurve.push_back({ 400.0, flat });
+                }
+            }
         }
         // Migration: older configs only have the mirror bool.
         kujhadPeerViewMode = std::clamp<int>(
@@ -2475,11 +2499,13 @@ void MainWindow::draw() {
                 }
             }
         }
-        // Equipment calibration: single correction term so mismatched
-        // hardware reads comparably fleet-wide (see node_equipment.h).
+        // Equipment calibration, evaluated AT THE HIT'S FREQUENCY: antenna
+        // gain is band-dependent (a 5 dB GMRS whip is not 5 dB at 900 MHz
+        // ISM), so the correction must follow the frequency being hunted.
         {
+            double hitFreq = row.value("frequency", 0.0);
             std::lock_guard<std::mutex> lk(nodeEquipMtx);
-            row["calDb"] = predator::equipment::calDb(nodeSdrType, nodeAntennaGainDb);
+            row["calDb"] = predator::equipment::calDbAt(nodeSdrType, nodeAntennaCurve, hitFreq);
         }
         row["serial"] = ++predatorEventSerial;
         events.insert(events.begin(), row);
@@ -3022,8 +3048,11 @@ void MainWindow::draw() {
                 j["lon"] = nodeStaticLon;
                 j["gpsdEnabled"] = nodeGpsdEnabled;
                 j["sdrType"] = nodeSdrType;
-                j["antennaGainDb"] = nodeAntennaGainDb;
-                j["calDb"] = predator::equipment::calDb(nodeSdrType, nodeAntennaGainDb);
+                json curve = json::array();
+                for (auto& p : nodeAntennaCurve) {
+                    curve.push_back(json{ { "f", p.freqMhz }, { "g", p.gainDb } });
+                }
+                j["antennaCurve"] = curve;
             }
             double gLat = 0.0, gLon = 0.0;
             j["gpsdFix"] = nodeGpsd.getFix(gLat, gLon);
@@ -3036,7 +3065,7 @@ void MainWindow::draw() {
             j["sdrOptions"] = opts;
             json presets = json::array();
             for (auto& p : predator::equipment::antennaPresets()) {
-                presets.push_back(json{ { "label", p.label }, { "gainDb", p.gainDb } });
+                presets.push_back(json{ { "label", p.label }, { "freqMhz", p.freqMhz }, { "gainDb", p.gainDb } });
             }
             j["antennaPresets"] = presets;
             return j;
@@ -3048,8 +3077,26 @@ void MainWindow::draw() {
                 err = "lat/lon out of range";
                 return false;
             }
-            double ant = in.value("antennaGainDb", 0.0);
-            if (!(ant >= -20.0 && ant <= 30.0)) { err = "antenna gain out of range (-20..30 dB)"; return false; }
+            // Antenna gain curve: array of {f: MHz, g: dB} points. A
+            // legacy flat antennaGainDb is accepted and converted to a
+            // one-point curve.
+            predator::equipment::AntennaCurve curve;
+            if (in.contains("antennaCurve")) {
+                if (!in["antennaCurve"].is_array()) { err = "antennaCurve must be an array"; return false; }
+                if (in["antennaCurve"].size() > 16) { err = "antennaCurve: max 16 points"; return false; }
+                for (auto& p : in["antennaCurve"]) {
+                    if (!p.is_object()) { err = "antennaCurve entries must be objects"; return false; }
+                    double f = p.value("f", 0.0), g = p.value("g", 0.0);
+                    if (!(f >= 0.1 && f <= 7000.0)) { err = "antennaCurve: frequency out of range (0.1..7000 MHz)"; return false; }
+                    if (!(g >= -30.0 && g <= 40.0)) { err = "antennaCurve: gain out of range (-30..40 dB)"; return false; }
+                    curve.push_back({ f, g });
+                }
+            }
+            else {
+                double ant = in.value("antennaGainDb", 0.0);
+                if (!(ant >= -30.0 && ant <= 40.0)) { err = "antenna gain out of range (-30..40 dB)"; return false; }
+                if (ant != 0.0) { curve.push_back({ 400.0, ant }); }
+            }
             std::string sdr = in.value("sdrType", std::string("unknown"));
             bool known = false;
             for (auto& p : predator::equipment::sdrProfiles()) {
@@ -3062,7 +3109,7 @@ void MainWindow::draw() {
                 nodeStaticLon = lo;
                 nodeGpsdEnabled = in.value("gpsdEnabled", false);
                 nodeSdrType = sdr;
-                nodeAntennaGainDb = ant;
+                nodeAntennaCurve = curve;
             }
             nodeEquipPersist();
             return true;
@@ -10230,14 +10277,15 @@ void MainWindow::draw() {
                 // Same values the headless /setup web portal edits — one
                 // config, two front doors. On Android the phone GPS wins
                 // whenever it has a fix; these are the no-fix fallback.
-                double eLat, eLon, eAnt;
+                double eLat, eLon;
                 bool eGpsd;
                 std::string eSdr;
+                predator::equipment::AntennaCurve eCurve;
                 {
                     std::lock_guard<std::mutex> lk(nodeEquipMtx);
                     eLat = nodeStaticLat; eLon = nodeStaticLon;
                     eGpsd = nodeGpsdEnabled; eSdr = nodeSdrType;
-                    eAnt = nodeAntennaGainDb;
+                    eCurve = nodeAntennaCurve;
                 }
                 bool changed = false;
                 ImGui::TextDisabled("%s", T("Static position (used when no GPS fix)"));
@@ -10270,24 +10318,53 @@ void MainWindow::draw() {
                         }
                         ImGui::EndCombo();
                     }
+                    // Antenna gain CURVE: gain is band-dependent, so the
+                    // antenna is declared as (frequency, gain) points and
+                    // each hit is corrected at its own frequency. Presets
+                    // append a point at the band the antenna is built for.
+                    ImGui::TextDisabled("%s", T("Antenna gain points (dB at MHz — add one per band you hunt)"));
                     const auto& presets = predator::equipment::antennaPresets();
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
-                    if (ImGui::BeginCombo(T("Antenna##nodeequip"), T("Preset..."))) {
+                    if (ImGui::BeginCombo(T("Add preset point##nodeequip"), T("Preset..."))) {
                         for (auto& p : presets) {
-                            if (ImGui::Selectable(p.label, false)) {
-                                if (std::string(p.label) != "Custom") {
-                                    eAnt = p.gainDb;
-                                    changed = true;
-                                }
+                            if (ImGui::Selectable(p.label, false) && eCurve.size() < 16) {
+                                eCurve.push_back({ p.freqMhz, p.gainDb });
+                                changed = true;
                             }
                         }
                         ImGui::EndCombo();
                     }
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.4f);
-                    changed |= ImGui::InputDouble(T("Antenna gain dB##nodeequip"), &eAnt, 0.5, 1.0, "%.1f");
-                    eAnt = std::clamp(eAnt, -20.0, 30.0);
-                    ImGui::TextDisabled("%s %.1f dB", T("Net RSSI correction:"),
-                                        predator::equipment::calDb(eSdr, eAnt));
+                    int removeIdx = -1;
+                    for (int i = 0; i < (int)eCurve.size(); i++) {
+                        ImGui::PushID(i);
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.3f);
+                        changed |= ImGui::InputDouble(T("MHz##antf"), &eCurve[i].freqMhz, 0.0, 0.0, "%.1f");
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.35f);
+                        changed |= ImGui::InputDouble(T("dB##antg"), &eCurve[i].gainDb, 0.5, 1.0, "%.1f");
+                        ImGui::SameLine();
+                        if (ImGui::Button(T("X##antdel"))) { removeIdx = i; }
+                        eCurve[i].freqMhz = std::clamp(eCurve[i].freqMhz, 0.1, 7000.0);
+                        eCurve[i].gainDb = std::clamp(eCurve[i].gainDb, -30.0, 40.0);
+                        ImGui::PopID();
+                    }
+                    if (removeIdx >= 0) {
+                        eCurve.erase(eCurve.begin() + removeIdx);
+                        changed = true;
+                    }
+                    if (eCurve.size() < 16 && ImGui::Button(T("+ Add point##nodeequip"))) {
+                        eCurve.push_back({ 400.0, 0.0 });
+                        changed = true;
+                    }
+                    if (eCurve.empty()) {
+                        ImGui::TextDisabled("%s", T("No points: antenna treated as 0 dB at all frequencies."));
+                    }
+                    else {
+                        double fRx = (double)gui::freqSelect.frequency;
+                        ImGui::TextDisabled(T("Correction at %.3f MHz: %.1f dB (SDR + antenna)"),
+                                            fRx / 1e6,
+                                            predator::equipment::calDbAt(eSdr, eCurve, fRx));
+                    }
                 }
                 if (changed) {
                     {
@@ -10296,7 +10373,7 @@ void MainWindow::draw() {
                         nodeStaticLon = eLon;
                         nodeGpsdEnabled = eGpsd;
                         nodeSdrType = eSdr;
-                        nodeAntennaGainDb = eAnt;
+                        nodeAntennaCurve = eCurve;
                     }
                     nodeEquipPersist();
                 }
