@@ -286,7 +286,12 @@ class EventRing:
 
     def __init__(self, maxlen: int = EVENT_RING_MAX):
         self._rows: Deque[Dict[str, Any]] = deque(maxlen=maxlen)
-        self._serial = 0
+        # Serial base = boot time in ms. Serials must stay monotonically
+        # increasing ACROSS sensor restarts: controllers poll with
+        # since=<last seen serial> and never lower their cursor, so a
+        # restart that reset serials to 0 would silently mute every new
+        # event until the count exceeded the old cursor (field-hit bug).
+        self._serial = int(time.time() * 1000)
 
     def next_serial(self) -> int:
         self._serial += 1

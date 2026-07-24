@@ -155,19 +155,20 @@ class TestEventRing(unittest.TestCase):
 
     def test_since_cursor(self):
         ring = EventRing()
+        base = ring.last_serial()   # boot-time serial base (restart-monotonic)
         for _ in range(5):
             self._row(ring)
-        events, last_id = ring.since(0)
+        events, last_id = ring.since(base)
         self.assertEqual(len(events), 5)
-        self.assertEqual(last_id, 5)
-        # since=3 → only serials 4,5
-        events, last_id = ring.since(3)
-        self.assertEqual([e["serial"] for e in events], [4, 5])
-        self.assertEqual(last_id, 5)
+        self.assertEqual(last_id, base + 5)
+        # since=base+3 → only serials base+4, base+5
+        events, last_id = ring.since(base + 3)
+        self.assertEqual([e["serial"] for e in events], [base + 4, base + 5])
+        self.assertEqual(last_id, base + 5)
         # since at head → nothing new, lastId stays at since
-        events, last_id = ring.since(5)
+        events, last_id = ring.since(base + 5)
         self.assertEqual(events, [])
-        self.assertEqual(last_id, 5)
+        self.assertEqual(last_id, base + 5)
 
     def test_since_oldest_first(self):
         ring = EventRing()
@@ -179,12 +180,25 @@ class TestEventRing(unittest.TestCase):
 
     def test_ring_bounded(self):
         ring = EventRing(maxlen=3)
+        base = ring.last_serial()
         for _ in range(5):
             self._row(ring)
-        events, last_id = ring.since(0)
+        events, last_id = ring.since(base)
         self.assertEqual(len(events), 3)          # only last 3 retained
-        self.assertEqual([e["serial"] for e in events], [3, 4, 5])
-        self.assertEqual(last_id, 5)
+        self.assertEqual([e["serial"] for e in events],
+                         [base + 3, base + 4, base + 5])
+        self.assertEqual(last_id, base + 5)
+
+    def test_serial_base_survives_restart(self):
+        # A fresh ring (simulated restart) must start ABOVE any serial a
+        # controller could have seen from the previous run, else its
+        # since-cursor mutes all new events (field-hit bug).
+        old = EventRing()
+        for _ in range(50):
+            old.next_serial()
+        time.sleep(0.01)
+        fresh = EventRing()
+        self.assertGreater(fresh.last_serial() + 1, old.last_serial())
 
 
 class TestThrottleDedup(unittest.TestCase):
@@ -359,19 +373,20 @@ class TestServer(AioHTTPTestCase):
         self.assertEqual(body["searchBands"], [])
 
     async def test_events_since_cursor(self):
+        base = self.ring.last_serial()
         await self._seed(3)
-        resp = await self.client.get("/v1/events?since=0",
+        resp = await self.client.get(f"/v1/events?since={base}",
                                      headers={"X-Kujhad-Key": "SECRETKEY"})
         body = await resp.json()
-        self.assertEqual(body["lastId"], 3)
+        self.assertEqual(body["lastId"], base + 3)
         self.assertEqual(len(body["events"]), 3)
         self.assertEqual(body["events"][0]["decoder"], "KRAKEN_LOB")
 
-        resp = await self.client.get("/v1/events?since=2",
+        resp = await self.client.get(f"/v1/events?since={base + 2}",
                                      headers={"X-Kujhad-Key": "SECRETKEY"})
         body = await resp.json()
-        self.assertEqual([e["serial"] for e in body["events"]], [3])
-        self.assertEqual(body["lastId"], 3)
+        self.assertEqual([e["serial"] for e in body["events"]], [base + 3])
+        self.assertEqual(body["lastId"], base + 3)
 
     async def test_command_graceful_501(self):
         resp = await self.client.post(
