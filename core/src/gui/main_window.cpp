@@ -1661,6 +1661,12 @@ void MainWindow::draw() {
     std::string dataOutputPath = "%ROOT%/data";
     std::string sessionNote = "";
     double hitClusterHz = 3000.0;
+    // Run the map-bridge tick BEFORE snapshotting `events` below. The tick
+    // inserts peer rows into conf["predatorEvents"] and saves; running it
+    // after the snapshot would let any later savePredatorEvents(events) of
+    // the stale copy silently erase those rows — the same "evaporating
+    // rows" bug class fixed earlier, reintroduced through the back door.
+    backgroundMapTick();
     core::configManager.acquire();
     searchBands = core::configManager.conf["predatorSearchBands"];
     targets = core::configManager.conf["predatorTargets"];
@@ -2530,11 +2536,10 @@ void MainWindow::draw() {
         }
     }
 
-    // -------- Map bridges (Kraken tasking, event markers, fleet LOBs) ----
-    // All map-facing pushes moved to backgroundMapTick() so the map stays
-    // live while the ImGui surface is paused (Android map screen in front).
-    // The Android render loop also calls this directly while paused.
-    backgroundMapTick();
+    // Map bridges (Kraken tasking, event markers, fleet LOBs) moved to
+    // backgroundMapTick(), called at the TOP of draw() — before the
+    // per-frame `events` snapshot — and from the Android render loop
+    // while rendering is paused.
 
     // -------- Decoder bridge ingestion (ADS-B / dump1090) --------
     // BaseStation port 30003 CSV feed from dump1090 / readsb. Each MSG line
