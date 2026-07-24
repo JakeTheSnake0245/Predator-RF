@@ -700,6 +700,85 @@ inline bool kujhadSendResponse(KujhadConnection& conn, const KujhadHttpResponse&
 // v1; native ImGui keeps running in parallel for full SDR control.
 // ---------------------------------------------------------------------------
 
+// Node setup portal: static-sensor commissioning page served at GET /setup.
+// Lets an operator on a headless Linux box (or any peer, with the API key)
+// read the pairing code and set position + equipment calibration. Same
+// auth model as the console: the PAGE is public, every /v1 call it makes
+// carries X-Kujhad-Key (found in the node's config file at install time).
+inline std::string kujhadNodeSetupHtml() {
+    return std::string(
+"<!doctype html><html lang=en><head><meta charset=utf-8>"
+"<title>Predator RF \u2014 Node Setup</title>"
+"<meta name=viewport content='width=device-width,initial-scale=1'>"
+"<style>"
+"body{background:#05080a;color:#c8d8e0;font-family:'JetBrains Mono',Consolas,monospace;font-size:13px;margin:0;padding:14px;max-width:560px}"
+"h1{color:#3fd17d;letter-spacing:.18em;font-size:13px;margin:0 0 12px;text-transform:uppercase}"
+"h2{color:#4ad8e8;font-size:12px;text-transform:uppercase;letter-spacing:.1em;margin:18px 0 6px;border-bottom:1px solid #1f3540;padding-bottom:3px}"
+"input,button,select{background:#0f171c;color:#c8d8e0;border:1px solid #2a4a5a;padding:6px 8px;font-family:inherit;font-size:12px;box-sizing:border-box}"
+"input,select{width:100%}"
+"button{cursor:pointer;color:#3fd17d;width:auto}"
+"button:hover{border-color:#3fd17d}"
+"label{display:block;color:#7a95a3;margin:8px 0 2px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}"
+".row{display:flex;gap:8px}.row>div{flex:1}"
+"#msg{margin-top:10px;min-height:16px}.ok{color:#3fd17d}.err{color:#e86a5a}"
+"pre{background:#0f171c;border:1px solid #2a4a5a;padding:8px;white-space:pre-wrap;word-break:break-all;font-size:11px}"
+".hint{color:#5a7482;font-size:11px;margin-top:2px}"
+"</style></head><body>"
+"<h1>Predator RF \u2014 Node Setup</h1>"
+"<label>API key</label><input id=key type=password placeholder='from this node\\'s config (kujhadApiKey)'>"
+"<div class=hint>Stored only in this browser. Find it in the node's SDR++ config JSON.</div>"
+"<h2>Pairing</h2>"
+"<button onclick='loadPairing()'>Show peer code</button> <button onclick='copyPairing()'>Copy</button>"
+"<pre id=pairing>\u2014</pre>"
+"<div class=hint>Paste this JSON into the controller's manual-pair form (same payload as the QR).</div>"
+"<h2>Position</h2>"
+"<div class=row><div><label>Latitude</label><input id=lat type=number step=any></div>"
+"<div><label>Longitude</label><input id=lon type=number step=any></div></div>"
+"<label><input id=gpsd type=checkbox style='width:auto'> Pull live position from gpsd (USB GPS dongle on this box)</label>"
+"<div class=hint>With gpsd enabled, a live fix overrides the static coordinates; the static values remain the fallback.</div>"
+"<h2>Equipment</h2>"
+"<label>SDR attached</label><select id=sdr></select>"
+"<label>Antenna preset</label><select id=antpreset onchange='antPresetPick()'></select>"
+"<label>Antenna gain (dB)</label><input id=antgain type=number step=0.5 value=0>"
+"<div class=hint>Net RSSI correction: <span id=cal>0.0</span> dB (SDR offset + antenna gain). Applied fleet-wide so power comparisons between mismatched nodes stay honest.</div>"
+"<p><button onclick='loadCfg()'>Load current</button> <button onclick='saveCfg()'>Save</button></p>"
+"<div id=msg></div>"
+"<script>"
+"const $=id=>document.getElementById(id);"
+"$('key').value=localStorage.getItem('kujhadKey')||'';"
+"$('key').addEventListener('change',()=>localStorage.setItem('kujhadKey',$('key').value));"
+"function hdrs(){return{'X-Kujhad-Key':$('key').value,'Content-Type':'application/json'}}"
+"function msg(t,ok){const m=$('msg');m.textContent=t;m.className=ok?'ok':'err'}"
+"let sdrOptions=[];"
+"function recalc(){const o=sdrOptions.find(s=>s.id===$('sdr').value);"
+"const c=(o?o.offsetDb:0)+(parseFloat($('antgain').value)||0);$('cal').textContent=c.toFixed(1)}"
+"function antPresetPick(){const v=$('antpreset').value;if(v!=='custom'){$('antgain').value=v}recalc()}"
+"async function loadCfg(){try{const r=await fetch('/v1/node-config',{headers:hdrs()});"
+"if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();"
+"sdrOptions=j.sdrOptions||[];"
+"$('sdr').innerHTML=sdrOptions.map(s=>`<option value='${s.id}'>${s.label} (${s.offsetDb>=0?'+':''}${s.offsetDb} dB)</option>`).join('');"
+"$('antpreset').innerHTML=(j.antennaPresets||[]).map(p=>`<option value='${p.label==='Custom'?'custom':p.gainDb}'>${p.label}</option>`).join('');"
+"$('antpreset').value='custom';"
+"$('lat').value=j.lat||'';$('lon').value=j.lon||'';$('gpsd').checked=!!j.gpsdEnabled;"
+"$('sdr').value=j.sdrType||'unknown';$('antgain').value=j.antennaGainDb||0;recalc();"
+"msg('Loaded.'+(j.gpsdFix?' gpsd fix: '+j.gpsdLat.toFixed(5)+', '+j.gpsdLon.toFixed(5):''),true)}"
+"catch(e){msg('Load failed: '+e.message,false)}}"
+"$('sdr').addEventListener('change',recalc);$('antgain').addEventListener('input',recalc);"
+"async function saveCfg(){try{const body={lat:parseFloat($('lat').value)||0,lon:parseFloat($('lon').value)||0,"
+"gpsdEnabled:$('gpsd').checked,sdrType:$('sdr').value,antennaGainDb:parseFloat($('antgain').value)||0};"
+"const r=await fetch('/v1/node-config',{method:'POST',headers:hdrs(),body:JSON.stringify(body)});"
+"const j=await r.json();if(!r.ok||j.error)throw new Error(j.error||('HTTP '+r.status));"
+"msg('Saved. Hits from this node now carry the correction.',true)}"
+"catch(e){msg('Save failed: '+e.message,false)}}"
+"async function loadPairing(){try{const r=await fetch('/v1/pairing',{headers:hdrs()});"
+"if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();"
+"$('pairing').textContent=JSON.stringify(j);msg('Pairing code loaded.',true)}"
+"catch(e){msg('Pairing failed: '+e.message,false)}}"
+"function copyPairing(){const t=$('pairing').textContent;if(t&&t!=='\\u2014'){navigator.clipboard&&navigator.clipboard.writeText(t);msg('Copied.',true)}}"
+"loadCfg();"
+"</script></body></html>");
+}
+
 inline std::string kujhadWebConsoleHtml() {
     return std::string(
 "<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -831,6 +910,9 @@ public:
     void setStateProvider(SnapshotProvider fn)    { stateProvider_    = std::move(fn); }
     void setGpsProvider(SnapshotProvider fn)      { gpsProvider_      = std::move(fn); }
     void setEventsProvider(std::function<kujhad_json(uint64_t since)> fn) { eventsProvider_ = std::move(fn); }
+    void setNodeConfigProvider(SnapshotProvider fn) { nodeConfigProvider_ = std::move(fn); }
+    void setNodeConfigApplier(std::function<bool(const kujhad_json&, std::string&)> fn) { nodeConfigApplier_ = std::move(fn); }
+    void setPairingInfoProvider(SnapshotProvider fn) { pairingInfoProvider_ = std::move(fn); }
     void setCommandHandler(CommandHandler fn)     { commandHandler_   = std::move(fn); }
     void setSpectrumProvider(SpectrumProvider fn) { spectrumProvider_ = std::move(fn); }
     // Opt-in gate for networked Remote Fox Hunt beacon tasking. Default OFF:
@@ -1211,6 +1293,15 @@ private:
             return;
         }
 
+        // Node setup portal — public page (same model as the console: the
+        // page loads keyless; every API call it makes must carry the key).
+        if (req.method == "GET" && path == "/setup") {
+            res.contentType = "text/html; charset=utf-8";
+            res.body = kujhadNodeSetupHtml();
+            kujhadSendResponse(conn, res);
+            return;
+        }
+
         // API-key auth gate for everything under /v1/*. Header name is
         // X-Kujhad-Key (case-insensitive). Anything that is not the
         // public console must present the key.
@@ -1323,6 +1414,27 @@ private:
             // streamGuard's destructor decrements activeSpectrumStreams_.
             return;
         }
+        else if (req.method == "GET" && path == "/v1/node-config") {
+            kujhad_json j = nodeConfigProvider_ ? nodeConfigProvider_() : kujhad_json::object();
+            res.body = j.dump();
+        }
+        else if (req.method == "POST" && path == "/v1/node-config") {
+            kujhad_json body;
+            try { body = kujhad_json::parse(req.body.empty() ? std::string("{}") : req.body); }
+            catch (...) { body = kujhad_json::object(); }
+            std::string err;
+            if (nodeConfigApplier_ && nodeConfigApplier_(body, err)) {
+                res.body = "{\"ok\":true}";
+            } else {
+                res.status = 400;
+                kujhad_json e; e["error"] = err.empty() ? "invalid config" : err;
+                res.body = e.dump();
+            }
+        }
+        else if (req.method == "GET" && path == "/v1/pairing") {
+            kujhad_json j = pairingInfoProvider_ ? pairingInfoProvider_() : kujhad_json::object();
+            res.body = j.dump();
+        }
         else if (req.method == "POST" && path == "/v1/command") {
             kujhad_json body;
             try { body = kujhad_json::parse(req.body.empty() ? std::string("{}") : req.body); }
@@ -1414,6 +1526,9 @@ private:
     SnapshotProvider stateProvider_;
     SnapshotProvider gpsProvider_;
     std::function<kujhad_json(uint64_t)> eventsProvider_;
+    SnapshotProvider nodeConfigProvider_;
+    std::function<bool(const kujhad_json&, std::string&)> nodeConfigApplier_;
+    SnapshotProvider pairingInfoProvider_;
     CommandHandler commandHandler_;
     SpectrumProvider spectrumProvider_;
     std::atomic<int> spectrumIntervalMs_{200};

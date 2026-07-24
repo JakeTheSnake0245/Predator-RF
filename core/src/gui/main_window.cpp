@@ -49,6 +49,31 @@
 #include "../predator/native_decoder_registry.h"
 #include "../predator/kraken_tune_bus.h"
 #include "../predator/aou_grid.h"
+#include "../predator/node_equipment.h"
+#include "../predator/gpsd_client.h"
+
+// ── Static-node position & equipment calibration ──
+// Shared between the UI thread (settings tab, event stamping) and the
+// Kujhad device-server thread (the /setup web portal on headless Linux
+// sensors), hence the mutex. Values persist in core::configManager.
+static std::mutex nodeEquipMtx;
+static double nodeStaticLat = 0.0;
+static double nodeStaticLon = 0.0;
+static bool nodeGpsdEnabled = false;
+static std::string nodeSdrType = "unknown";
+static double nodeAntennaGainDb = 0.0;
+static predator::GpsdClient nodeGpsd;
+
+static void nodeEquipPersist() {
+    std::lock_guard<std::mutex> lk(nodeEquipMtx);
+    core::configManager.acquire();
+    core::configManager.conf["predatorNodeLat"] = nodeStaticLat;
+    core::configManager.conf["predatorNodeLon"] = nodeStaticLon;
+    core::configManager.conf["predatorNodeGpsd"] = nodeGpsdEnabled;
+    core::configManager.conf["predatorSdrType"] = nodeSdrType;
+    core::configManager.conf["predatorAntennaGainDb"] = nodeAntennaGainDb;
+    core::configManager.release(true);
+}
 #include "../predator/hold_binding_registry.h"
 #include "../predator/cot_reporter.h"
 #include <ctime>
@@ -310,6 +335,14 @@ void MainWindow::init() {
         kujhadSpectrumIntervalMs.store(std::clamp<int>(cfg.value("kujhadSpectrumIntervalMs", 200), 50, 5000), std::memory_order_relaxed);
         kujhadSpectrumBins.store(std::clamp<int>(cfg.value("kujhadSpectrumBins", 256), 32, 1024), std::memory_order_relaxed);
         kujhadMirrorPeerSpectrum = cfg.value("kujhadMirrorPeerSpectrum", false);
+        {
+            std::lock_guard<std::mutex> lk(nodeEquipMtx);
+            nodeStaticLat = cfg.value("predatorNodeLat", 0.0);
+            nodeStaticLon = cfg.value("predatorNodeLon", 0.0);
+            nodeGpsdEnabled = cfg.value("predatorNodeGpsd", false);
+            nodeSdrType = cfg.value("predatorSdrType", std::string("unknown"));
+            nodeAntennaGainDb = cfg.value("predatorAntennaGainDb", 0.0);
+        }
         // Migration: older configs only have the mirror bool.
         kujhadPeerViewMode = std::clamp<int>(
             cfg.value("kujhadPeerViewMode", kujhadMirrorPeerSpectrum ? 1 : 0), 0, 2);
@@ -908,6 +941,19 @@ void MainWindow::backgroundMapTick() {
         }
     }
 
+    // -------- 4b) gpsd lifecycle for static Linux sensors --------
+    // Start/stop the gpsd poll thread to match the config toggle. Cheap
+    // atomic check per tick; the toggle itself is a rare operator action.
+    {
+        bool wantGpsd;
+        {
+            std::lock_guard<std::mutex> lk(nodeEquipMtx);
+            wantGpsd = nodeGpsdEnabled;
+        }
+        if (wantGpsd && !nodeGpsd.isRunning()) { nodeGpsd.start(); }
+        else if (!wantGpsd && nodeGpsd.isRunning()) { nodeGpsd.stop(); }
+    }
+
     // -------- 5) Transmitter AOU grid → platform map --------
     // Grid-based localization (KrakenSDR "vehicular ops" approach): every
     // observation paints likelihood onto a geographic grid and the hot
@@ -966,6 +1012,10 @@ void MainWindow::backgroundMapTick() {
                     double lo = bgJsonDouble(events[i], "lon", 0.0);
                     double s  = bgJsonDouble(events[i], "strengthDb", 0.0);
                     if ((la == 0.0 && lo == 0.0) || s == 0.0) continue;
+                    // Equipment calibration: subtract the source node's
+                    // declared SDR + antenna correction so power ratios
+                    // between mismatched hardware stay honest.
+                    s -= bgJsonDouble(events[i], "calDb", 0.0);
                     predator::aou::RssiObs r;
                     r.lat = la; r.lon = lo; r.rssiDb = s; r.weight = w;
                     auto& cl = clusters[key];
@@ -2399,6 +2449,32 @@ void MainWindow::draw() {
             row["lon"] = phoneLon;
             row["accuracyM"] = phoneAccuracy;
         }
+        else {
+            // Static-node fallback chain: live gpsd fix (USB dongle on a
+            // Linux box), else the configured static position. Without one
+            // of these, headless sensors log positionless hits that the
+            // AOU math must discard.
+            double gLat = 0.0, gLon = 0.0;
+            if (nodeGpsd.getFix(gLat, gLon)) {
+                row["lat"] = gLat;
+                row["lon"] = gLon;
+                row["gpsSource"] = "gpsd";
+            }
+            else {
+                std::lock_guard<std::mutex> lk(nodeEquipMtx);
+                if (nodeStaticLat != 0.0 || nodeStaticLon != 0.0) {
+                    row["lat"] = nodeStaticLat;
+                    row["lon"] = nodeStaticLon;
+                    row["gpsSource"] = "static";
+                }
+            }
+        }
+        // Equipment calibration: single correction term so mismatched
+        // hardware reads comparably fleet-wide (see node_equipment.h).
+        {
+            std::lock_guard<std::mutex> lk(nodeEquipMtx);
+            row["calDb"] = predator::equipment::calDb(nodeSdrType, nodeAntennaGainDb);
+        }
         row["serial"] = ++predatorEventSerial;
         events.insert(events.begin(), row);
         while (events.size() > 200) {
@@ -2926,6 +3002,76 @@ void MainWindow::draw() {
             j["lat"]      = kujhadGpsLat;
             j["lon"]      = kujhadGpsLon;
             j["accuracy"] = kujhadGpsAccuracy;
+            return j;
+        });
+        // Node setup portal (/setup on headless Linux sensors): read and
+        // apply position + equipment calibration, and expose the pairing
+        // payload. Runs on the device-server thread — everything touched
+        // is behind nodeEquipMtx or configManager's own lock.
+        kujhadServer.setNodeConfigProvider([this]() {
+            json j;
+            {
+                std::lock_guard<std::mutex> lk(nodeEquipMtx);
+                j["lat"] = nodeStaticLat;
+                j["lon"] = nodeStaticLon;
+                j["gpsdEnabled"] = nodeGpsdEnabled;
+                j["sdrType"] = nodeSdrType;
+                j["antennaGainDb"] = nodeAntennaGainDb;
+                j["calDb"] = predator::equipment::calDb(nodeSdrType, nodeAntennaGainDb);
+            }
+            double gLat = 0.0, gLon = 0.0;
+            j["gpsdFix"] = nodeGpsd.getFix(gLat, gLon);
+            j["gpsdLat"] = gLat;
+            j["gpsdLon"] = gLon;
+            json opts = json::array();
+            for (auto& p : predator::equipment::sdrProfiles()) {
+                opts.push_back(json{ { "id", p.id }, { "label", p.label }, { "offsetDb", p.offsetDb } });
+            }
+            j["sdrOptions"] = opts;
+            json presets = json::array();
+            for (auto& p : predator::equipment::antennaPresets()) {
+                presets.push_back(json{ { "label", p.label }, { "gainDb", p.gainDb } });
+            }
+            j["antennaPresets"] = presets;
+            return j;
+        });
+        kujhadServer.setNodeConfigApplier([this](const json& in, std::string& err) {
+            if (!in.is_object()) { err = "body must be a JSON object"; return false; }
+            double la = in.value("lat", 0.0), lo = in.value("lon", 0.0);
+            if (la < -90.0 || la > 90.0 || lo < -180.0 || lo > 180.0) {
+                err = "lat/lon out of range";
+                return false;
+            }
+            double ant = in.value("antennaGainDb", 0.0);
+            if (!(ant >= -20.0 && ant <= 30.0)) { err = "antenna gain out of range (-20..30 dB)"; return false; }
+            std::string sdr = in.value("sdrType", std::string("unknown"));
+            bool known = false;
+            for (auto& p : predator::equipment::sdrProfiles()) {
+                if (sdr == p.id) { known = true; break; }
+            }
+            if (!known) { err = "unknown sdrType"; return false; }
+            {
+                std::lock_guard<std::mutex> lk(nodeEquipMtx);
+                nodeStaticLat = la;
+                nodeStaticLon = lo;
+                nodeGpsdEnabled = in.value("gpsdEnabled", false);
+                nodeSdrType = sdr;
+                nodeAntennaGainDb = ant;
+            }
+            nodeEquipPersist();
+            return true;
+        });
+        kujhadServer.setPairingInfoProvider([this]() {
+            // Same payload the on-screen QR encodes, for headless boxes
+            // with no screen. Requires the API key to fetch — knowing the
+            // key is what the code grants, so this leaks nothing new.
+            json j;
+            j["v"] = 1;
+            j["t"] = "kujhad-pair";
+            j["name"] = kujhadDeviceName;
+            j["host"] = kujhadAdvertiseAddress;
+            j["port"] = kujhadDeviceListenPort;
+            j["key"] = kujhadApiKey;
             return j;
         });
         kujhadServer.setEventsProvider([this](uint64_t since) {
@@ -10073,6 +10219,81 @@ void MainWindow::draw() {
                     savePredatorState();
                 }
                 ImGui::TextWrapped("%s", chineseUi ? "\u8a9e\u8a00\u5207\u63db\u6703\u7acb\u5373\u5957\u7528\u65bc Predator RF \u4efb\u52d9\u4ecb\u9762\u3002" : "Language changes apply immediately to the Predator RF mission interface.");
+            }
+            if (ImGui::CollapsingHeader(T("Node Position & Equipment"))) {
+                // Same values the headless /setup web portal edits — one
+                // config, two front doors. On Android the phone GPS wins
+                // whenever it has a fix; these are the no-fix fallback.
+                double eLat, eLon, eAnt;
+                bool eGpsd;
+                std::string eSdr;
+                {
+                    std::lock_guard<std::mutex> lk(nodeEquipMtx);
+                    eLat = nodeStaticLat; eLon = nodeStaticLon;
+                    eGpsd = nodeGpsdEnabled; eSdr = nodeSdrType;
+                    eAnt = nodeAntennaGainDb;
+                }
+                bool changed = false;
+                ImGui::TextDisabled("%s", T("Static position (used when no GPS fix)"));
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+                changed |= ImGui::InputDouble(T("Latitude##nodeequip"), &eLat, 0.0, 0.0, "%.6f");
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+                changed |= ImGui::InputDouble(T("Longitude##nodeequip"), &eLon, 0.0, 0.0, "%.6f");
+                changed |= ImGui::Checkbox(T("Use gpsd (USB GPS dongle)"), &eGpsd);
+                {
+                    double gLat = 0.0, gLon = 0.0;
+                    if (eGpsd && nodeGpsd.getFix(gLat, gLon)) {
+                        ImGui::TextDisabled("gpsd fix: %.5f, %.5f", gLat, gLon);
+                    }
+                    else if (eGpsd) {
+                        ImGui::TextDisabled("%s", T("gpsd: waiting for fix..."));
+                    }
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("%s", T("Equipment (RSSI calibration for fleet math)"));
+                {
+                    const auto& profiles = predator::equipment::sdrProfiles();
+                    int sdrIdx = predator::equipment::sdrProfileIndex(eSdr);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+                    if (ImGui::BeginCombo(T("SDR##nodeequip"), profiles[sdrIdx].label)) {
+                        for (int i = 0; i < (int)profiles.size(); i++) {
+                            if (ImGui::Selectable(profiles[i].label, i == sdrIdx)) {
+                                eSdr = profiles[i].id;
+                                changed = true;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    const auto& presets = predator::equipment::antennaPresets();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+                    if (ImGui::BeginCombo(T("Antenna##nodeequip"), T("Preset..."))) {
+                        for (auto& p : presets) {
+                            if (ImGui::Selectable(p.label, false)) {
+                                if (std::string(p.label) != "Custom") {
+                                    eAnt = p.gainDb;
+                                    changed = true;
+                                }
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.4f);
+                    changed |= ImGui::InputDouble(T("Antenna gain dB##nodeequip"), &eAnt, 0.5, 1.0, "%.1f");
+                    eAnt = std::clamp(eAnt, -20.0, 30.0);
+                    ImGui::TextDisabled("%s %.1f dB", T("Net RSSI correction:"),
+                                        predator::equipment::calDb(eSdr, eAnt));
+                }
+                if (changed) {
+                    {
+                        std::lock_guard<std::mutex> lk(nodeEquipMtx);
+                        nodeStaticLat = eLat;
+                        nodeStaticLon = eLon;
+                        nodeGpsdEnabled = eGpsd;
+                        nodeSdrType = eSdr;
+                        nodeAntennaGainDb = eAnt;
+                    }
+                    nodeEquipPersist();
+                }
             }
             if (predatorJumpSection == 1) { ImGui::SetNextItemOpen(true); }
             bool srcDevOpen = ImGui::CollapsingHeader(T("Source & Device"), ImGuiTreeNodeFlags_DefaultOpen);
