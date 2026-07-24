@@ -155,7 +155,7 @@ class TestEventRing(unittest.TestCase):
 
     def test_since_cursor(self):
         ring = EventRing()
-        base = ring.last_serial()   # boot-time serial base (restart-monotonic)
+        base = ring.last_serial   # boot-time serial base (restart-monotonic)
         for _ in range(5):
             self._row(ring)
         events, last_id = ring.since(base)
@@ -180,7 +180,7 @@ class TestEventRing(unittest.TestCase):
 
     def test_ring_bounded(self):
         ring = EventRing(maxlen=3)
-        base = ring.last_serial()
+        base = ring.last_serial
         for _ in range(5):
             self._row(ring)
         events, last_id = ring.since(base)
@@ -193,12 +193,14 @@ class TestEventRing(unittest.TestCase):
         # A fresh ring (simulated restart) must start ABOVE any serial a
         # controller could have seen from the previous run, else its
         # since-cursor mutes all new events (field-hit bug).
+        # The ms-clock base outruns real emission (throttled to ~2 events/s
+        # vs 1000 serials/s of clock advance); emulate that ratio here.
         old = EventRing()
         for _ in range(50):
             old.next_serial()
-        time.sleep(0.01)
+        time.sleep(0.1)
         fresh = EventRing()
-        self.assertGreater(fresh.last_serial() + 1, old.last_serial())
+        self.assertGreater(fresh.last_serial + 1, old.last_serial)
 
 
 class TestThrottleDedup(unittest.TestCase):
@@ -373,7 +375,7 @@ class TestServer(AioHTTPTestCase):
         self.assertEqual(body["searchBands"], [])
 
     async def test_events_since_cursor(self):
-        base = self.ring.last_serial()
+        base = self.ring.last_serial
         await self._seed(3)
         resp = await self.client.get(f"/v1/events?since={base}",
                                      headers={"X-Kujhad-Key": "SECRETKEY"})
