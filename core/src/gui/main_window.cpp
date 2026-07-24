@@ -1527,18 +1527,12 @@ void MainWindow::draw() {
         core::configManager.release(true);
     };
 
-    // Debounced variant: at most one disk write per 500 ms for high-frequency
-    // decoder ingestion paths so the UI thread isn't blocked by JSON I/O on
-    // every frame during active scanning. Manual events and hit recording use
-    // savePredatorEvents() directly to stay immediate.
-    auto scheduleEventSave = [&]() {
-        static double lastSaveTime = -9999.0;
-        double now = ImGui::GetTime();
-        if (now - lastSaveTime >= 0.5) {
-            savePredatorEvents(events);
-            lastSaveTime = now;
-        }
-    };
+    // NOTE: there used to be a debounced scheduleEventSave() here. It was
+    // removed because `events` is a per-frame copy of conf["predatorEvents"]
+    // — a debounce-skipped save permanently drops that frame's inserts on
+    // the next reload. Every ingest path must call savePredatorEvents(events)
+    // in the same frame it inserts; release(true) only marks the in-memory
+    // tree dirty, disk I/O stays batched in the ConfigManager autosave thread.
 
     auto savePredatorHits = [&](const json& newHits) {
         core::configManager.acquire();
@@ -3738,7 +3732,10 @@ void MainWindow::draw() {
         }
         savePredatorHits(hits);
         if (!suppressEvent) {
-            scheduleEventSave();
+            // Immediate save — the debounced scheduleEventSave silently
+            // drops a skipped save, and unsaved inserts evaporate on the
+            // next frame's reload of the per-frame `events` copy.
+            savePredatorEvents(events);
             // Fire CoT GeoChat report to configured ATAK endpoint.
             cotReporter.reportHit(frequency, strengthDb, (float)readJsonDouble(hit, "snrDb", 0.0),
                                   hitCount, state, readJsonString(hit, "name", ""));
