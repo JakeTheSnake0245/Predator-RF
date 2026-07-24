@@ -2398,14 +2398,16 @@ void MainWindow::draw() {
             lastLobPushAt = nowClock;
             json lobs = json::array();
             int lobCnt = 0;
+            int diagKraken = 0, diagNoRaw = 0, diagBadPos = 0, diagStale = 0;
             for (int i = 0; i < (int)events.size() && lobCnt < 64; i++) {
                 if (readJsonString(events[i], "decoder", "") != "KRAKEN_LOB") continue;
-                if (!events[i].contains("raw") || !events[i]["raw"].is_object()) continue;
+                diagKraken++;
+                if (!events[i].contains("raw") || !events[i]["raw"].is_object()) { diagNoRaw++; continue; }
                 const json& raw = events[i]["raw"];
                 double bearing = readJsonDouble(raw, "bearing_deg", -1.0);
                 double nLat    = readJsonDouble(raw, "gps_lat", 0.0);
                 double nLon    = readJsonDouble(raw, "gps_lon", 0.0);
-                if (bearing < 0.0 || (nLat == 0.0 && nLon == 0.0)) continue;
+                if (bearing < 0.0 || (nLat == 0.0 && nLon == 0.0)) { diagBadPos++; continue; }
                 // Freshness is judged by LOCAL receive time, not the
                 // sensor's timestamp_unix — Pi sensors on a disconnected
                 // overlay routinely have skewed clocks, and judging age by
@@ -2415,7 +2417,7 @@ void MainWindow::draw() {
                 double rx = readJsonDouble(events[i], "rxClock", 0.0);
                 if (rx <= 0.0) { events[i]["rxClock"] = nowClock; rx = nowClock; }
                 double age = nowClock - rx;
-                if (age > 90.0) continue;
+                if (age > 90.0) { diagStale++; continue; }
                 json l;
                 l["bearingDeg"]    = bearing;
                 l["bearingStdDeg"] = readJsonDouble(raw, "bearing_std_deg", 0.0);
@@ -2436,6 +2438,15 @@ void MainWindow::draw() {
                 bool pushed = backend::setFleetLobs(lobStr);
                 flog::info("[FleetLOB] push {} wedges (bridge {})",
                            lobCnt, pushed ? "ok" : "FAILED");
+            }
+            // Unconditional heartbeat (every 5 s) so a silently-empty wedge
+            // set is visible in logcat with the reason rows were skipped.
+            static double lastLobDiagAt = 0.0;
+            if (nowClock - lastLobDiagAt >= 5.0) {
+                lastLobDiagAt = nowClock;
+                flog::info("[FleetLOB] diag: events={} kraken={} noRaw={} badPos={} stale={} wedges={}",
+                           (int)events.size(), diagKraken, diagNoRaw,
+                           diagBadPos, diagStale, lobCnt);
             }
         }
     }
