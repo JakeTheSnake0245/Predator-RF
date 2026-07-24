@@ -10,13 +10,15 @@
 // exposes exactly two things we use:
 //
 //   GET  /settings.json           → the live settings file from the DoA
-//                                    web root (includes "center_freq" Hz
-//                                    and VFO-0 frequency).
+//                                    web root ("center_freq" is in **MHz**,
+//                                    VFO frequencies are in Hz — field-
+//                                    verified unit convention).
 //   POST /upload?path=/           → multipart/form-data upload that writes
 //                                    a file into the web root. Uploading a
 //                                    patched settings.json (field "file",
 //                                    filename "settings.json") replaces the
-//                                    live file. miniserve returns 201/2xx.
+//                                    live file. miniserve returns 303 See
+//                                    Other on success (field-verified).
 //
 // DF-Kracked contract (default port 8081):
 //   1. Prerequisite: en_remote_control=true on the Kraken so miniserve is
@@ -333,7 +335,8 @@ private:
 
     // DF-Kracked write path: miniserve multipart upload. Writes
     // settings.json into the web root; the DoA software watches the file
-    // and retunes live. miniserve returns 201 (or another 2xx) on success.
+    // and retunes live. miniserve returns 303 See Other (or a 2xx) on
+    // success.
     bool uploadSettingsFile(const nlohmann::json& blob) {
         std::string payload = blob.dump();
         const std::string boundary = "----PredatorRFKrakenBoundary";
