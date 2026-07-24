@@ -88,7 +88,10 @@ inline double antennaGainAt(const AntennaCurve& curve, double freqHz) {
         return a.freqMhz < b.freqMhz;
     });
     double f = freqHz / 1e6;
-    if (!std::isfinite(f) || f <= 0.0 || f <= s.front().freqMhz) return s.front().gainDb;
+    // Invalid/zero frequency: no basis to pick a band, so apply NO antenna
+    // correction (0 dB) rather than arbitrarily holding the first point.
+    if (!std::isfinite(f) || f <= 0.0) return 0.0;
+    if (f <= s.front().freqMhz) return s.front().gainDb;
     if (f >= s.back().freqMhz) return s.back().gainDb;
     for (size_t i = 1; i < s.size(); i++) {
         if (f <= s[i].freqMhz) {

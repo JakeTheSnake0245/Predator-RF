@@ -763,8 +763,10 @@ inline std::string kujhadNodeSetupHtml() {
 "for(let i=1;i<s.length;i++){if(fMhz<=s[i].f){const f0=Math.log10(s[i-1].f),f1=Math.log10(s[i].f);"
 "const t=f1>f0?(Math.log10(fMhz)-f0)/(f1-f0):0;return s[i-1].g+t*(s[i].g-s[i-1].g)}}return s[s.length-1].g}"
 "function recalc(){const o=sdrOptions.find(s=>s.id===$('sdr').value);"
-"const f=parseFloat($('prevf').value)||465;"
-"const c=(o?o.offsetDb:0)+gainAt(curvePoints(),f);$('cal').textContent=c.toFixed(1)}"
+"const f=parseFloat($('prevf').value);"
+// Parity with the C++ policy: invalid/zero frequency => no antenna term.
+"const a=(isFinite(f)&&f>0)?gainAt(curvePoints(),f):0;"
+"const c=(o?o.offsetDb:0)+a;$('cal').textContent=c.toFixed(1)}"
 "function addPoint(f,g){if($('points').children.length>=16)return;"
 "const row=document.createElement('div');row.className='row';"
 "const fi=document.createElement('input');fi.type='number';fi.step='any';fi.value=f;fi.placeholder='MHz';"
