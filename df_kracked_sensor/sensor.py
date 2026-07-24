@@ -37,6 +37,7 @@ from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 try:
+    import aiohttp
     from aiohttp import web
 except ImportError:  # pragma: no cover - import guard for operator clarity
     sys.stderr.write(
@@ -927,11 +928,25 @@ async def run(args: argparse.Namespace) -> None:
 
     print_pairing_block(args.bind, args.port, key)
 
+    def _ingest_crashed(t: "asyncio.Task") -> None:
+        # A dead ingest task must be LOUD and fatal: with it silently gone
+        # the sensor keeps serving /v1/* with zero events, which looks like
+        # "connected but no LOBs" from the phone (field-hit failure mode).
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.error("kraken ingest task crashed: %r — shutting down "
+                      "(systemd will restart us)", exc)
+            stop.set()
+
     if args.ws:
-        tasks = [asyncio.create_task(ingester.run(stop))]
+        ingest_task = asyncio.create_task(ingester.run(stop))
     else:
-        tasks = [asyncio.create_task(ingester.run_http(
-            stop, args.doa_url, doa_is_true=args.doa_is_true))]
+        ingest_task = asyncio.create_task(ingester.run_http(
+            stop, args.doa_url, doa_is_true=args.doa_is_true))
+    ingest_task.add_done_callback(_ingest_crashed)
+    tasks = [ingest_task]
     if args.gpsd:
         tasks.append(asyncio.create_task(gpsd_poll_loop(pos)))
 
