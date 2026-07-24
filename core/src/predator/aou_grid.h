@@ -262,7 +262,11 @@ inline Result computeAou(const std::vector<BearingObs>& bearings,
     // Both standoffs scale with the current uncertainty and are clamped to
     // walkable/drivable distances. Sides are chosen toward the centroid of
     // existing observers (least travel from where the team already is).
-    if (out.valid && out.sigmaMajorM > 1.0) {
+    // Guidance needs a meaningful axis: on a near-circular AOU the major
+    // axis direction is numerically arbitrary and the waypoints would jump
+    // between pushes, so require real anisotropy before emitting them.
+    if (out.valid && out.sigmaMajorM > 1.0
+        && out.sigmaMajorM >= 1.3 * std::max(1.0, out.sigmaMinorM)) {
         double ocE = 0.0, ocN = 0.0;
         int ocnt = 0;
         for (auto& b : bearings) { ocE += (b.lon - cLon) * kLon; ocN += (b.lat - cLat) * kLat; ocnt++; }
@@ -277,13 +281,18 @@ inline Result computeAou(const std::vector<BearingObs>& bearings,
             double d = (ocE - mxE) * ux + (ocN - myN) * uy;
             return (d >= 0.0) ? 1.0 : -1.0;
         };
-        double clampD = [](double v, double lo, double hi) {
-            return std::max(lo, std::min(hi, v));
-        }(2.5 * out.sigmaMajorM, 800.0, 5000.0);
+        // Standoffs: comfortable travel clamps, but never inside the
+        // uncertainty footprint itself — a waypoint inside the ambiguous
+        // region is worse than useless. The DF vantage stands off across
+        // the SHORT axis, the RSSI walk goes along the LONG axis, so each
+        // must clear the sigma of the axis it travels on.
+        double clampD = std::max(std::max(800.0, std::min(5000.0, 2.5 * out.sigmaMajorM)),
+                                 2.0 * out.sigmaMinorM + 300.0);
         double sB = pickSide(crossE, crossN);
         out.guideBearingLat = cLat + (myN + sB * clampD * crossN) / kLat;
         out.guideBearingLon = cLon + (mxE + sB * clampD * crossE) / kLon;
-        double rD = std::max(600.0, std::min(4000.0, 2.0 * out.sigmaMajorM));
+        double rD = std::max(std::max(600.0, std::min(4000.0, 2.0 * out.sigmaMajorM)),
+                             1.5 * out.sigmaMajorM + 300.0);
         double sR = pickSide(alongE, alongN);
         out.guideRssiLat = cLat + (myN + sR * rD * alongN) / kLat;
         out.guideRssiLon = cLon + (mxE + sR * rD * alongE) / kLon;
