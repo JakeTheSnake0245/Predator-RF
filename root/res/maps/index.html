@@ -1085,6 +1085,7 @@
                     properties: {
                         label: ev.label != null ? String(ev.label) : 'signal',
                         freqStr: fmtEventFreq(ev.freqHz),
+                        freqHz: Number(ev.freqHz) || 0,
                         time: ev.time != null ? String(ev.time) : '',
                         sourceDevice: ev.sourceDevice != null ? String(ev.sourceDevice) : '',
                         etype: ev.type != null ? String(ev.type) : ''
