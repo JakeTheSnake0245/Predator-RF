@@ -827,9 +827,15 @@ void MainWindow::backgroundMapTick() {
         json lobs = json::array();
         int lobCnt = 0;
         int diagKraken = 0, diagNoRaw = 0, diagBadPos = 0, diagStale = 0;
+        // One wedge per source: at 1-2 bearings/s, plotting every bearing
+        // from the 90 s window stacks dozens of translucent wedges into a
+        // solid blob. Events are newest-first, so the first accepted wedge
+        // per source is the freshest — skip the rest.
+        std::set<std::string> seenSrcs;
         for (int i = 0; i < (int)events.size() && lobCnt < 64; i++) {
             if (bgJsonString(events[i], "decoder", "") != "KRAKEN_LOB") continue;
             diagKraken++;
+            if (seenSrcs.count(bgJsonString(events[i], "sourceDevice", "local"))) continue;
             if (!events[i].contains("raw") || !events[i]["raw"].is_object()) { diagNoRaw++; continue; }
             const json& raw = events[i]["raw"];
             double bearing = bgJsonDouble(raw, "bearing_deg", -1.0);
@@ -855,6 +861,9 @@ void MainWindow::backgroundMapTick() {
             l["time"]          = bgJsonString(events[i], "time", "?");
             l["ageSec"]        = std::max<double>(0.0, age);
             l["sourceDevice"]  = bgJsonString(events[i], "sourceDevice", "local");
+            // Mark only on acceptance — a rejected newer row (no raw, bad
+            // pos) must not block an older valid bearing from this source.
+            seenSrcs.insert(bgJsonString(events[i], "sourceDevice", "local"));
             lobs.push_back(l);
             lobCnt++;
         }
