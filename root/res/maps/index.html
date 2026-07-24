@@ -1126,6 +1126,7 @@
                 const age = Number(l.ageSec);
                 const ageFrac = isFinite(age) ? Math.max(0, Math.min(1, age / 90)) : 0;
                 const fade = 1 - 0.75 * ageFrac;    // 1.0 → 0.25
+                const held = !!l.held;   // "last known" wedge from a silent source
                 const props = {
                     bearingDeg:    bearing,
                     bearingStdDeg: isFinite(Number(l.bearingStdDeg)) ? Number(l.bearingStdDeg) : 0,
@@ -1133,10 +1134,13 @@
                     freqStr:       fmtEventFreq(l.freqHz),
                     ageSec:        isFinite(age) ? age : 0,
                     sourceDevice:  l.sourceDevice != null ? String(l.sourceDevice) : '',
+                    held:          held ? 1 : 0,
                     // Solid outline + 25% fill (operator preference); both
-                    // still fade as the bearing ages toward 90 s.
-                    wedge_opacity:  0.25 * fade,
-                    stroke_opacity: 1.0 * fade
+                    // still fade as the bearing ages toward 90 s. Held
+                    // "last known" wedges render ghosted at a fixed low
+                    // opacity so live vs last-known reads at a glance.
+                    wedge_opacity:  held ? 0.08 : 0.25 * fade,
+                    stroke_opacity: held ? 0.40 : 1.0 * fade
                 };
                 features.push({
                     type: 'Feature',
@@ -1182,7 +1186,8 @@
 
             const title = document.createElement('div');
             title.style.cssText = 'font-weight:bold;margin-bottom:2px;color:#67e8f9;';
-            title.textContent = props.freqStr || 'LOB bearing';
+            title.textContent = (props.freqStr || 'LOB bearing') +
+                (Number(props.held) ? '  (last known)' : '');
             root.appendChild(title);
 
             const bearing = document.createElement('div');

@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <set>
 #include <cctype>
 #include <sstream>
 #include <cstdlib>
@@ -2424,6 +2425,32 @@ void MainWindow::draw() {
                 l["ageSec"]        = std::max<double>(0.0, age);
                 l["sourceDevice"]  = readJsonString(events[i], "sourceDevice", "local");
                 lobs.push_back(l);
+                lobCnt++;
+            }
+            // Hold-last-bearing: remember each source's newest live wedge
+            // (events are newest-first, so the first wedge per source is
+            // the freshest). When a source goes silent past the 90 s live
+            // window, keep pushing its last bearing as a ghosted "last
+            // known" wedge instead of letting the trail vanish entirely.
+            // Held wedges survive event-log eviction because they live in
+            // this static map, not in `events`.
+            static std::map<std::string, json> lastLobBySrc;
+            static std::map<std::string, double> lastLobRxBySrc;
+            std::set<std::string> liveSrcs;
+            for (auto& l : lobs) {
+                std::string src = readJsonString(l, "sourceDevice", "local");
+                if (liveSrcs.count(src)) continue;   // keep only the newest
+                liveSrcs.insert(src);
+                lastLobBySrc[src] = l;
+                lastLobRxBySrc[src] = nowClock - readJsonDouble(l, "ageSec", 0.0);
+            }
+            for (auto& kv : lastLobBySrc) {
+                if (liveSrcs.count(kv.first)) continue;
+                if (lobCnt >= 64) break;
+                json held = kv.second;
+                held["held"] = true;
+                held["ageSec"] = std::max<double>(0.0, nowClock - lastLobRxBySrc[kv.first]);
+                lobs.push_back(held);
                 lobCnt++;
             }
             std::string lobStr = lobs.dump();
