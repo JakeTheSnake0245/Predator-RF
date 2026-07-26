@@ -7,6 +7,9 @@
 #
 # What it does:
 #   1. Creates the `predator` system user (no shell, no home).
+#   1b. Installs the full SDR userspace (rtl-sdr, hackrf, airspy, soapy,
+#       gpsd) + KrakenSDR DoA stack by default — hardware-agnostic baseline
+#       sensor package; pass --no-kraken to skip the DoA stack.
 #   2. Lays out /opt/predator-rf, /etc/predator-rf, /var/lib/predator-rf,
 #      /var/log/predator-rf with the right ownership.
 #   3. Installs python3-venv + chrony + sqlite3 (apt; no extras).
@@ -28,11 +31,16 @@ ETC_DIR="/etc/predator-rf"
 DATA_DIR="/var/lib/predator-rf"
 LOG_DIR="/var/log/predator-rf"
 SVC_USER="predator"
-KRAKEN=0
+# Baseline sensor package doctrine: install EVERYTHING (all SDR userspace
+# tools, gpsd, KrakenSDR DoA stack) so a node works with whatever hardware
+# gets plugged in later. Pass --no-kraken to skip the heavy DoA stack on
+# nodes that will definitely never host a Kraken array.
+KRAKEN=1
 
 for arg in "$@"; do
   case "$arg" in
-    --kraken) KRAKEN=1 ;;
+    --kraken)    KRAKEN=1 ;;
+    --no-kraken) KRAKEN=0 ;;
   esac
 done
 
@@ -54,6 +62,31 @@ echo "[3/8] apt deps"
 apt-get update -qq
 apt-get install -y --no-install-recommends \
   python3 python3-venv python3-pip git chrony sqlite3 ca-certificates
+
+echo "[3/8] SDR userspace (baseline sensor package — hardware-agnostic)"
+# Install host tools + udev rules for every SDR family we support, so the
+# node accepts whatever gets plugged in. Each package is best-effort: names
+# vary slightly across Debian/RPi OS/Ubuntu releases and a miss must not
+# abort the install.
+for pkg in rtl-sdr librtlsdr0 hackrf libhackrf0 airspy libairspy0 \
+           soapysdr-tools usbutils gpsd gpsd-clients; do
+  apt-get install -y --no-install-recommends "$pkg" 2>/dev/null || \
+    echo "  → $pkg unavailable on this distro, skipping"
+done
+# DVB kernel drivers grab RTL dongles before SDR tools can; blacklist them.
+if [[ ! -f /etc/modprobe.d/blacklist-rtlsdr.conf ]]; then
+  cat > /etc/modprobe.d/blacklist-rtlsdr.conf <<'BLK'
+blacklist dvb_usb_rtl28xxu
+blacklist rtl2832
+blacklist rtl2830
+BLK
+  echo "  → blacklisted DVB kernel drivers (reboot or rmmod to apply)"
+fi
+usermod -aG plugdev "${SVC_USER}" 2>/dev/null || true
+usermod -aG dialout "${SVC_USER}" 2>/dev/null || true   # GPS pucks on /dev/ttyUSB*/ttyACM*
+# gpsd stays installed-but-disabled until a puck is present; enable with
+# `systemctl enable --now gpsd` once hardware is attached.
+systemctl disable --now gpsd 2>/dev/null || true
 
 # KrakenSDR optional: numpy/scipy for N-LOB weighted least-squares.
 # The Python backend always installs them if requirements.txt lists them;
@@ -213,3 +246,23 @@ echo "preflight: GO. Start with:"
 echo "    sudo systemctl start predator-rf"
 echo "Tail logs:"
 echo "    journalctl -u predator-rf -f"
+
+# ── Hardware detection report (informational only) ─────────────────────
+echo
+echo "── attached SDR / GPS hardware ──"
+if command -v lsusb >/dev/null 2>&1; then
+  FOUND=0
+  while read -r vid name; do
+    if lsusb | grep -qi "$vid"; then echo "  ✔ $name"; FOUND=1; fi
+  done <<'HW'
+0bda:2838 RTL-SDR (RTL2832U)
+0bda:2832 RTL-SDR (RTL2832U raw)
+1d50:6089 HackRF One
+1d50:60a1 Airspy
+2cf0:5250 LimeSDR
+HW
+  [[ $FOUND -eq 0 ]] && echo "  (none detected — plug in an SDR any time; drivers are ready)"
+else
+  echo "  lsusb unavailable — skipping detection"
+fi
+ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null | sed 's/^/  serial (possible GPS): /' || true
