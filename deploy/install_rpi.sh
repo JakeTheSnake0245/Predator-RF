@@ -250,14 +250,19 @@ if command -v tailscale >/dev/null 2>&1; then
   if tailscale status >/dev/null 2>&1; then
     echo "  → tailscale already up ($(tailscale ip -4 2>/dev/null | head -1))"
   elif [[ -n "${TS_AUTHKEY:-}" ]]; then
-    # Zero-touch join: TS_AUTHKEY=tskey-auth-... sudo -E bash install_rpi.sh
-    tailscale up --authkey "${TS_AUTHKEY}" --ssh 2>/dev/null || \
-      tailscale up --authkey "${TS_AUTHKEY}" || \
+    # Zero-touch join. For self-hosted Headscale, also pass the control
+    # server:  TS_LOGIN_SERVER=https://headscale.example.com:8080
+    # (Headscale preauth keys are plain strings — no tskey-auth- prefix.)
+    TS_ARGS=(--authkey "${TS_AUTHKEY}")
+    [[ -n "${TS_LOGIN_SERVER:-}" ]] && TS_ARGS+=(--login-server "${TS_LOGIN_SERVER}")
+    tailscale up "${TS_ARGS[@]}" --ssh 2>/dev/null || \
+      tailscale up "${TS_ARGS[@]}" || \
       echo "  → WARNING: tailscale up failed with provided TS_AUTHKEY"
     echo "  → joined tailnet ($(tailscale ip -4 2>/dev/null | head -1))"
   else
     echo "  → NOT on the tailnet yet. Join with:  sudo tailscale up"
-    echo "    (or re-run installer with TS_AUTHKEY=tskey-auth-… for zero-touch join)"
+    echo "    (Headscale: sudo tailscale up --login-server=https://<host>:<port> --authkey <key>)"
+    echo "    (or re-run installer with TS_AUTHKEY=… [+ TS_LOGIN_SERVER=…] for zero-touch join)"
   fi
 fi
 
