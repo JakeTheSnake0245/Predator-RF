@@ -1335,7 +1335,22 @@ def node_setup_html() -> str:
     position/gpsd, SDR profile select, antenna curve point editor with presets,
     terrain select, siting select, and a live preview line (calDb at a probe
     frequency + path-loss exponent n + RSSI sigma). Option DOM is built with
-    textContent (never innerHTML) so user/config data can't inject markup."""
+    textContent (never innerHTML) so user/config data can't inject markup.
+
+    The static option tables (SDR/preset/terrain/siting, incl. the numeric
+    offsets/exponents/sigmas the live preview needs) are server-rendered into
+    the page as a JSON blob so all selects populate and the preview works with
+    ZERO authed /v1 calls. Only "Load current"/"Save"/pairing hit the authed
+    API; a 401 there is reported next to the buttons and never blanks the
+    dropdowns. The tables are the single source of truth (json.dumps of the
+    Python lists) — no numbers are duplicated in JS."""
+    tables_json = json.dumps({
+        "sdrOptions": SDR_PROFILES,
+        "antennaPresets": ANTENNA_PRESETS,
+        "terrainOptions": TERRAIN_PROFILES,
+        "sitingOptions": SITING_PROFILES,
+        "baseRssiSigmaDb": BASE_RSSI_SIGMA_DB,
+    })
     return (
 "<!doctype html><html lang=en><head><meta charset=utf-8>"
 "<title>Predator RF \u2014 Node Setup</title>"
@@ -1387,7 +1402,10 @@ def node_setup_html() -> str:
 "$('key').addEventListener('change',()=>localStorage.setItem('kujhadKey',$('key').value));"
 "function hdrs(){return{'X-Kujhad-Key':$('key').value,'Content-Type':'application/json'}}"
 "function msg(t,ok){const m=$('msg');m.textContent=t;m.className=ok?'ok':'err'}"
-"let sdrOptions=[];let presets=[];let terrainOptions=[];let sitingOptions=[];"
+"const TABLES=" + tables_json + ";"
+"const sdrOptions=TABLES.sdrOptions;const presets=TABLES.antennaPresets;"
+"const terrainOptions=TABLES.terrainOptions;const sitingOptions=TABLES.sitingOptions;"
+"const BASE_SIGMA=TABLES.baseRssiSigmaDb;"
 "function curvePoints(){const out=[];for(const row of $('points').children){"
 "const f=parseFloat(row.children[0].value),g=parseFloat(row.children[1].value);"
 "if(isFinite(f)&&f>0&&isFinite(g))out.push({f:f,g:g})}return out}"
@@ -1402,7 +1420,17 @@ def node_setup_html() -> str:
 "const st=sitingOptions.find(x=>x.id===$('siting').value);"
 "const c=(o?o.offsetDb:0)+a+(st?st.offsetDb:0);$('cal').textContent=c.toFixed(1);"
 "$('plexp').textContent=(t?t.exponent:3).toFixed(1);"
-"$('psig').textContent=(6+(st?st.sigmaExtraDb:0)).toFixed(1)}"
+"$('psig').textContent=(BASE_SIGMA+(st?st.sigmaExtraDb:0)).toFixed(1)}"
+"function populateSelects(){"
+"$('sdr').replaceChildren(...sdrOptions.map(s=>{const o=document.createElement('option');"
+"o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
+"$('antpreset').replaceChildren(...presets.map((p,i)=>{const o=document.createElement('option');"
+"o.value=String(i);o.textContent=p.label;return o}));"
+"$('terrain').replaceChildren(...terrainOptions.map(t=>{const o=document.createElement('option');"
+"o.value=t.id;o.textContent=t.label+' (n='+t.exponent+')';return o}));"
+"$('siting').replaceChildren(...sitingOptions.map(s=>{const o=document.createElement('option');"
+"o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
+"$('sdr').value='unknown';$('terrain').value='mixed';$('siting').value='mast';}"
 "function addPoint(f,g){if($('points').children.length>=16)return;"
 "const row=document.createElement('div');row.className='row';"
 "const fi=document.createElement('input');fi.type='number';fi.step='any';fi.value=f;fi.placeholder='MHz';"
@@ -1411,21 +1439,13 @@ def node_setup_html() -> str:
 "fi.addEventListener('input',recalc);gi.addEventListener('input',recalc);"
 "row.append(fi,gi,del);$('points').appendChild(row);recalc()}"
 "function addPreset(){const p=presets[parseInt($('antpreset').value)];if(p)addPoint(p.freqMhz,p.gainDb)}"
-"async function loadCfg(){try{const r=await fetch('/v1/node-config',{headers:hdrs()});"
+"async function loadCfg(){if(!$('key').value){msg('Enter API key and press Load current.',false);return}"
+"try{const r=await fetch('/v1/node-config',{headers:hdrs()});"
+"if(r.status===401)throw new Error('key rejected');"
 "if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();"
-"sdrOptions=j.sdrOptions||[];"
-"$('sdr').replaceChildren(...sdrOptions.map(s=>{const o=document.createElement('option');"
-"o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
-"presets=j.antennaPresets||[];"
-"$('antpreset').replaceChildren(...presets.map((p,i)=>{const o=document.createElement('option');"
-"o.value=String(i);o.textContent=p.label;return o}));"
-"$('lat').value=j.lat||'';$('lon').value=j.lon||'';$('gpsd').checked=!!j.gpsdEnabled;"
+"$('lat').value=(j.lat!=null?j.lat:'');$('lon').value=(j.lon!=null?j.lon:'');"
+"$('gpsd').checked=!!j.gpsdEnabled;"
 "$('sdr').value=j.sdrType||'unknown';"
-"terrainOptions=j.terrainOptions||[];sitingOptions=j.sitingOptions||[];"
-"$('terrain').replaceChildren(...terrainOptions.map(t=>{const o=document.createElement('option');"
-"o.value=t.id;o.textContent=t.label+' (n='+t.exponent+')';return o}));"
-"$('siting').replaceChildren(...sitingOptions.map(s=>{const o=document.createElement('option');"
-"o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
 "$('terrain').value=j.terrain||'mixed';$('siting').value=j.siting||'mast';"
 "$('points').replaceChildren();"
 "for(const p of (j.antennaCurve||[]))addPoint(p.f,p.g);"
@@ -1434,19 +1454,24 @@ def node_setup_html() -> str:
 "catch(e){msg('Load failed: '+e.message,false)}}"
 "$('sdr').addEventListener('change',recalc);$('prevf').addEventListener('input',recalc);"
 "$('terrain').addEventListener('change',recalc);$('siting').addEventListener('change',recalc);"
-"async function saveCfg(){try{const body={lat:parseFloat($('lat').value)||0,lon:parseFloat($('lon').value)||0,"
+"async function saveCfg(){if(!$('key').value){msg('Enter API key first.',false);return}"
+"try{const body={lat:parseFloat($('lat').value)||0,lon:parseFloat($('lon').value)||0,"
 "gpsdEnabled:$('gpsd').checked,sdrType:$('sdr').value,antennaCurve:curvePoints(),"
 "terrain:$('terrain').value,siting:$('siting').value};"
 "const r=await fetch('/v1/node-config',{method:'POST',headers:hdrs(),body:JSON.stringify(body)});"
+"if(r.status===401)throw new Error('key rejected');"
 "const j=await r.json();if(!r.ok||j.error)throw new Error(j.error||('HTTP '+r.status));"
 "msg('Saved. Hits from this node now carry the correction.',true)}"
 "catch(e){msg('Save failed: '+e.message,false)}}"
-"async function loadPairing(){try{const r=await fetch('/v1/pairing',{headers:hdrs()});"
+"async function loadPairing(){if(!$('key').value){msg('Enter API key first.',false);return}"
+"try{const r=await fetch('/v1/pairing',{headers:hdrs()});"
+"if(r.status===401)throw new Error('key rejected');"
 "if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();"
 "$('pairing').textContent=JSON.stringify(j);msg('Pairing code loaded.',true)}"
 "catch(e){msg('Pairing failed: '+e.message,false)}}"
 "function copyPairing(){const t=$('pairing').textContent;if(t&&t!=='\\u2014'){navigator.clipboard&&navigator.clipboard.writeText(t);msg('Copied.',true)}}"
-"loadCfg();"
+"populateSelects();recalc();"
+"if($('key').value){loadCfg()}else{msg('Enter API key and press Load current to fetch this node\\u2019s saved config.',false)}"
 "</script></body></html>")
 
 

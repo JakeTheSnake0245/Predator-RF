@@ -770,6 +770,44 @@ class TestServer(AioHTTPTestCase):
         self.assertIn("Node Setup", text)
         self.assertIn("/v1/node-config", text)
 
+    async def test_setup_page_embeds_all_option_tables(self):
+        # All static option tables must be server-rendered into the page so
+        # the dropdowns populate with ZERO authed /v1 calls.
+        text = await (await self.client.get("/setup")).text()
+        for p in sensor.SDR_PROFILES:
+            self.assertIn(p["id"], text)
+        for p in sensor.TERRAIN_PROFILES:
+            self.assertIn(p["id"], text)
+            self.assertIn(str(p["exponent"]), text)
+        for p in sensor.SITING_PROFILES:
+            self.assertIn(p["id"], text)
+        for p in sensor.ANTENNA_PRESETS:
+            self.assertIn(p["label"], text)
+        # Base sigma for the live preview is embedded too.
+        self.assertIn("baseRssiSigmaDb", text)
+        self.assertIn(str(sensor.BASE_RSSI_SIGMA_DB), text)
+
+    async def test_setup_page_needs_no_v1_calls(self):
+        # The page must render fully without ever calling an authed endpoint:
+        # selects are populated from the embedded blob, not from a fetch on
+        # load. Verify the embedded blob (source of truth) is a valid JSON
+        # object containing every option table, and that the page does not
+        # auto-fetch node-config unconditionally.
+        text = await (await self.client.get("/setup")).text()
+        blob = text.split("const TABLES=", 1)[1].split(";", 1)[0]
+        tables = json.loads(blob)
+        self.assertEqual(len(tables["sdrOptions"]), len(sensor.SDR_PROFILES))
+        self.assertEqual(len(tables["terrainOptions"]),
+                         len(sensor.TERRAIN_PROFILES))
+        self.assertEqual(len(tables["sitingOptions"]),
+                         len(sensor.SITING_PROFILES))
+        self.assertEqual(len(tables["antennaPresets"]),
+                         len(sensor.ANTENNA_PRESETS))
+        # Selects are filled from the blob synchronously (populateSelects),
+        # and the authed load only fires if a key is already stored.
+        self.assertIn("populateSelects()", text)
+        self.assertIn("if($('key').value){loadCfg()}", text)
+
     async def test_node_config_requires_auth(self):
         resp = await self.client.get("/v1/node-config")
         self.assertEqual(resp.status, 401)
