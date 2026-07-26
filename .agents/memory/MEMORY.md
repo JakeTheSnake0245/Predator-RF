@@ -15,4 +15,5 @@
 - [Fleet LOB sharing contract](fleet-lob-sharing.md) — KRAKEN_LOB rides /v1/events; freshness by local rxClock (never sensor clock); wire shape + headless Pi sensor rules.
 - [KrakenSDR remote control quirks](kraken-remote-control.md) — DoA settings.json center_freq is MHz (vfo_freq is Hz); miniserve upload success = 303, not 2xx.
 - [AOU grid localization](aou-grid-localization.md) — probability-grid TX localization: bearings = angular Gaussians, RSSI only via pairwise power differences (>150 m apart); flat-grid gate; marker features must carry numeric freqHz.
+- [RPi sensor install doctrine](rpi-sensor-install-doctrine.md) — installer must be zero-touch, hardware-agnostic, fail-closed (tailnet-only ufw, autogen token, DVB unload now); Python backend is the live Pi path.
 - [Multi-P25 decode roadmap](multi-p25-roadmap.md) — future: 5-8 concurrent P25 feeds via multi-instance DSD-FME + hold wiring; demods outrank spectrum GUI.
