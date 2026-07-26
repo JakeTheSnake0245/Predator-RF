@@ -3,7 +3,10 @@
 # Predator-RF — one-shot installer for Raspberry Pi (Debian/RPi OS).
 # Run as root; idempotent; safe to re-run after upstream changes.
 #
-#   curl -sSf https://raw.githubusercontent.com/JakeTheSnake0245/Predator-RF/main/deploy/install_rpi.sh | sudo bash
+#   Sensor node (default):
+#     curl -sSf https://raw.githubusercontent.com/JakeTheSnake0245/Predator-RF/main/deploy/install_rpi.sh | sudo bash
+#   Command center (Python fusion backend + dashboard):
+#     curl -sSf .../install_rpi.sh | sudo bash -s -- --coc
 #
 # Zero-touch tailnet join (note `sudo -E`-style env passthrough — plain
 # `curl | sudo bash` does NOT forward your shell's TS_AUTHKEY):
@@ -40,13 +43,21 @@ SVC_USER="predator"
 # gets plugged in later. Pass --no-kraken to skip the heavy DoA stack on
 # nodes that will definitely never host a Kraken array.
 KRAKEN=1
+# Role: what this box IS.
+#   sensor (default) — field sensor node: SDR userspace + Kraken stack +
+#                      df_kracked_sensor Kujhad peer (pollable by the COC).
+#   coc              — command center: Python fusion backend + dashboard.
+ROLE="sensor"
 
 for arg in "$@"; do
   case "$arg" in
-    --kraken)    KRAKEN=1 ;;
-    --no-kraken) KRAKEN=0 ;;
+    --kraken)      KRAKEN=1 ;;
+    --no-kraken)   KRAKEN=0 ;;
+    --coc|--role=coc)       ROLE="coc" ;;
+    --sensor|--role=sensor) ROLE="sensor" ;;
   esac
 done
+echo "install role: ${ROLE}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "must run as root (sudo)" >&2
@@ -119,6 +130,7 @@ else
   sudo -u "${SVC_USER}" git clone --depth=20 "${REPO_URL}" "${INSTALL_DIR}"
 fi
 
+if [[ "$ROLE" == "coc" ]]; then
 echo "[5/8] python venv + deps"
 sudo -u "${SVC_USER}" python3 -m venv "${INSTALL_DIR}/.venv"
 # Backend is intentionally pure-stdlib at the core; only install
@@ -136,10 +148,14 @@ sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/python" -c "import fastapi, uvic
   echo "  → ERROR: fastapi/uvicorn missing from venv after pip install" >&2
   exit 1
 }
+fi  # ROLE == coc
 
 if [[ "$KRAKEN" -eq 1 ]]; then
-  echo "[5+/8] KrakenSDR: installing numpy + scipy"
-  sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/pip" install -q numpy scipy
+  if [[ "$ROLE" == "coc" ]]; then
+    echo "[5+/8] KrakenSDR: installing numpy + scipy (COC N-LOB math)"
+    sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/pip" install -q numpy scipy || \
+      echo "  → WARNING: numpy/scipy install failed"
+  fi
 
   echo "[5+/8] KrakenSDR: installing krakensdr_doa dependencies"
   apt-get install -y --no-install-recommends \
@@ -230,6 +246,7 @@ SVCEOF
   echo "  → edit /etc/krakensdr/predator.env then: systemctl start krakensdr-doa"
 fi
 
+if [[ "$ROLE" == "coc" ]]; then
 echo "[6/8] env file"
 if [[ ! -f "${ETC_DIR}/predator-rf.env" ]]; then
   install -o root -g "${SVC_USER}" -m 0640 \
@@ -246,6 +263,7 @@ if grep -Eq '^[[:space:]]*API_BEARER_TOKEN[[:space:]]*=[[:space:]]*("")?('"'"''"
   sed -i -E "s|^[[:space:]]*API_BEARER_TOKEN[[:space:]]*=.*$|API_BEARER_TOKEN=${TOKEN}|" "${ETC_DIR}/predator-rf.env"
   echo "  → auto-generated API_BEARER_TOKEN (view: sudo grep TOKEN ${ETC_DIR}/predator-rf.env)"
 fi
+fi  # ROLE == coc
 
 echo "[6a/8] tailscale client"
 if ! command -v tailscale >/dev/null 2>&1; then
@@ -275,9 +293,13 @@ if command -v tailscale >/dev/null 2>&1; then
 fi
 
 echo "[6b/8] firewall — API reachable from tailnet + loopback ONLY"
-# pipefail-safe port parse (missing key must not abort the installer)
-API_PORT="$( { grep -E '^API_PORT=' "${ETC_DIR}/predator-rf.env" || true; } | head -1 | cut -d= -f2 | tr -d '[:space:]')"
-[[ "${API_PORT}" =~ ^[0-9]+$ ]] || API_PORT=8000
+if [[ "$ROLE" == "coc" ]]; then
+  # pipefail-safe port parse (missing key must not abort the installer)
+  API_PORT="$( { grep -E '^API_PORT=' "${ETC_DIR}/predator-rf.env" || true; } | head -1 | cut -d= -f2 | tr -d '[:space:]')"
+  [[ "${API_PORT}" =~ ^[0-9]+$ ]] || API_PORT=8000
+else
+  API_PORT=9151   # df_kracked_sensor Kujhad v1 API
+fi
 if ! command -v ufw >/dev/null 2>&1; then
   apt-get install -y --no-install-recommends ufw 2>/dev/null || true
 fi
@@ -311,6 +333,29 @@ else
   exit 1
 fi
 
+if [[ "$ROLE" == "sensor" ]]; then
+  echo "[7/8] sensor service (df_kracked_sensor — Kujhad fleet peer)"
+  # Its own installer is idempotent: pip deps, /opt/df_kracked_sensor,
+  # systemd unit, enable + start. Run as the predator service account.
+  SERVICE_USER="${SVC_USER}" bash "${INSTALL_DIR}/df_kracked_sensor/install.sh"
+
+  echo "[8/8] verifying sensor service"
+  sleep 2
+  if systemctl is-active --quiet df-kracked-sensor; then
+    echo "  → df-kracked-sensor ACTIVE and enabled at boot (port ${API_PORT})"
+  else
+    echo "  → ERROR: df-kracked-sensor failed to start — check: journalctl -u df-kracked-sensor -n 50" >&2
+    exit 1
+  fi
+  echo "Tail logs:"
+  echo "    journalctl -u df-kracked-sensor -f"
+  echo
+  echo "Sensor node ready. Pair it from the COC by adding this node to"
+  echo "FLEET_NODES as  <id>@$(tailscale ip -4 2>/dev/null | head -1 || hostname -I | awk '{print $1}'):${API_PORT}:<key>:kraken"
+  echo "(sensor key: sudo cat /opt/df_kracked_sensor/df_kracked_sensor.json)"
+fi
+
+if [[ "$ROLE" == "coc" ]]; then
 echo "[7/8] systemd unit"
 install -m 0644 "${INSTALL_DIR}/deploy/predator-rf.service" \
   /etc/systemd/system/predator-rf.service
@@ -348,6 +393,7 @@ else
 fi
 echo "Tail logs:"
 echo "    journalctl -u predator-rf -f"
+fi  # ROLE == coc
 
 # ── Hardware detection report (informational only) ─────────────────────
 echo
