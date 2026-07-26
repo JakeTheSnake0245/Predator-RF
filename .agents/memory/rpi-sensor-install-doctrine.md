@@ -17,4 +17,5 @@ Rules:
 **Why:** field operators deploy bare Pis unattended; any manual step or silent misconfiguration becomes a dead or exposed node.
 **How to apply:** any future change to deploy/install_rpi.sh keeps: idempotent re-runs, no interactive prompts, truthful exit codes.
 
-Also: the live Pi path is the **Python backend** (predator-rf.service); C++ predator-rfd is not yet compile-validated on real Linux. The COC is the Python backend (8073) + dashboard/, not the C++ node.
+Roles: installer default role is **sensor** (df_kracked_sensor Kujhad peer, port 9151); `--coc` installs the Python fusion backend + dashboard (port 8000). The Python backend is the COC, NOT the sensor — confusing them infuriated the user once already.
+The sensor is SDR-agnostic via the sweep ingester in df_kracked_sensor/sensor.py: lsusb auto-detect → rtl_power/hackrf_sweep subprocess, median-floor + threshold hits (type "hit", detector "sweep") into the same event ring; `--sweep auto` yields to the Kraken WS when connected (a Kraken enumerates as RTL dongles and would fight rtl_power). C++ predator-rfd remains not compile-validated on real Linux.
