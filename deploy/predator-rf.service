@@ -12,6 +12,9 @@ Documentation=file:/opt/predator-rf/docs/OPERATOR_RUNBOOK.md
 # StartLimitBurst and leave the unit in a permanent `failed` state.
 After=network-online.target chronyd.service gpsd.service tailscaled.service zerotier-one.service
 Wants=network-online.target
+# StartLimit* belongs in [Unit] — older systemd rejects it under [Service].
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -27,8 +30,6 @@ ExecStop=/bin/kill -TERM $MAINPID
 # a flaky node doesn't keep us down longer than that.
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=300
-StartLimitBurst=10
 
 # Hardening — backend talks HTTP to LAN nodes + UDP to TAK; nothing
 # else needs root or write access outside /var/lib/predator-rf.
@@ -36,7 +37,8 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-PrivateDevices=false   # gpsd / SDR may be exposed via /dev later
+# gpsd / SDR may be exposed via /dev later (systemd forbids inline comments)
+PrivateDevices=false
 ReadWritePaths=/var/lib/predator-rf /var/log/predator-rf
 ProtectKernelTunables=true
 ProtectKernelModules=true

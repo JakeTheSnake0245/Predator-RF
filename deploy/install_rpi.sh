@@ -124,10 +124,18 @@ sudo -u "${SVC_USER}" python3 -m venv "${INSTALL_DIR}/.venv"
 # Backend is intentionally pure-stdlib at the core; only install
 # extras if requirements.txt exists. A minimal field deploy can skip
 # aiohttp + numpy entirely.
-if [[ -f "${INSTALL_DIR}/requirements.txt" ]]; then
-  sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/pip" install -q -r \
-    "${INSTALL_DIR}/requirements.txt"
-fi
+for REQ in "${INSTALL_DIR}/requirements.txt" "${INSTALL_DIR}/backend/requirements.txt"; do
+  if [[ -f "$REQ" ]]; then
+    echo "  → pip install -r ${REQ}"
+    sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/pip" install -q -r "$REQ"
+  fi
+done
+# Hard fail if the backend's web framework didn't land — the service
+# cannot start without it, and a broken venv must not pass install.
+sudo -u "${SVC_USER}" "${INSTALL_DIR}/.venv/bin/python" -c "import fastapi, uvicorn" || {
+  echo "  → ERROR: fastapi/uvicorn missing from venv after pip install" >&2
+  exit 1
+}
 
 if [[ "$KRAKEN" -eq 1 ]]; then
   echo "[5+/8] KrakenSDR: installing numpy + scipy"
