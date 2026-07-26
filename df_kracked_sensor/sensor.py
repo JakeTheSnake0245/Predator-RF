@@ -96,6 +96,8 @@ SWEEP_DEFAULT_INTERVAL_S = 5       # rtl_power integration time per sweep
 SWEEP_MIN_EMIT_INTERVAL_S = 5.0    # per freq-bucket rate limit (anti-spam)
 SWEEP_REDETECT_INTERVAL_S = 60.0   # hotplug re-probe cadence when idle
 SWEEP_RESPAWN_DELAY_S = 10.0       # wait after tool exit before respawn
+SWEEP_RETASK_DEBOUNCE_S = 0.5      # coalesce retask bursts (drag-to-tune)
+                                   # into one rtl_power relaunch
 SWEEP_KRAKEN_GRACE_S = 30.0        # wait before (re)starting sweep in auto mode
 SWEEP_MAX_RANGES = 8               # config cap on configured sweep ranges
 SWEEP_ROTATE_DWELL_S = 20.0        # per-range dwell before round-robin rotation
@@ -1456,6 +1458,8 @@ class SweepIngester:
         # Live-retask signal: set by retask() to tear down the current tool
         # process so the run loop relaunches with new ranges/interval/threshold.
         self._retask = asyncio.Event()
+        # Debounce timer for coalescing rapid retask bursts (drag-to-tune).
+        self._debounce_handle: Optional["asyncio.TimerHandle"] = None
         # Per frequency-bucket rate limiter (bucket width == bin step).
         self._last_bucket_emit: Dict[int, float] = {}
         # Spectrum pass accumulator: CSV segments of the current sweep pass,
@@ -1506,8 +1510,26 @@ class SweepIngester:
                      self.mode, ",".join(self.ranges), self.interval_s,
                      self.snr_threshold)
         if relaunch:
-            self._retask.set()
+            self._schedule_relaunch()
         return relaunch
+
+    def _schedule_relaunch(self) -> None:
+        """Debounce the relaunch signal: a spectrum drag fires a tune.set per
+        gesture update, and killing + respawning rtl_power for each one both
+        lags the retune and hammers the dongle with inrush current (observed
+        knocking marginal USB power offline). Coalesce bursts so only one
+        relaunch happens once retasks go quiet for the debounce window. Falls
+        back to an immediate signal when no event loop is running (tests /
+        sync callers)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._retask.set()
+            return
+        if self._debounce_handle is not None:
+            self._debounce_handle.cancel()
+        self._debounce_handle = loop.call_later(
+            SWEEP_RETASK_DEBOUNCE_S, self._retask.set)
 
     def _next_range(self) -> str:
         """Return the current range for this dwell and advance the cursor.

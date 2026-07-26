@@ -1345,8 +1345,28 @@ class TestServer(AioHTTPTestCase):
         self.assertEqual(self.sweep.ranges, ["144M:148M:50k", "902M:928M:100k"])
         self.assertEqual(self.sweep.interval_s, 12)
         self.assertEqual(self.sweep.snr_threshold, 18.0)
-        # The retask signal reached the ingester (run loop would relaunch).
+        # The retask signal is debounced (coalesces drag-to-tune bursts):
+        # not set immediately, but set once the debounce window elapses.
+        self.assertFalse(self.sweep._retask.is_set())
+        await asyncio.sleep(sensor.SWEEP_RETASK_DEBOUNCE_S + 0.2)
         self.assertTrue(self.sweep._retask.is_set())
+        self._check_node_config_persisted()
+
+    async def test_tune_burst_coalesces_to_one_relaunch_signal(self):
+        # A spectrum drag fires many tune.set commands back-to-back; the
+        # debounce must swallow the burst into ONE deferred relaunch that
+        # only fires after the burst goes quiet.
+        for hz in (852_000_000, 853_000_000, 854_000_000, 855_000_000):
+            resp = await self._cmd("tune", "set", {"frequencyHz": hz})
+            self.assertTrue((await resp.json())["ok"])
+            self.assertFalse(self.sweep._retask.is_set())
+        # The last tune's window is what the sweep will relaunch with.
+        self.assertEqual(len(self.sweep.ranges), 1)
+        self.assertIn("853000000", self.sweep.ranges[0])
+        await asyncio.sleep(sensor.SWEEP_RETASK_DEBOUNCE_S + 0.2)
+        self.assertTrue(self.sweep._retask.is_set())
+
+    def _check_node_config_persisted(self):
         # Persisted to the config file (survives restart).
         with open(self._cfgpath, "r", encoding="utf-8") as f:
             cfg = json.load(f)
