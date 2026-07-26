@@ -97,6 +97,27 @@ SWEEP_MIN_EMIT_INTERVAL_S = 5.0    # per freq-bucket rate limit (anti-spam)
 SWEEP_REDETECT_INTERVAL_S = 60.0   # hotplug re-probe cadence when idle
 SWEEP_RESPAWN_DELAY_S = 10.0       # wait after tool exit before respawn
 SWEEP_KRAKEN_GRACE_S = 30.0        # wait before (re)starting sweep in auto mode
+SWEEP_MAX_RANGES = 8               # config cap on configured sweep ranges
+SWEEP_ROTATE_DWELL_S = 20.0        # per-range dwell before round-robin rotation
+# Validation bounds for a sweep range's edge frequencies (Hz).
+SWEEP_FREQ_MIN_HZ = 0.5e6          # 0.5 MHz
+SWEEP_FREQ_MAX_HZ = 7000e6         # 7000 MHz
+SWEEP_INTERVAL_MIN_S = 1
+SWEEP_INTERVAL_MAX_S = 60
+SWEEP_SNR_MIN_DB = 3.0
+SWEEP_SNR_MAX_DB = 40.0
+SWEEP_MODES = ("auto", "on", "off")
+
+# ── Spectrum stream (GET /v1/spectrum, NDJSON frames) ───────────────────────
+SPECTRUM_MAX_BINS = 1024           # downsample cap (same policy as the app)
+SPECTRUM_KEEPALIVE_S = 5.0         # idle keepalive frame cadence
+SPECTRUM_CLIENT_QUEUE_MAX = 4      # per-client frame queue; drop-oldest if full
+SPECTRUM_DB_MARGIN = 3.0           # padding added to frame fftMin/Max bounds
+SPECTRUM_FLOOR_DB = -150.0         # sentinel for empty buckets / keepalive floor
+
+# ── Manual tune (POST /v1/command tune.set) ─────────────────────────────────
+TUNE_DEFAULT_HALF_SPAN_HZ = 2e6    # default ±2 MHz window around the tune freq
+TUNE_STEP_HZ = 10_000              # ~10 kHz bins for decent manual resolution
 
 
 # ── Node equipment calibration (mirrors core/src/predator/node_equipment.h) ──
@@ -343,6 +364,44 @@ def validate_node_config(body: Any) -> Tuple[Optional[Dict[str, Any]], Optional[
         "terrain": terrain,
         "siting": siting,
     }
+
+    # ── Sweep control (all optional; only validated/applied when present) ──
+    if "sweepMode" in body:
+        mode = body.get("sweepMode")
+        if not isinstance(mode, str) or mode not in SWEEP_MODES:
+            return None, "sweepMode must be one of on/off/auto"
+        clean["sweepMode"] = mode
+
+    if "sweepRanges" in body:
+        raw = body.get("sweepRanges")
+        if not isinstance(raw, list):
+            return None, "sweepRanges must be an array"
+        if len(raw) == 0:
+            return None, "sweepRanges must have at least one range"
+        if len(raw) > SWEEP_MAX_RANGES:
+            return None, f"sweepRanges: max {SWEEP_MAX_RANGES} ranges"
+        norm: List[str] = []
+        for r in raw:
+            n = validate_sweep_range(r)
+            if n is None:
+                return None, f"invalid sweep range: {r!r}"
+            norm.append(n)
+        clean["sweepRanges"] = norm
+
+    if "sweepIntervalS" in body:
+        iv = _num(body.get("sweepIntervalS"), 0.0)
+        if not (SWEEP_INTERVAL_MIN_S <= iv <= SWEEP_INTERVAL_MAX_S):
+            return None, (f"sweepIntervalS out of range "
+                          f"({SWEEP_INTERVAL_MIN_S}..{SWEEP_INTERVAL_MAX_S})")
+        clean["sweepIntervalS"] = int(iv)
+
+    if "sweepSnrDb" in body:
+        snr = _num(body.get("sweepSnrDb"), 0.0)
+        if not (SWEEP_SNR_MIN_DB <= snr <= SWEEP_SNR_MAX_DB):
+            return None, (f"sweepSnrDb out of range "
+                          f"({SWEEP_SNR_MIN_DB:.0f}..{SWEEP_SNR_MAX_DB:.0f})")
+        clean["sweepSnrDb"] = float(snr)
+
     return clean, None
 
 
@@ -606,6 +665,34 @@ class EventRing:
         if len(out) > self.SINCE_MAX_ROWS:
             out = out[-self.SINCE_MAX_ROWS:]
         return out, last_id
+
+    def recent_hits(self, window_s: float, now: float,
+                    limit: int = 64) -> List[Dict[str, Any]]:
+        """Return spectrum-overlay markers {frequency,state,markerSlot,name}
+        for rows emitted within the last window_s seconds. Only rows carrying a
+        usable frequency are included (bearing rows without one are skipped).
+        Newest-first, capped at `limit`. Never raises."""
+        out: List[Dict[str, Any]] = []
+        cutoff = now - window_s
+        for row in reversed(self._rows):
+            try:
+                ts = row.get("raw", {}).get("timestamp_unix")
+                if not isinstance(ts, (int, float)) or ts < cutoff:
+                    continue
+                freq = row.get("frequency")
+                if not isinstance(freq, (int, float)) or freq <= 0:
+                    continue
+                out.append({
+                    "frequency": float(freq),
+                    "state": row.get("hitState", "auto") or "auto",
+                    "markerSlot": -1,
+                    "name": row.get("label", "") or "",
+                })
+                if len(out) >= limit:
+                    break
+            except Exception:  # noqa: BLE001 - overlay is best-effort
+                continue
+        return out
 
 
 # ── Node position (fixed site or gpsd) ──────────────────────────────────────
@@ -1008,6 +1095,39 @@ def _parse_freq_hz(token: str) -> Optional[float]:
         return None
 
 
+def validate_sweep_range(rng: Any) -> Optional[str]:
+    """Validate one rtl_power-style range string '<low>:<high>[:<step>]'.
+
+    Returns a normalised range string on success, or None on any problem.
+    Rules: low<high; both edges within SWEEP_FREQ_MIN_HZ..SWEEP_FREQ_MAX_HZ;
+    step is optional but, if present, must parse and be >0. Never raises."""
+    if not isinstance(rng, str):
+        return None
+    parts = rng.strip().split(":")
+    if len(parts) not in (2, 3):
+        return None
+    low = _parse_freq_hz(parts[0])
+    high = _parse_freq_hz(parts[1])
+    if low is None or high is None:
+        return None
+    if not (SWEEP_FREQ_MIN_HZ <= low <= SWEEP_FREQ_MAX_HZ):
+        return None
+    if not (SWEEP_FREQ_MIN_HZ <= high <= SWEEP_FREQ_MAX_HZ):
+        return None
+    if low >= high:
+        return None
+    step_tok = None
+    if len(parts) == 3:
+        step = _parse_freq_hz(parts[2])
+        if step is None or step <= 0:
+            return None
+        step_tok = parts[2].strip()
+    # Re-emit the original tokens (trimmed) so the stored form is canonical.
+    if step_tok is not None:
+        return f"{parts[0].strip()}:{parts[1].strip()}:{step_tok}"
+    return f"{parts[0].strip()}:{parts[1].strip()}"
+
+
 def _median(values: List[float]) -> float:
     """Median of a non-empty list (pure stdlib; no numpy)."""
     s = sorted(values)
@@ -1149,6 +1269,153 @@ def sweep_hit_to_event_row(
     return row
 
 
+def downsample_max(raw: List[float], target_bins: int) -> List[float]:
+    """Downsample a dB array to <=target_bins using MAX bucketing so narrow
+    peaks survive (averaging would smear narrowband emitters into the noise —
+    same policy as the app, main_window.cpp:3226-3240). Never raises."""
+    src = len(raw)
+    if src == 0:
+        return []
+    n = target_bins
+    if n < 1:
+        n = 1
+    if n > SPECTRUM_MAX_BINS:
+        n = SPECTRUM_MAX_BINS
+    if n > src:
+        n = src
+    out: List[float] = []
+    step = src / float(n)
+    for i in range(n):
+        a = int(i * step)
+        b = int((i + 1) * step)
+        if b > src:
+            b = src
+        if b <= a:
+            b = a + 1
+        m = -math.inf
+        for k in range(a, b):
+            v = raw[k]
+            if v > m:
+                m = v
+        if not math.isfinite(m):
+            m = SPECTRUM_FLOOR_DB
+        out.append(float(m))
+    return out
+
+
+def build_spectrum_frame(segments: List[Dict[str, Any]], serial: int,
+                         ts_ms: int, hits: Optional[List[Dict[str, Any]]] = None,
+                         search_bands: Optional[List[Dict[str, Any]]] = None,
+                         target_bins: int = SPECTRUM_MAX_BINS
+                         ) -> Dict[str, Any]:
+    """Stitch the CSV segments of one completed sweep pass into a single Kujhad
+    spectrum frame.
+
+    `segments` are parse_sweep_csv_line() dicts ({hz_low,hz_high,hz_step,dbs}).
+    They are sorted by hz_low and their dB bins concatenated in frequency order,
+    then max-bucketed down to <=target_bins. centerFreq = pass midpoint,
+    bandwidth = pass span, fftMin/MaxDb from the data with a small margin.
+    Returns a frame dict ready to json.dump. Never raises."""
+    segs = [s for s in (segments or []) if s and s.get("dbs")]
+    segs.sort(key=lambda s: float(s.get("hz_low", 0.0)))
+    raw: List[float] = []
+    lo_hz = None
+    hi_hz = None
+    for s in segs:
+        dbs = s.get("dbs") or []
+        raw.extend(float(x) for x in dbs)
+        sl = float(s.get("hz_low", 0.0))
+        sh = float(s.get("hz_high", sl))
+        lo_hz = sl if lo_hz is None else min(lo_hz, sl)
+        hi_hz = sh if hi_hz is None else max(hi_hz, sh)
+    if lo_hz is None:
+        lo_hz = 0.0
+    if hi_hz is None:
+        hi_hz = 0.0
+    bins = downsample_max(raw, target_bins)
+    if bins:
+        fft_min = min(bins) - SPECTRUM_DB_MARGIN
+        fft_max = max(bins) + SPECTRUM_DB_MARGIN
+    else:
+        fft_min, fft_max = SPECTRUM_FLOOR_DB, 0.0
+    return {
+        "serial": serial,
+        "tsMs": int(ts_ms),
+        "centerFreq": (lo_hz + hi_hz) / 2.0,
+        "bandwidth": max(0.0, hi_hz - lo_hz),
+        "fftMinDb": fft_min,
+        "fftMaxDb": fft_max,
+        "bins": bins,
+        "hits": hits or [],
+        "searchBands": search_bands or [],
+        "targets": [],
+        "excludes": [],
+    }
+
+
+def keepalive_spectrum_frame(serial: int, ts_ms: int,
+                             search_bands: Optional[List[Dict[str, Any]]] = None
+                             ) -> Dict[str, Any]:
+    """An empty-bins frame emitted every ~5s while the sweep is idle / has no
+    hardware, so the app shows 'no data' rather than a dead socket."""
+    return {
+        "serial": serial,
+        "tsMs": int(ts_ms),
+        "centerFreq": 0.0,
+        "bandwidth": 0.0,
+        "fftMinDb": SPECTRUM_FLOOR_DB,
+        "fftMaxDb": 0.0,
+        "bins": [],
+        "hits": [],
+        "searchBands": search_bands or [],
+        "targets": [],
+        "excludes": [],
+    }
+
+
+class SpectrumHub:
+    """Fan-out of spectrum frames to any number of concurrent NDJSON stream
+    clients. Each client gets a bounded asyncio.Queue; when a slow client's
+    queue is full the OLDEST frame is dropped so the ingest loop never blocks.
+    A monotonic serial is stamped on every published frame."""
+
+    def __init__(self) -> None:
+        self._subs: "set[asyncio.Queue]" = set()
+        self._serial = 0
+
+    def next_serial(self) -> int:
+        self._serial += 1
+        return self._serial
+
+    def subscribe(self) -> "asyncio.Queue":
+        q: "asyncio.Queue" = asyncio.Queue(maxsize=SPECTRUM_CLIENT_QUEUE_MAX)
+        self._subs.add(q)
+        return q
+
+    def unsubscribe(self, q: "asyncio.Queue") -> None:
+        self._subs.discard(q)
+
+    @property
+    def client_count(self) -> int:
+        return len(self._subs)
+
+    def publish(self, frame: Dict[str, Any]) -> None:
+        """Push a frame to every subscriber, dropping the oldest queued frame
+        for any client whose queue is full (slow client). Never raises."""
+        for q in list(self._subs):
+            try:
+                q.put_nowait(frame)
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()      # drop oldest
+                except Exception:       # noqa: BLE001
+                    pass
+                try:
+                    q.put_nowait(frame)
+                except Exception:       # noqa: BLE001
+                    pass
+
+
 class SweepIngester:
     """SDR-agnostic power-sweep ingester for a plain RTL-SDR / HackRF.
 
@@ -1164,7 +1431,9 @@ class SweepIngester:
                  source_label: str, ranges: List[str],
                  interval_s: int = SWEEP_DEFAULT_INTERVAL_S,
                  snr_threshold: float = SWEEP_DEFAULT_SNR_DB,
-                 equip: Optional["NodeEquipment"] = None):
+                 equip: Optional["NodeEquipment"] = None,
+                 mode: str = "auto",
+                 spectrum: Optional["SpectrumHub"] = None):
         self.ring = ring
         self.pos = pos
         self.node_id = node_id
@@ -1173,15 +1442,74 @@ class SweepIngester:
         self.ranges = ranges or list(DEFAULT_SWEEP_RANGES)
         self.interval_s = interval_s
         self.snr_threshold = snr_threshold
+        self.mode = mode if mode in SWEEP_MODES else "auto"
+        self.spectrum = spectrum      # optional SpectrumHub for /v1/spectrum
         # Status (read by /v1/state):
         self.tool: Optional[str] = None
         self.usb_id: Optional[str] = None
         self.running = False          # a sweep subprocess is alive
         self.hardware_present = False
         self.hits_emitted = 0
+        self.active_range: Optional[str] = None   # which range is scanning now
         self._proc: Optional[asyncio.subprocess.Process] = None
+        self._rotate_index = 0        # round-robin cursor across self.ranges
+        # Live-retask signal: set by retask() to tear down the current tool
+        # process so the run loop relaunches with new ranges/interval/threshold.
+        self._retask = asyncio.Event()
         # Per frequency-bucket rate limiter (bucket width == bin step).
         self._last_bucket_emit: Dict[int, float] = {}
+        # Spectrum pass accumulator: CSV segments of the current sweep pass,
+        # keyed by hz_low. A pass completes when a segment we've already seen
+        # reappears (rtl_power/hackrf_sweep loop back to the start).
+        self._pass_segments: Dict[int, Dict[str, Any]] = {}
+
+    def retask(self, *, mode: Optional[str] = None,
+               ranges: Optional[List[str]] = None,
+               interval_s: Optional[int] = None,
+               snr_threshold: Optional[float] = None) -> bool:
+        """Apply new sweep settings live (from POST /v1/node-config). Updates
+        the fields and, if anything that affects the running subprocess changed,
+        raises the retask signal so run() tears down and relaunches with the new
+        command. Returns True if a relaunch was signalled. Never raises."""
+        changed = False
+        relaunch = False
+        if mode is not None and mode in SWEEP_MODES and mode != self.mode:
+            self.mode = mode
+            changed = True
+            relaunch = True
+        if ranges:
+            new = list(ranges)
+            if new != self.ranges:
+                self.ranges = new
+                self._rotate_index = 0
+                changed = True
+                relaunch = True
+        if interval_s is not None and int(interval_s) != self.interval_s:
+            self.interval_s = int(interval_s)
+            changed = True
+            relaunch = True
+        if snr_threshold is not None and float(snr_threshold) != self.snr_threshold:
+            # SNR is applied per parsed line, so no relaunch needed for it.
+            self.snr_threshold = float(snr_threshold)
+            changed = True
+        if changed:
+            log.info("sweep: retasked to mode=%s ranges=%s interval=%ss snr=%.0fdB",
+                     self.mode, ",".join(self.ranges), self.interval_s,
+                     self.snr_threshold)
+        if relaunch:
+            self._retask.set()
+        return relaunch
+
+    def _next_range(self) -> str:
+        """Return the current range for this dwell and advance the cursor.
+        Round-robins across all configured ranges so every range is scanned."""
+        if not self.ranges:
+            self.ranges = list(DEFAULT_SWEEP_RANGES)
+        idx = self._rotate_index % len(self.ranges)
+        rng = self.ranges[idx]
+        self._rotate_index = (idx + 1) % len(self.ranges)
+        self.active_range = rng
+        return rng
 
     def status(self) -> Dict[str, Any]:
         if self.running:
@@ -1194,7 +1522,9 @@ class SweepIngester:
             "tool": self.tool,
             "usbId": self.usb_id,
             "state": state,
+            "mode": self.mode,
             "ranges": list(self.ranges),
+            "activeRange": self.active_range,
             "intervalS": self.interval_s,
             "snrThresholdDb": self.snr_threshold,
             "hitsEmitted": self.hits_emitted,
@@ -1221,14 +1551,12 @@ class SweepIngester:
             }
         return True
 
-    def _build_cmd(self, tool: str) -> List[str]:
-        """Build the subprocess argv for the detected tool. rtl_power takes a
-        single '-f low:high:binwidth'; hackrf_sweep takes '-f MHzlow:MHzhigh'
-        (MHz-only, one range). We sweep the FIRST range for hackrf_sweep and
-        loop ranges for rtl_power via repeated -f is not supported, so rtl_power
-        also uses the first range unless the caller collapses them — we run one
-        range per process and rotate is out of scope; use the widest first."""
-        rng = self.ranges[0]
+    def _build_cmd(self, tool: str, rng: str) -> List[str]:
+        """Build the subprocess argv for the detected tool for ONE range.
+        rtl_power takes '-f low:high:binwidth'; hackrf_sweep takes
+        '-f MHzlow:MHzhigh' (MHz-only). Neither tool accepts multiple ranges in
+        one process, so the run loop round-robins: it launches one process per
+        range for a dwell window, then relaunches with the next range."""
         if tool == "rtl_power":
             # rtl_power -f low:high:binwidth -i <int> -  (CSV → stdout)
             return ["rtl_power", "-f", rng,
@@ -1247,7 +1575,8 @@ class SweepIngester:
         return ["hackrf_sweep", "-f", f"{low_mhz}:{high_mhz}"]
 
     def _process_line(self, line: str) -> None:
-        """Parse one CSV line and emit any hits (rate-limited). Never raises."""
+        """Parse one CSV line and emit any hits (rate-limited), and accumulate
+        the row into the current spectrum pass. Never raises."""
         parsed = parse_sweep_csv_line(line)
         if parsed is None:
             return
@@ -1266,12 +1595,66 @@ class SweepIngester:
                 self.equip.stamp(row)
             self.ring.append(row)
             self.hits_emitted += 1
+        # Feed the spectrum accumulator (independent of the hit threshold).
+        self._accumulate_spectrum(parsed, now)
 
-    async def _run_tool(self, tool: str, stop: asyncio.Event) -> None:
-        """Spawn one sweep subprocess and pump its stdout until it exits or
-        stop is set. Never raises: subprocess errors are logged."""
-        cmd = self._build_cmd(tool)
+    def _accumulate_spectrum(self, parsed: Dict[str, Any], now: float) -> None:
+        """Collect CSV segments of the current sweep pass, keyed by hz_low. When
+        a segment we've already collected reappears (the tool has looped back to
+        the start of the range), flush the accumulated pass as one frame and
+        start a new pass with this segment. Never raises."""
+        if self.spectrum is None:
+            return
+        try:
+            key = int(round(float(parsed.get("hz_low", 0.0))))
+        except Exception:  # noqa: BLE001
+            return
+        if key in self._pass_segments and self._pass_segments:
+            # Loop-back detected → the previous pass is complete. Flush it.
+            self._flush_spectrum_pass(now)
+        self._pass_segments[key] = parsed
+
+    def _flush_spectrum_pass(self, now: float) -> None:
+        """Build and publish a spectrum frame from the accumulated pass, then
+        reset the accumulator. Never raises."""
+        if self.spectrum is None or not self._pass_segments:
+            self._pass_segments = {}
+            return
+        try:
+            frame = build_spectrum_frame(
+                list(self._pass_segments.values()),
+                self.spectrum.next_serial(),
+                int(now * 1000),
+                hits=self.ring.recent_hits(10.0, now),
+                search_bands=self._search_bands(),
+            )
+            self.spectrum.publish(frame)
+        except Exception as e:  # noqa: BLE001 - spectrum is best-effort
+            log.debug("sweep: spectrum flush failed (%s)", e)
+        finally:
+            self._pass_segments = {}
+
+    def _search_bands(self) -> List[Dict[str, Any]]:
+        """Configured sweep ranges as spectrum searchBands overlays."""
+        bands: List[Dict[str, Any]] = []
+        for rng in self.ranges:
+            parts = str(rng).split(":")
+            lo = _parse_freq_hz(parts[0]) if parts else None
+            hi = _parse_freq_hz(parts[1]) if len(parts) > 1 else None
+            if lo is None or hi is None:
+                continue
+            bands.append({"start": lo, "stop": hi,
+                          "enabled": True, "name": "sweep"})
+        return bands
+
+    async def _run_tool(self, tool: str, rng: str,
+                        stop: asyncio.Event) -> None:
+        """Spawn one sweep subprocess for ONE range and pump its stdout until it
+        exits or stop is set. Never raises: subprocess errors are logged."""
+        cmd = self._build_cmd(tool, rng)
         log.info("sweep: launching %s", " ".join(cmd))
+        # A new range's pass starts fresh — never stitch bins across ranges.
+        self._pass_segments = {}
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -1334,20 +1717,35 @@ class SweepIngester:
         self.running = False
         await self._terminate_proc()
 
+    def _gate_open(self, gate: Optional["asyncio.Event"]) -> bool:
+        """Whether the sweep is allowed to run right now, combining the live
+        mode with the auto-gate. mode 'off' never runs; 'on' ignores the gate;
+        'auto' honours the gate (paused while the Kraken WS is connected)."""
+        if self.mode == "off":
+            return False
+        if self.mode == "on":
+            return True
+        # auto
+        return gate is None or gate.is_set()
+
     async def run(self, stop: asyncio.Event,
                   gate: Optional["asyncio.Event"] = None) -> None:
-        """Main loop: detect hardware, run the tool, respawn on exit.
+        """Main loop: detect hardware, run one range at a time (round-robin),
+        respawn on exit, and relaunch promptly on live retask.
 
-        `gate`, when supplied, must be SET for the sweep to run (used by
-        --sweep auto to pause the sweep while the Kraken WS is connected). When
-        the gate clears we stop the tool and idle until it is set again.
-        Never raises out of this loop."""
+        `gate`, when supplied, must be SET for the sweep to run in 'auto' mode
+        (paused while the Kraken WS is connected). The live `self.mode`
+        ('auto'/'on'/'off') gates on top of it. Never raises out of this loop."""
         while not stop.is_set():
             try:
-                # In auto mode wait until the gate opens (Kraken not connected).
-                if gate is not None and not gate.is_set():
+                # Consume any pending retask so a fresh launch uses new settings.
+                if self._retask.is_set():
+                    self._retask.clear()
+
+                if not self._gate_open(gate):
                     if self.running:
                         await self.stop_now()
+                    self.active_range = None
                     await self._sleep_or_stop(stop, 2.0)
                     continue
 
@@ -1358,6 +1756,7 @@ class SweepIngester:
                     self.hardware_present = False
                     self.tool = None
                     self.usb_id = None
+                    self.active_range = None
                     await self._sleep_or_stop(stop, SWEEP_REDETECT_INTERVAL_S)
                     continue
 
@@ -1368,16 +1767,25 @@ class SweepIngester:
                 self.tool = tool
                 self.usb_id = usb_id
 
-                # Run until the tool exits, stop is set, or (auto) the gate
-                # closes. We watch the gate concurrently so a Kraken connect
-                # tears the sweep down promptly.
-                run_task = asyncio.ensure_future(self._run_tool(tool, stop))
-                await self._await_tool_or_gate(run_task, stop, gate)
+                # Pick the next range in the rotation and run it for a dwell
+                # window (or until the tool exits / stop / gate closes / retask).
+                rng = self._next_range()
+                run_task = asyncio.ensure_future(
+                    self._run_tool(tool, rng, stop))
+                dwell = SWEEP_ROTATE_DWELL_S if len(self.ranges) > 1 else None
+                await self._await_tool_or_gate(run_task, stop, gate, dwell)
 
                 if stop.is_set():
                     break
-                if gate is not None and not gate.is_set():
-                    continue  # Kraken connected; loop will pause at the top
+                if not self._gate_open(gate):
+                    continue  # paused; loop will idle at the top
+                if self._retask.is_set():
+                    continue  # relaunch immediately with new settings
+                # If there are multiple ranges we rotated intentionally: loop
+                # straight on to the next range with no respawn delay. A single
+                # range that ended means the tool exited (dongle hiccup) → wait.
+                if len(self.ranges) > 1:
+                    continue
                 log.info("sweep: tool exited; re-detecting in %.0fs",
                          SWEEP_RESPAWN_DELAY_S)
                 await self._sleep_or_stop(stop, SWEEP_RESPAWN_DELAY_S)
@@ -1392,15 +1800,15 @@ class SweepIngester:
 
     async def _await_tool_or_gate(self, run_task: "asyncio.Future",
                                   stop: asyncio.Event,
-                                  gate: Optional["asyncio.Event"]) -> None:
-        """Wait for the tool task to finish, or for stop/gate to require
-        tearing it down early."""
+                                  gate: Optional["asyncio.Event"],
+                                  dwell: Optional[float] = None) -> None:
+        """Wait for the tool task to finish, or for stop / gate-close /
+        rotation-dwell-elapsed / live-retask to require tearing it down early.
+        Never raises."""
+        deadline = (time.time() + dwell) if dwell else None
         while not run_task.done():
-            waiters = [asyncio.ensure_future(stop.wait())]
-            if gate is not None:
-                # Wake when the gate is cleared (Kraken connected). We poll it
-                # since asyncio.Event has no "wait for clear".
-                pass
+            waiters = [asyncio.ensure_future(stop.wait()),
+                       asyncio.ensure_future(self._retask.wait())]
             done, pending = await asyncio.wait(
                 {run_task, *waiters},
                 timeout=1.0,
@@ -1408,7 +1816,11 @@ class SweepIngester:
             )
             for w in waiters:
                 w.cancel()
-            if stop.is_set() or (gate is not None and not gate.is_set()):
+            teardown = (stop.is_set()
+                        or not self._gate_open(gate)
+                        or self._retask.is_set()
+                        or (deadline is not None and time.time() >= deadline))
+            if teardown:
                 if not run_task.done():
                     run_task.cancel()
                     try:
@@ -1459,6 +1871,7 @@ def node_setup_html() -> str:
         "terrainOptions": TERRAIN_PROFILES,
         "sitingOptions": SITING_PROFILES,
         "baseRssiSigmaDb": BASE_RSSI_SIGMA_DB,
+        "sweepModes": list(SWEEP_MODES),
     })
     return (
 "<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -1495,6 +1908,20 @@ def node_setup_html() -> str:
 "<div id=hwdevices class=hint>probing\u2026</div>"
 "<div id=hwconflicts></div>"
 "<div id=hwactivity class=hint></div>"
+"<h2>Sweep</h2>"
+"<div class=hint>What this node's plain SDR scans for power hits. Saved changes apply live \u2014 no restart. All configured ranges are scanned round-robin.</div>"
+"<label>Mode</label><select id=sweepmode></select>"
+"<div class=hint>auto = sweep only when the Kraken feed is offline; on = always sweep; off = never sweep.</div>"
+"<label>Ranges (low MHz / high MHz / step kHz)</label>"
+"<div id=sweepranges></div>"
+"<p><button onclick='addRange(400,470,100)'>+ Range</button>"
+" <button onclick='addRange(400,470,100)'>UHF 400-470</button>"
+" <button onclick='addRange(902,928,100)'>US 900 ISM 902-928</button>"
+" <button onclick='addRange(144,148,50)'>2 m VHF 144-148</button>"
+" <button onclick='addRange(118,137,50)'>Air 118-137</button></p>"
+"<div class=row><div><label>Integration (s)</label><input id=sweepint type=number step=1 min=1 max=60 value=5></div>"
+"<div><label>SNR threshold (dB)</label><input id=sweepsnr type=number step=1 min=3 max=40 value=12></div></div>"
+"<div class=hint>Integration 1-60 s; SNR 3-40 dB above the estimated noise floor.</div>"
 "<h2>Equipment</h2>"
 "<label>SDR attached</label><select id=sdr></select>"
 "<div id=sdrhint class=hint></div>"
@@ -1545,7 +1972,28 @@ def node_setup_html() -> str:
 "o.value=t.id;o.textContent=t.label+' (n='+t.exponent+')';return o}));"
 "$('siting').replaceChildren(...sitingOptions.map(s=>{const o=document.createElement('option');"
 "o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
-"$('sdr').value='unknown';$('terrain').value='mixed';$('siting').value='mast';}"
+"$('sweepmode').replaceChildren(...(TABLES.sweepModes||[]).map(m=>{const o=document.createElement('option');"
+"o.value=m;o.textContent=m;return o}));"
+"$('sdr').value='unknown';$('terrain').value='mixed';$('siting').value='mast';$('sweepmode').value='auto';}"
+"function fmtMhz(hz){const m=hz/1e6;return(Math.round(m*1000)/1000)+'M'}"
+"function fmtKhz(hz){return(Math.round(hz/1e3))+'k'}"
+"function addRange(loMhz,hiMhz,stepKhz){if($('sweepranges').children.length>=8)return;"
+"const row=document.createElement('div');row.className='row';"
+"const lo=document.createElement('input');lo.type='number';lo.step='any';lo.value=loMhz;lo.placeholder='low MHz';"
+"const hi=document.createElement('input');hi.type='number';hi.step='any';hi.value=hiMhz;hi.placeholder='high MHz';"
+"const st=document.createElement('input');st.type='number';st.step='any';st.value=stepKhz;st.placeholder='step kHz';"
+"const del=document.createElement('button');del.textContent='X';del.onclick=()=>row.remove();"
+"row.append(lo,hi,st,del);$('sweepranges').appendChild(row)}"
+"function sweepRangeStrings(){const out=[];for(const row of $('sweepranges').children){"
+"const lo=parseFloat(row.children[0].value),hi=parseFloat(row.children[1].value),st=parseFloat(row.children[2].value);"
+"if(!(isFinite(lo)&&isFinite(hi)))continue;"
+"let s=fmtMhz(lo*1e6)+':'+fmtMhz(hi*1e6);if(isFinite(st)&&st>0)s+=':'+fmtKhz(st*1e3);out.push(s)}return out}"
+"function parseTok(t){if(!t)return null;t=String(t).trim();let m=1;const c=t.slice(-1).toLowerCase();"
+"if(c==='k'){m=1e3;t=t.slice(0,-1)}else if(c==='m'){m=1e6;t=t.slice(0,-1)}else if(c==='g'){m=1e9;t=t.slice(0,-1)}"
+"const v=parseFloat(t);return isFinite(v)?v*m:null}"
+"function loadRanges(arr){$('sweepranges').replaceChildren();"
+"for(const s of (arr||[])){const p=String(s).split(':');const lo=parseTok(p[0]),hi=parseTok(p[1]),st=p.length>2?parseTok(p[2]):null;"
+"if(lo!=null&&hi!=null)addRange(lo/1e6,hi/1e6,st!=null?st/1e3:100)}}"
 "function addPoint(f,g){if($('points').children.length>=16)return;"
 "const row=document.createElement('div');row.className='row';"
 "const fi=document.createElement('input');fi.type='number';fi.step='any';fi.value=f;fi.placeholder='MHz';"
@@ -1564,6 +2012,10 @@ def node_setup_html() -> str:
 "$('terrain').value=j.terrain||'mixed';$('siting').value=j.siting||'mast';"
 "$('points').replaceChildren();"
 "for(const p of (j.antennaCurve||[]))addPoint(p.f,p.g);"
+"$('sweepmode').value=j.sweepMode||'auto';"
+"loadRanges(j.sweepRanges);"
+"if(j.sweepIntervalS!=null)$('sweepint').value=j.sweepIntervalS;"
+"if(j.sweepSnrDb!=null)$('sweepsnr').value=j.sweepSnrDb;"
 "recalc();"
 "msg('Loaded.'+(j.gpsdFix?' gpsd fix: '+j.gpsdLat.toFixed(5)+', '+j.gpsdLon.toFixed(5):''),true)}"
 "catch(e){msg('Load failed: '+e.message,false)}}"
@@ -1572,11 +2024,13 @@ def node_setup_html() -> str:
 "async function saveCfg(){if(!$('key').value){msg('Enter API key first.',false);return}"
 "try{const body={lat:parseFloat($('lat').value)||0,lon:parseFloat($('lon').value)||0,"
 "gpsdEnabled:$('gpsd').checked,sdrType:$('sdr').value,antennaCurve:curvePoints(),"
-"terrain:$('terrain').value,siting:$('siting').value};"
+"terrain:$('terrain').value,siting:$('siting').value,"
+"sweepMode:$('sweepmode').value,sweepRanges:sweepRangeStrings(),"
+"sweepIntervalS:parseInt($('sweepint').value),sweepSnrDb:parseFloat($('sweepsnr').value)};"
 "const r=await fetch('/v1/node-config',{method:'POST',headers:hdrs(),body:JSON.stringify(body)});"
 "if(r.status===401)throw new Error('key rejected');"
 "const j=await r.json();if(!r.ok||j.error)throw new Error(j.error||('HTTP '+r.status));"
-"msg('Saved. Hits from this node now carry the correction.',true)}"
+"msg('Saved. Sweep retasked; hits carry the correction.',true);loadHw()}"
 "catch(e){msg('Save failed: '+e.message,false)}}"
 "async function loadPairing(){if(!$('key').value){msg('Enter API key first.',false);return}"
 "try{const r=await fetch('/v1/pairing',{headers:hdrs()});"
@@ -1631,7 +2085,8 @@ class KujhadSensorApp:
                  equip: Optional["NodeEquipment"] = None,
                  config_path: str = "",
                  bind: str = "0.0.0.0", port: int = DEFAULT_PORT,
-                 gpsd_enabled: bool = False):
+                 gpsd_enabled: bool = False,
+                 spectrum: Optional["SpectrumHub"] = None):
         self.api_key = api_key
         self.device_name = device_name
         self.ring = ring
@@ -1644,6 +2099,19 @@ class KujhadSensorApp:
         self.bind = bind
         self.port = port
         self.gpsd_enabled = gpsd_enabled
+        # Spectrum fan-out hub (shared with the SweepIngester). If the sweep
+        # ingester carries one, reuse it so its published frames reach clients.
+        if spectrum is not None:
+            self.spectrum = spectrum
+        elif sweep is not None and getattr(sweep, "spectrum", None) is not None:
+            self.spectrum = sweep.spectrum
+        else:
+            self.spectrum = SpectrumHub()
+        # Pre-tune snapshot so a tune.set can be undone by scan.start.
+        self._pretune_ranges: Optional[List[str]] = None
+        self._pretune_mode: Optional[str] = None
+        # Last command applied (for /v1/state + Hardware activity visibility).
+        self.last_command: Optional[str] = None
 
     # -- auth --
     def _authorized(self, request: "web.Request") -> bool:
@@ -1719,6 +2187,9 @@ class KujhadSensorApp:
             # terrain, siting) so a controller/operator can see how this
             # node's hits are corrected.
             "equipment": self.equip.summary(),
+            # Command / spectrum visibility.
+            "lastCommand": self.last_command,
+            "spectrumClients": self.spectrum.client_count,
         }
         return web.json_response(body)
 
@@ -1743,16 +2214,182 @@ class KujhadSensorApp:
         events, last_id = self.ring.since(since)
         return web.json_response({"events": events, "lastId": last_id})
 
-    async def handle_command(self, request: "web.Request") -> "web.Response":
-        # This is a sensor-only node: it accepts no commands. Return a
-        # graceful error JSON (not a crash) so the controller degrades
-        # cleanly if it ever POSTs a command.
+    async def handle_spectrum(self, request: "web.Request") -> "web.Response":
+        """Authed long-lived chunked NDJSON stream of spectrum frames.
+
+        One JSON object per line per frame. Frames are produced by the sweep
+        ingester (one per completed sweep pass); when the sweep is idle / has no
+        hardware a keepalive frame (empty bins) is sent every ~5s so the app
+        shows 'no data' rather than a dead socket. Each client has a bounded
+        queue (drop-oldest) so a slow client never blocks the ingest loop.
+        Multiple concurrent clients are supported."""
         if not self._authorized(request):
             return self._unauthorized()
-        return web.json_response(
-            {"ok": False, "error": "sensor node accepts no commands"},
-            status=501,
-        )
+        resp = web.StreamResponse(status=200, headers={
+            "Content-Type": "application/x-ndjson",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        })
+        await resp.prepare(request)
+        q = self.spectrum.subscribe()
+        try:
+            while True:
+                try:
+                    frame = await asyncio.wait_for(
+                        q.get(), timeout=SPECTRUM_KEEPALIVE_S)
+                except asyncio.TimeoutError:
+                    # No frame within the keepalive window → the sweep is idle.
+                    frame = keepalive_spectrum_frame(
+                        self.spectrum.next_serial(),
+                        int(time.time() * 1000),
+                        search_bands=(self.sweep._search_bands()
+                                      if self.sweep else []),
+                    )
+                line = (json.dumps(frame) + "\n").encode("utf-8")
+                await resp.write(line)
+        except (asyncio.CancelledError, ConnectionResetError):
+            pass
+        except Exception as e:  # noqa: BLE001 - client dropped / write error
+            log.debug("spectrum: stream ended (%s)", e)
+        finally:
+            self.spectrum.unsubscribe(q)
+            try:
+                await resp.write_eof()
+            except Exception:  # noqa: BLE001
+                pass
+        return resp
+
+    async def handle_command(self, request: "web.Request") -> "web.Response":
+        """Authed command endpoint. Body {class, action, args}. RX-only: any
+        tx.* class (and foxbeacon) is rejected. Implemented: identify, tune.set,
+        scan.start/stop, mission.setSearchBands. Everything else → ok:false."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            raw = await request.text()
+            body = json.loads(raw) if raw.strip() else {}
+        except (ValueError, TypeError):
+            return web.json_response(
+                {"ok": False, "error": "invalid JSON body"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response(
+                {"ok": False, "error": "body must be a JSON object"},
+                status=400)
+        cls = str(body.get("class", ""))
+        action = str(body.get("action", ""))
+        args = body.get("args") if isinstance(body.get("args"), dict) else {}
+
+        # Hard RX-only gate: never implement tx.*/foxbeacon on this sensor.
+        if cls == "tx" or cls.startswith("tx.") or cls == "foxbeacon":
+            log.info("command rejected (tx/foxbeacon): %s.%s", cls, action)
+            return web.json_response(
+                {"ok": False, "error": "tx commands disabled (RX-only build)"},
+                status=403)
+
+        ok, err = self._dispatch_command(cls, action, args)
+        if ok:
+            self.last_command = f"{cls}.{action}"
+            log.info("command applied: %s.%s", cls, action)
+            return web.json_response({"ok": True})
+        log.info("command rejected: %s.%s (%s)", cls, action, err)
+        status = 400 if err == "unsupported on this sensor" else 200
+        return web.json_response({"ok": False, "error": err}, status=status)
+
+    def _dispatch_command(self, cls: str, action: str,
+                          args: Dict[str, Any]) -> Tuple[bool, str]:
+        """Apply one command. Returns (ok, error). Never raises."""
+        try:
+            if cls == "identify":
+                return True, ""
+
+            if cls == "tune" and action == "set":
+                if self.sweep is None:
+                    return False, "sweep unavailable on this node"
+                freq = _num(args.get("frequencyHz"), 0.0)
+                if freq <= 0:
+                    return False, "frequencyHz required"
+                if not (SWEEP_FREQ_MIN_HZ <= freq <= SWEEP_FREQ_MAX_HZ):
+                    return False, "frequencyHz out of hardware range"
+                half = _num(args.get("halfSpanHz"), TUNE_DEFAULT_HALF_SPAN_HZ)
+                if half <= 0:
+                    half = TUNE_DEFAULT_HALF_SPAN_HZ
+                low = max(SWEEP_FREQ_MIN_HZ, freq - half)
+                high = min(SWEEP_FREQ_MAX_HZ, freq + half)
+                if high <= low:
+                    return False, "tune window collapses at hardware edge"
+                rng = "%d:%d:%d" % (int(low), int(high), TUNE_STEP_HZ)
+                if validate_sweep_range(rng) is None:
+                    return False, "computed tune range invalid"
+                # Remember pre-tune config so scan.start can restore it.
+                if self._pretune_ranges is None:
+                    self._pretune_ranges = list(self.sweep.ranges)
+                    self._pretune_mode = self.sweep.mode
+                self.sweep.retask(mode="on", ranges=[rng])
+                self._persist_config()
+                return True, ""
+
+            if cls == "scan" and action == "start":
+                if self.sweep is None:
+                    return False, "sweep unavailable on this node"
+                # Restore the configured ranges/mode if a manual tune is active.
+                if self._pretune_ranges is not None:
+                    self.sweep.retask(
+                        mode=self._pretune_mode or "auto",
+                        ranges=self._pretune_ranges)
+                    self._pretune_ranges = None
+                    self._pretune_mode = None
+                else:
+                    # No tune pending: just ensure the sweep is running.
+                    if self.sweep.mode == "off":
+                        self.sweep.retask(mode="auto")
+                self._persist_config()
+                return True, ""
+
+            if cls == "scan" and action == "stop":
+                if self.sweep is None:
+                    return False, "sweep unavailable on this node"
+                self.sweep.retask(mode="off")
+                self._persist_config()
+                return True, ""
+
+            if cls == "mission" and action == "setSearchBands":
+                if self.sweep is None:
+                    return False, "sweep unavailable on this node"
+                bands = args.get("bands")
+                if not isinstance(bands, list):
+                    return False, "bands array required"
+                ranges: List[str] = []
+                for b in bands:
+                    if not isinstance(b, dict):
+                        return False, "band entries must be objects"
+                    if not b.get("enabled", True):
+                        continue
+                    start = _num(b.get("start"), 0.0)
+                    stop = _num(b.get("stop"), 0.0)
+                    rng = "%d:%d:%d" % (int(start), int(stop), TUNE_STEP_HZ)
+                    norm = validate_sweep_range(rng)
+                    if norm is None:
+                        return False, "invalid band: start/stop out of range"
+                    ranges.append(norm)
+                if not ranges:
+                    return False, "no enabled bands"
+                if len(ranges) > SWEEP_MAX_RANGES:
+                    return False, f"max {SWEEP_MAX_RANGES} bands"
+                # A fresh mission definition supersedes any manual tune.
+                self._pretune_ranges = None
+                self._pretune_mode = None
+                self.sweep.retask(mode="auto", ranges=ranges)
+                self._persist_config()
+                return True, ""
+
+            if cls in ("tune", "scan", "mission"):
+                return False, f"unknown {cls} action"
+
+            return False, "unsupported on this sensor"
+        except Exception as e:  # noqa: BLE001 - never crash the endpoint
+            log.warning("command: dispatch error (%s)", e)
+            return False, "internal error applying command"
 
     # -- node commissioning portal --
     async def handle_setup(self, request: "web.Request") -> "web.Response":
@@ -1779,11 +2416,29 @@ class KujhadSensorApp:
             "gpsdFix": bool(self.pos.have_fix),
             "gpsdLat": self.pos.lat,
             "gpsdLon": self.pos.lon,
+            # Sweep control (current live values).
+            "sweepMode": self.sweep.mode if self.sweep else "off",
+            "sweepRanges": (list(self.sweep.ranges) if self.sweep
+                            else list(DEFAULT_SWEEP_RANGES)),
+            "sweepIntervalS": (self.sweep.interval_s if self.sweep
+                               else SWEEP_DEFAULT_INTERVAL_S),
+            "sweepSnrDb": (self.sweep.snr_threshold if self.sweep
+                           else SWEEP_DEFAULT_SNR_DB),
             # Option tables for the page's <select>/preset controls.
             "sdrOptions": SDR_PROFILES,
             "antennaPresets": ANTENNA_PRESETS,
             "terrainOptions": TERRAIN_PROFILES,
             "sitingOptions": SITING_PROFILES,
+            "sweepModeOptions": list(SWEEP_MODES),
+            "sweepBounds": {
+                "maxRanges": SWEEP_MAX_RANGES,
+                "freqMinMhz": SWEEP_FREQ_MIN_HZ / 1e6,
+                "freqMaxMhz": SWEEP_FREQ_MAX_HZ / 1e6,
+                "intervalMinS": SWEEP_INTERVAL_MIN_S,
+                "intervalMaxS": SWEEP_INTERVAL_MAX_S,
+                "snrMinDb": SWEEP_SNR_MIN_DB,
+                "snrMaxDb": SWEEP_SNR_MAX_DB,
+            },
         }
         return web.json_response(body)
 
@@ -1812,6 +2467,20 @@ class KujhadSensorApp:
         self.equip.antenna_curve = clean["antennaCurve"]
         self.equip.terrain = clean["terrain"]
         self.equip.siting = clean["siting"]
+        # Sweep settings (only those present in the payload) — apply live to the
+        # running ingester so the change takes effect without a service restart.
+        if self.sweep is not None and any(
+                k in clean for k in ("sweepMode", "sweepRanges",
+                                     "sweepIntervalS", "sweepSnrDb")):
+            try:
+                self.sweep.retask(
+                    mode=clean.get("sweepMode"),
+                    ranges=clean.get("sweepRanges"),
+                    interval_s=clean.get("sweepIntervalS"),
+                    snr_threshold=clean.get("sweepSnrDb"),
+                )
+            except Exception as e:  # noqa: BLE001 - never fail the POST on this
+                log.warning("sweep: retask failed (%s)", e)
         self._persist_config()
         return web.json_response({"ok": True})
 
@@ -1833,6 +2502,11 @@ class KujhadSensorApp:
         cfg["lon"] = self.pos.lon
         cfg["gpsdEnabled"] = bool(self.gpsd_enabled)
         cfg.update(self.equip.to_config())
+        if self.sweep is not None:
+            cfg["sweepMode"] = self.sweep.mode
+            cfg["sweepRanges"] = list(self.sweep.ranges)
+            cfg["sweepIntervalS"] = int(self.sweep.interval_s)
+            cfg["sweepSnrDb"] = float(self.sweep.snr_threshold)
         _save_config(self.config_path, cfg)
 
     async def handle_pairing(self, request: "web.Request") -> "web.Response":
@@ -1920,6 +2594,7 @@ class KujhadSensorApp:
         app.router.add_get("/v1/state", self.handle_state)
         app.router.add_get("/v1/gps", self.handle_gps)
         app.router.add_get("/v1/events", self.handle_events)
+        app.router.add_get("/v1/spectrum", self.handle_spectrum)
         app.router.add_post("/v1/command", self.handle_command)
         # Node commissioning portal.
         app.router.add_get("/setup", self.handle_setup)
@@ -2135,7 +2810,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         "'auto' (default): run the sweep ONLY while the Kraken "
                         "WS ingester is NOT connected (a Kraken enumerates as "
                         "several RTL dongles that rtl_power would fight); "
-                        "'on': always sweep; 'off': never sweep.")
+                        "'on': always sweep; 'off': never sweep. NOTE: sweep "
+                        "settings (--sweep/--sweep-range/-interval/-snr) are "
+                        "DEFAULTS only — values saved from the /setup browser "
+                        "portal (persisted in df_kracked_sensor.json) WIN and "
+                        "are applied live without a restart.")
     p.add_argument("--sweep-range", action="append", default=None,
                    dest="sweep_range",
                    help="frequency range to sweep, repeatable, in rtl_power "
@@ -2223,23 +2902,54 @@ def build_runtime(args: argparse.Namespace) -> Tuple[
     ingester = KrakenIngester(args.ws or args.doa_url, ring, pos, node_id,
                               source_label, equip=equip)
 
-    sweep: Optional[SweepIngester] = None
-    if getattr(args, "sweep", "auto") != "off":
-        sweep = SweepIngester(
-            ring, pos, node_id, source_label,
-            ranges=list(getattr(args, "sweep_range", None) or DEFAULT_SWEEP_RANGES),
-            interval_s=int(getattr(args, "sweep_interval",
-                                   SWEEP_DEFAULT_INTERVAL_S)),
-            snr_threshold=float(getattr(args, "sweep_snr",
-                                        SWEEP_DEFAULT_SNR_DB)),
-            equip=equip,
-        )
+    # Sweep settings: config-file values (set via the /setup portal POST) win;
+    # CLI flags act as the defaults when the config file has no sweep block.
+    sweep_mode = args.sweep
+    cfg_mode = cfg.get("sweepMode")
+    if isinstance(cfg_mode, str) and cfg_mode in SWEEP_MODES:
+        sweep_mode = cfg_mode
+
+    cli_ranges = list(getattr(args, "sweep_range", None) or DEFAULT_SWEEP_RANGES)
+    sweep_ranges = cli_ranges
+    cfg_ranges = cfg.get("sweepRanges")
+    if isinstance(cfg_ranges, list) and cfg_ranges:
+        norm = [validate_sweep_range(r) for r in cfg_ranges]
+        norm = [r for r in norm if r]
+        if norm:
+            sweep_ranges = norm[:SWEEP_MAX_RANGES]
+
+    sweep_interval = int(getattr(args, "sweep_interval",
+                                 SWEEP_DEFAULT_INTERVAL_S))
+    cfg_iv = cfg.get("sweepIntervalS")
+    if isinstance(cfg_iv, (int, float)) and (
+            SWEEP_INTERVAL_MIN_S <= cfg_iv <= SWEEP_INTERVAL_MAX_S):
+        sweep_interval = int(cfg_iv)
+
+    sweep_snr = float(getattr(args, "sweep_snr", SWEEP_DEFAULT_SNR_DB))
+    cfg_snr = cfg.get("sweepSnrDb")
+    if isinstance(cfg_snr, (int, float)) and (
+            SWEEP_SNR_MIN_DB <= cfg_snr <= SWEEP_SNR_MAX_DB):
+        sweep_snr = float(cfg_snr)
+
+    # A SweepIngester is always constructed (so mode can be toggled live via the
+    # portal without a restart). mode 'off' simply idles it. The shared
+    # SpectrumHub lets its per-pass frames fan out to /v1/spectrum clients.
+    spectrum = SpectrumHub()
+    sweep: Optional[SweepIngester] = SweepIngester(
+        ring, pos, node_id, source_label,
+        ranges=sweep_ranges,
+        interval_s=sweep_interval,
+        snr_threshold=sweep_snr,
+        equip=equip,
+        mode=sweep_mode,
+        spectrum=spectrum,
+    )
 
     app = KujhadSensorApp(key, device_name, ring, pos, ingester,
                           advertise=args.advertise, sweep=sweep,
                           equip=equip, config_path=cfg_path,
                           bind=args.bind, port=args.port,
-                          gpsd_enabled=gpsd_enabled)
+                          gpsd_enabled=gpsd_enabled, spectrum=spectrum)
     return app, ingester, sweep, pos, ring, key, device_name
 
 
@@ -2328,13 +3038,13 @@ async def run(args: argparse.Namespace) -> None:
     # permanently open. A dead sweep task must NOT be fatal (unlike the
     # Kraken ingest task): the sweep is best-effort and self-heals.
     if sweep is not None:
-        if args.sweep == "on":
-            gate = asyncio.Event()
-            gate.set()
-        else:  # auto
-            gate = asyncio.Event()  # starts closed; gate loop opens it
-            tasks.append(asyncio.create_task(
-                _sweep_auto_gate_loop(sweep, ingester, gate, stop)))
+        # The auto-gate loop always runs: it opens/closes the gate based on the
+        # Kraken WS connection. The ingester's live mode ('auto'/'on'/'off')
+        # decides whether it actually honours the gate, so the operator can flip
+        # modes from the /setup portal without a restart.
+        gate = asyncio.Event()  # starts closed; gate loop opens it
+        tasks.append(asyncio.create_task(
+            _sweep_auto_gate_loop(sweep, ingester, gate, stop)))
 
         def _sweep_done(t: "asyncio.Task") -> None:
             if t.cancelled():

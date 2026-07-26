@@ -1,0 +1,16 @@
+{
+  "api_key": "TESTKEY",
+  "lat": 0.0,
+  "lon": 0.0,
+  "gpsdEnabled": false,
+  "sdrType": "unknown",
+  "antennaCurve": [],
+  "terrain": "mixed",
+  "siting": "mast",
+  "sweepMode": "auto",
+  "sweepRanges": [
+    "144000000:148000000:10000"
+  ],
+  "sweepIntervalS": 5,
+  "sweepSnrDb": 12.0
+}

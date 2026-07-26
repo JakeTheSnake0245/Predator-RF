@@ -410,6 +410,105 @@ class TestSweepEventRow(unittest.TestCase):
         self.assertAlmostEqual(row["raw"]["snr_db"], 39.75)
 
 
+class TestSpectrumFrameBuilder(unittest.TestCase):
+    def test_downsample_max_preserves_peaks(self):
+        raw = [-100.0] * 10
+        raw[3] = -20.0  # a narrow peak
+        out = sensor.downsample_max(raw, 2)
+        self.assertEqual(len(out), 2)
+        # The bucket containing the peak keeps the max, not an average.
+        self.assertEqual(max(out), -20.0)
+
+    def test_downsample_caps_at_1024_and_src(self):
+        self.assertEqual(len(sensor.downsample_max([1.0] * 5, 999)), 5)
+        self.assertEqual(len(sensor.downsample_max([1.0] * 4000, 5000)),
+                         sensor.SPECTRUM_MAX_BINS)
+
+    def test_downsample_empty(self):
+        self.assertEqual(sensor.downsample_max([], 8), [])
+
+    def test_build_frame_stitches_in_freq_order(self):
+        # Two segments given out of order; result must be low→high stitched.
+        seg_hi = {"hz_low": 460e6, "hz_high": 470e6, "hz_step": 5e6,
+                  "dbs": [-30.0, -25.0]}
+        seg_lo = {"hz_low": 400e6, "hz_high": 410e6, "hz_step": 5e6,
+                  "dbs": [-90.0, -80.0]}
+        frame = sensor.build_spectrum_frame([seg_hi, seg_lo], 7, 1234,
+                                            target_bins=8)
+        self.assertEqual(frame["serial"], 7)
+        self.assertEqual(frame["tsMs"], 1234)
+        self.assertEqual(frame["centerFreq"], (400e6 + 470e6) / 2.0)
+        self.assertAlmostEqual(frame["bandwidth"], 70e6)
+        # 4 source bins < 8 target → 4 bins, low band first.
+        self.assertEqual(len(frame["bins"]), 4)
+        self.assertEqual(frame["bins"][0], -90.0)
+        self.assertEqual(frame["bins"][-1], -25.0)
+        # fftMin/Max bracket the data with a margin.
+        self.assertLess(frame["fftMinDb"], -90.0)
+        self.assertGreater(frame["fftMaxDb"], -25.0)
+        self.assertEqual(frame["targets"], [])
+        self.assertEqual(frame["excludes"], [])
+
+    def test_keepalive_frame_shape(self):
+        f = sensor.keepalive_spectrum_frame(3, 999,
+                                            search_bands=[{"start": 1}])
+        self.assertEqual(f["serial"], 3)
+        self.assertEqual(f["bins"], [])
+        self.assertEqual(f["searchBands"], [{"start": 1}])
+        self.assertEqual(f["hits"], [])
+
+
+class TestSpectrumHub(unittest.IsolatedAsyncioTestCase):
+    async def test_fanout_and_serial(self):
+        hub = sensor.SpectrumHub()
+        q1 = hub.subscribe()
+        q2 = hub.subscribe()
+        self.assertEqual(hub.client_count, 2)
+        hub.publish({"n": 1})
+        self.assertEqual((await q1.get())["n"], 1)
+        self.assertEqual((await q2.get())["n"], 1)
+        self.assertEqual(hub.next_serial(), 1)
+        self.assertEqual(hub.next_serial(), 2)
+        hub.unsubscribe(q1)
+        self.assertEqual(hub.client_count, 1)
+
+    async def test_drop_oldest_when_full(self):
+        hub = sensor.SpectrumHub()
+        q = hub.subscribe()
+        for i in range(sensor.SPECTRUM_CLIENT_QUEUE_MAX + 3):
+            hub.publish({"i": i})
+        # Queue holds only the newest MAX frames; oldest were dropped.
+        got = []
+        while not q.empty():
+            got.append((await q.get())["i"])
+        self.assertEqual(len(got), sensor.SPECTRUM_CLIENT_QUEUE_MAX)
+        self.assertEqual(got[-1], sensor.SPECTRUM_CLIENT_QUEUE_MAX + 2)
+
+
+class TestSpectrumAccumulator(unittest.TestCase):
+    def test_pass_flush_on_loopback(self):
+        hub = sensor.SpectrumHub()
+        q = hub.subscribe()
+        sw = SweepIngester(EventRing(), NodePosition(0, 0, 0, False),
+                           "n", "s", ranges=["400M:470M:100k"],
+                           spectrum=hub)
+        now = 1000.0
+        # Two segments of one pass, then a loop-back (first hz_low reappears).
+        sw._accumulate_spectrum(
+            {"hz_low": 400e6, "hz_high": 410e6, "hz_step": 5e6,
+             "dbs": [-90.0, -80.0]}, now)
+        sw._accumulate_spectrum(
+            {"hz_low": 460e6, "hz_high": 470e6, "hz_step": 5e6,
+             "dbs": [-30.0, -25.0]}, now)
+        self.assertTrue(q.empty())  # pass not complete yet
+        sw._accumulate_spectrum(
+            {"hz_low": 400e6, "hz_high": 410e6, "hz_step": 5e6,
+             "dbs": [-91.0, -81.0]}, now)
+        self.assertFalse(q.empty())  # loop-back flushed the completed pass
+        frame = q.get_nowait()
+        self.assertEqual(len(frame["bins"]), 4)
+
+
 class TestSweepRateLimit(unittest.TestCase):
     def test_process_line_emits_and_rate_limits(self):
         ring = EventRing()
@@ -430,7 +529,7 @@ class TestSweepRateLimit(unittest.TestCase):
     def test_build_cmd_rtl_power(self):
         sw = SweepIngester(EventRing(), NodePosition(0, 0, 0, False),
                            "n", "s", ranges=["400M:470M:100k"], interval_s=5)
-        cmd = sw._build_cmd("rtl_power")
+        cmd = sw._build_cmd("rtl_power", "400M:470M:100k")
         self.assertEqual(cmd[0], "rtl_power")
         self.assertIn("400M:470M:100k", cmd)
         self.assertIn("-", cmd)
@@ -438,9 +537,74 @@ class TestSweepRateLimit(unittest.TestCase):
     def test_build_cmd_hackrf_sweep_mhz(self):
         sw = SweepIngester(EventRing(), NodePosition(0, 0, 0, False),
                            "n", "s", ranges=["400M:470M:100k"])
-        cmd = sw._build_cmd("hackrf_sweep")
+        cmd = sw._build_cmd("hackrf_sweep", "400M:470M:100k")
         self.assertEqual(cmd[0], "hackrf_sweep")
         self.assertIn("400:470", cmd)
+
+
+class TestSweepRetaskAndRotation(unittest.TestCase):
+    def _sw(self, **kw):
+        return SweepIngester(EventRing(), NodePosition(0, 0, 0, False),
+                             "n", "s", ranges=["400M:470M:100k"], **kw)
+
+    def test_retask_changes_and_signals_relaunch(self):
+        sw = self._sw()
+        self.assertFalse(sw._retask.is_set())
+        relaunch = sw.retask(ranges=["144M:148M:50k"], interval_s=10)
+        self.assertTrue(relaunch)
+        self.assertEqual(sw.ranges, ["144M:148M:50k"])
+        self.assertEqual(sw.interval_s, 10)
+        # The run loop watches this event to tear down + relaunch live.
+        self.assertTrue(sw._retask.is_set())
+
+    def test_retask_mode_change_signals(self):
+        sw = self._sw(mode="auto")
+        self.assertTrue(sw.retask(mode="off"))
+        self.assertEqual(sw.mode, "off")
+        self.assertTrue(sw._retask.is_set())
+
+    def test_retask_snr_only_no_relaunch(self):
+        sw = self._sw(snr_threshold=12.0)
+        relaunch = sw.retask(snr_threshold=20.0)
+        self.assertFalse(relaunch)          # SNR applies per-line, no restart
+        self.assertEqual(sw.snr_threshold, 20.0)
+        self.assertFalse(sw._retask.is_set())
+
+    def test_retask_noop_when_unchanged(self):
+        sw = self._sw(mode="auto", interval_s=5, snr_threshold=12.0)
+        self.assertFalse(sw.retask(mode="auto", ranges=["400M:470M:100k"],
+                                   interval_s=5, snr_threshold=12.0))
+        self.assertFalse(sw._retask.is_set())
+
+    def test_rotation_round_robins_all_ranges(self):
+        sw = self._sw()
+        sw.ranges = ["a:b:c", "d:e:f", "g:h:i"]
+        sw._rotate_index = 0
+        picks = [sw._next_range() for _ in range(6)]
+        self.assertEqual(picks, ["a:b:c", "d:e:f", "g:h:i",
+                                 "a:b:c", "d:e:f", "g:h:i"])
+        # active_range reflects the last pick.
+        self.assertEqual(sw.active_range, "g:h:i")
+
+    def test_gate_open_honours_mode(self):
+        import asyncio
+        gate = asyncio.Event()  # closed
+        sw = self._sw(mode="off")
+        self.assertFalse(sw._gate_open(gate))
+        sw.mode = "on"
+        self.assertTrue(sw._gate_open(gate))    # on ignores the gate
+        sw.mode = "auto"
+        self.assertFalse(sw._gate_open(gate))   # auto honours closed gate
+        gate.set()
+        self.assertTrue(sw._gate_open(gate))
+
+    def test_status_reports_mode_and_ranges(self):
+        sw = self._sw(mode="on")
+        sw.ranges = ["144M:148M:50k", "902M:928M:100k"]
+        st = sw.status()
+        self.assertEqual(st["mode"], "on")
+        self.assertEqual(st["ranges"], ["144M:148M:50k", "902M:928M:100k"])
+        self.assertIn("activeRange", st)
 
 
 # ── Node equipment calibration (mirrors node_equipment.h) ───────────────────
@@ -588,6 +752,76 @@ class TestNodeConfigValidation(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(clean["antennaCurve"], [{"f": 400.0, "g": 3.0}])
 
+    # ── sweep control validation ──
+    def test_accept_sweep_settings(self):
+        clean, err = validate_node_config(self._ok(
+            sweepMode="on",
+            sweepRanges=["400M:470M:100k", "144M:148M"],
+            sweepIntervalS=10, sweepSnrDb=15.0))
+        self.assertIsNone(err)
+        self.assertEqual(clean["sweepMode"], "on")
+        self.assertEqual(clean["sweepRanges"], ["400M:470M:100k", "144M:148M"])
+        self.assertEqual(clean["sweepIntervalS"], 10)
+        self.assertEqual(clean["sweepSnrDb"], 15.0)
+
+    def test_sweep_fields_optional(self):
+        clean, err = validate_node_config(self._ok())
+        self.assertIsNone(err)
+        self.assertNotIn("sweepMode", clean)
+        self.assertNotIn("sweepRanges", clean)
+
+    def test_reject_bad_sweep_mode(self):
+        clean, err = validate_node_config(self._ok(sweepMode="turbo"))
+        self.assertIsNone(clean)
+        self.assertIn("sweepMode", err)
+
+    def test_reject_malformed_range(self):
+        clean, err = validate_node_config(self._ok(sweepRanges=["garbage"]))
+        self.assertIsNone(clean)
+        self.assertIn("range", err)
+
+    def test_reject_low_ge_high_range(self):
+        clean, err = validate_node_config(self._ok(sweepRanges=["470M:400M"]))
+        self.assertIsNone(clean)
+        self.assertIn("range", err)
+
+    def test_reject_out_of_bounds_range(self):
+        clean, err = validate_node_config(self._ok(sweepRanges=["0.1M:8000M"]))
+        self.assertIsNone(clean)
+        self.assertIn("range", err)
+
+    def test_reject_too_many_ranges(self):
+        rs = ["%dM:%dM" % (100 + i, 101 + i) for i in range(9)]
+        clean, err = validate_node_config(self._ok(sweepRanges=rs))
+        self.assertIsNone(clean)
+        self.assertIn("max", err)
+
+    def test_reject_empty_ranges(self):
+        clean, err = validate_node_config(self._ok(sweepRanges=[]))
+        self.assertIsNone(clean)
+        self.assertIn("at least one", err)
+
+    def test_reject_ranges_not_array(self):
+        clean, err = validate_node_config(self._ok(sweepRanges="400M:470M"))
+        self.assertIsNone(clean)
+        self.assertIn("array", err)
+
+    def test_reject_bad_interval(self):
+        clean, err = validate_node_config(self._ok(sweepIntervalS=0))
+        self.assertIsNone(clean)
+        self.assertIn("sweepIntervalS", err)
+        clean, err = validate_node_config(self._ok(sweepIntervalS=999))
+        self.assertIsNone(clean)
+        self.assertIn("sweepIntervalS", err)
+
+    def test_reject_bad_snr(self):
+        clean, err = validate_node_config(self._ok(sweepSnrDb=1.0))
+        self.assertIsNone(clean)
+        self.assertIn("sweepSnrDb", err)
+        clean, err = validate_node_config(self._ok(sweepSnrDb=100.0))
+        self.assertIsNone(clean)
+        self.assertIn("sweepSnrDb", err)
+
 
 class TestEmittedRowsCarryCalibration(unittest.TestCase):
     def test_sweep_hit_row_stamped(self):
@@ -723,8 +957,12 @@ class TestServer(AioHTTPTestCase):
                                   "Sensor:t", equip=self.equip)
         self._cfgdir = tempfile.TemporaryDirectory()
         self._cfgpath = os.path.join(self._cfgdir.name, "df_kracked_sensor.json")
+        self.sweep = SweepIngester(self.ring, pos, "kraken-0", "Sensor:t",
+                                   ranges=["400M:470M:100k"], equip=self.equip,
+                                   mode="auto")
         self.app_obj = KujhadSensorApp("SECRETKEY", "df-test", self.ring, pos,
                                        self.ing, equip=self.equip,
+                                       sweep=self.sweep,
                                        config_path=self._cfgpath,
                                        bind="10.0.0.5", port=9151)
         return self.app_obj.build()
@@ -789,13 +1027,106 @@ class TestServer(AioHTTPTestCase):
         self.assertEqual([e["serial"] for e in body["events"]], [base + 3])
         self.assertEqual(body["lastId"], base + 3)
 
-    async def test_command_graceful_501(self):
-        resp = await self.client.post(
-            "/v1/command", headers={"X-Kujhad-Key": "SECRETKEY"},
-            data=json.dumps({"class": "tune", "action": "set"}))
-        self.assertEqual(resp.status, 501)
+    async def _cmd(self, cls, action, args=None, key="SECRETKEY"):
+        headers = {"X-Kujhad-Key": key} if key else {}
+        payload = {"class": cls, "action": action}
+        if args is not None:
+            payload["args"] = args
+        return await self.client.post(
+            "/v1/command", headers=headers, data=json.dumps(payload))
+
+    async def test_command_requires_auth(self):
+        resp = await self._cmd("identify", "", key="")
+        self.assertEqual(resp.status, 401)
+
+    async def test_command_identify_ok(self):
+        resp = await self._cmd("identify", "")
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["ok"])
+
+    async def test_command_tx_rejected_403(self):
+        for cls in ("tx", "tx.jam", "foxbeacon"):
+            resp = await self._cmd(cls, "start")
+            self.assertEqual(resp.status, 403)
+            body = await resp.json()
+            self.assertFalse(body["ok"])
+
+    async def test_command_unknown_class_unsupported(self):
+        resp = await self._cmd("bogus", "do")
+        self.assertEqual(resp.status, 400)
         body = await resp.json()
         self.assertFalse(body["ok"])
+        self.assertEqual(body["error"], "unsupported on this sensor")
+
+    async def test_command_tune_requires_freq(self):
+        resp = await self._cmd("tune", "set", {})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertFalse(body["ok"])
+        self.assertIn("frequencyHz", body["error"])
+
+    async def test_command_tune_retasks_and_restore(self):
+        # tune.set → sweep retasks to a manual window around the freq, mode on.
+        orig = list(self.sweep.ranges)
+        resp = await self._cmd("tune", "set", {"frequencyHz": 462_000_000})
+        self.assertEqual(resp.status, 200)
+        self.assertTrue((await resp.json())["ok"])
+        self.assertEqual(self.sweep.mode, "on")
+        self.assertEqual(len(self.sweep.ranges), 1)
+        self.assertNotEqual(self.sweep.ranges, orig)
+        # scan.start restores the pre-tune configured ranges/mode.
+        resp = await self._cmd("scan", "start")
+        self.assertTrue((await resp.json())["ok"])
+        self.assertEqual(self.sweep.ranges, orig)
+
+    async def test_command_scan_stop_sets_off(self):
+        resp = await self._cmd("scan", "stop")
+        self.assertTrue((await resp.json())["ok"])
+        self.assertEqual(self.sweep.mode, "off")
+
+    async def test_command_set_search_bands_maps_ranges(self):
+        resp = await self._cmd("mission", "setSearchBands", {"bands": [
+            {"start": 144_000_000, "stop": 148_000_000, "enabled": True},
+            {"start": 118_000_000, "stop": 137_000_000, "enabled": False},
+        ]})
+        self.assertEqual(resp.status, 200)
+        self.assertTrue((await resp.json())["ok"])
+        # Only the enabled band becomes a sweep range.
+        self.assertEqual(len(self.sweep.ranges), 1)
+
+    async def test_command_set_search_bands_validates(self):
+        resp = await self._cmd("mission", "setSearchBands",
+                               {"bands": "notarray"})
+        self.assertEqual(resp.status, 200)
+        self.assertFalse((await resp.json())["ok"])
+        # Out-of-range band rejected.
+        resp = await self._cmd("mission", "setSearchBands", {"bands": [
+            {"start": 1, "stop": 2, "enabled": True}]})
+        self.assertFalse((await resp.json())["ok"])
+
+    async def test_spectrum_requires_auth(self):
+        resp = await self.client.get("/v1/spectrum")
+        self.assertEqual(resp.status, 401)
+
+    async def test_spectrum_streams_frame(self):
+        # Publish a frame, then read one NDJSON line from the stream.
+        resp = await self.client.get(
+            "/v1/spectrum", headers={"X-Kujhad-Key": "SECRETKEY"})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers["Content-Type"], "application/x-ndjson")
+        self.app_obj.spectrum.publish({"serial": 42, "bins": [-10.0]})
+        line = await asyncio.wait_for(resp.content.readline(), timeout=3)
+        frame = json.loads(line.decode("utf-8"))
+        self.assertEqual(frame["serial"], 42)
+        resp.close()
+
+    async def test_state_reports_command_and_clients(self):
+        resp = await self.client.get("/v1/state",
+                                     headers={"X-Kujhad-Key": "SECRETKEY"})
+        body = await resp.json()
+        self.assertIn("lastCommand", body)
+        self.assertIn("spectrumClients", body)
 
     async def test_root_public(self):
         resp = await self.client.get("/")
@@ -917,8 +1248,9 @@ class TestServer(AioHTTPTestCase):
             self.assertIn(k, body)
         self.assertIsInstance(body["conflicts"], list)
         self.assertIn("connected", body["kraken"])
-        # No sweep ingester was wired into this test app.
-        self.assertIsNone(body["sweep"])
+        # A sweep ingester is wired into the test app; status is reported.
+        self.assertIsNotNone(body["sweep"])
+        self.assertIn("mode", body["sweep"])
 
     async def test_hardware_tolerates_missing_lsusb(self):
         # Simulate lsusb being unavailable; route must still 200 with
@@ -942,6 +1274,79 @@ class TestServer(AioHTTPTestCase):
         # Hardware section renders above Equipment.
         self.assertLess(text.index("<h2>Hardware</h2>"),
                         text.index("<h2>Equipment</h2>"))
+
+    async def test_setup_page_has_sweep_section_and_presets(self):
+        text = await (await self.client.get("/setup")).text()
+        self.assertIn("<h2>Sweep</h2>", text)
+        self.assertIn("id=sweepmode", text)
+        self.assertIn("id=sweepranges", text)
+        # Quick presets present.
+        for label in ("UHF 400-470", "US 900 ISM 902-928",
+                      "2 m VHF 144-148", "Air 118-137"):
+            self.assertIn(label, text)
+        # Sweep section is placed near Hardware (above Equipment).
+        self.assertLess(text.index("<h2>Sweep</h2>"),
+                        text.index("<h2>Equipment</h2>"))
+
+    async def test_node_config_get_includes_sweep(self):
+        resp = await self.client.get("/v1/node-config",
+                                     headers={"X-Kujhad-Key": "SECRETKEY"})
+        body = await resp.json()
+        for k in ("sweepMode", "sweepRanges", "sweepIntervalS", "sweepSnrDb",
+                  "sweepModeOptions", "sweepBounds"):
+            self.assertIn(k, body)
+        self.assertEqual(body["sweepMode"], "auto")
+        self.assertEqual(body["sweepRanges"], ["400M:470M:100k"])
+
+    async def test_node_config_post_retasks_sweep_live(self):
+        payload = {
+            "lat": 0.0, "lon": 0.0, "sdrType": "unknown",
+            "terrain": "mixed", "siting": "mast",
+            "sweepMode": "on",
+            "sweepRanges": ["144M:148M:50k", "902M:928M:100k"],
+            "sweepIntervalS": 12, "sweepSnrDb": 18.0,
+        }
+        resp = await self.client.post(
+            "/v1/node-config", headers={"X-Kujhad-Key": "SECRETKEY"},
+            data=json.dumps(payload))
+        self.assertEqual(resp.status, 200)
+        # Live-applied to the running ingester (no restart).
+        self.assertEqual(self.sweep.mode, "on")
+        self.assertEqual(self.sweep.ranges, ["144M:148M:50k", "902M:928M:100k"])
+        self.assertEqual(self.sweep.interval_s, 12)
+        self.assertEqual(self.sweep.snr_threshold, 18.0)
+        # The retask signal reached the ingester (run loop would relaunch).
+        self.assertTrue(self.sweep._retask.is_set())
+        # Persisted to the config file (survives restart).
+        with open(self._cfgpath, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["sweepMode"], "on")
+        self.assertEqual(cfg["sweepRanges"],
+                         ["144M:148M:50k", "902M:928M:100k"])
+        self.assertEqual(cfg["sweepIntervalS"], 12)
+        self.assertEqual(cfg["sweepSnrDb"], 18.0)
+
+    async def test_node_config_post_bad_range_rejected_no_apply(self):
+        payload = {
+            "lat": 0.0, "lon": 0.0, "sdrType": "unknown",
+            "terrain": "mixed", "siting": "mast",
+            "sweepRanges": ["470M:400M"],  # low>=high
+        }
+        resp = await self.client.post(
+            "/v1/node-config", headers={"X-Kujhad-Key": "SECRETKEY"},
+            data=json.dumps(payload))
+        self.assertEqual(resp.status, 400)
+        # Nothing applied.
+        self.assertEqual(self.sweep.ranges, ["400M:470M:100k"])
+        self.assertFalse(self.sweep._retask.is_set())
+
+    async def test_state_sweep_reports_mode_ranges(self):
+        resp = await self.client.get("/v1/state",
+                                     headers={"X-Kujhad-Key": "SECRETKEY"})
+        body = await resp.json()
+        self.assertIsNotNone(body["sweep"])
+        self.assertEqual(body["sweep"]["mode"], "auto")
+        self.assertEqual(body["sweep"]["ranges"], ["400M:470M:100k"])
 
     async def test_pairing_requires_auth_and_returns_key(self):
         resp = await self.client.get("/v1/pairing")
