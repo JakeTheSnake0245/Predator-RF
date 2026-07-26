@@ -99,6 +99,253 @@ SWEEP_RESPAWN_DELAY_S = 10.0       # wait after tool exit before respawn
 SWEEP_KRAKEN_GRACE_S = 30.0        # wait before (re)starting sweep in auto mode
 
 
+# ── Node equipment calibration (mirrors core/src/predator/node_equipment.h) ──
+#
+# The AOU grid fuses received-power DIFFERENCES between nodes, which only works
+# if every node reports power on a comparable scale. Each node declares its SDR
+# type, antenna gain curve, terrain and siting; every emitted hit row is stamped
+# with a per-frequency correction term (calDb), a path-loss exponent (plExp) and
+# an RSSI trust sigma (rssiSigmaDb). Convention (same as the C++ node): the
+# coordinator computes comparable_power = strengthDb - calDb. We do NOT subtract
+# locally. These tables are copied byte-for-byte from node_equipment.h.
+import math  # noqa: E402  (grouped with the equipment tables it supports)
+
+# SDR profiles: (id, label, offsetDb vs RTL-SDR Blog v3 reference).
+SDR_PROFILES: List[Dict[str, Any]] = [
+    {"id": "rtlsdr_v3",    "label": "RTL-SDR Blog v3 (reference)",  "offsetDb": 0.0},
+    {"id": "rtlsdr_v4",    "label": "RTL-SDR Blog v4",              "offsetDb": 0.5},
+    {"id": "rtlsdr_clone", "label": "Generic RTL2832 clone",       "offsetDb": -2.0},
+    {"id": "nesdr",        "label": "Nooelec NESDR",               "offsetDb": -0.5},
+    {"id": "hackrf",       "label": "HackRF One",                  "offsetDb": -4.0},
+    {"id": "hackrf_clone", "label": "HackRF clone",                "offsetDb": -6.5},
+    {"id": "airspy_mini",  "label": "Airspy Mini",                 "offsetDb": 1.5},
+    {"id": "unknown",      "label": "Other / unknown",             "offsetDb": 0.0},
+]
+
+# Antenna presets: starting POINTS (freqMhz, gainDb), not whole curves.
+ANTENNA_PRESETS: List[Dict[str, Any]] = [
+    {"label": "Stock whip / rubber duck (0 dB, wideband)", "freqMhz": 400.0, "gainDb": 0.0},
+    {"label": "VHF dipole (2 dB @ 150 MHz)",               "freqMhz": 150.0, "gainDb": 2.0},
+    {"label": "GMRS 3 dB @ 465 MHz",                       "freqMhz": 465.0, "gainDb": 3.0},
+    {"label": "GMRS 5 dB @ 465 MHz",                       "freqMhz": 465.0, "gainDb": 5.0},
+    {"label": "900 MHz ISM 5 dB @ 915 MHz",                "freqMhz": 915.0, "gainDb": 5.0},
+    {"label": "900 MHz ISM 8 dB @ 915 MHz",                "freqMhz": 915.0, "gainDb": 8.0},
+    {"label": "Discone (2 dB, wideband @ 400 MHz)",        "freqMhz": 400.0, "gainDb": 2.0},
+    {"label": "Yagi 7 dB @ 465 MHz",                       "freqMhz": 465.0, "gainDb": 7.0},
+]
+
+# Terrain profiles: (id, label, path-loss exponent n).
+TERRAIN_PROFILES: List[Dict[str, Any]] = [
+    {"id": "open_rural",   "label": "Open / rural / flat ground", "exponent": 2.2},
+    {"id": "suburban",     "label": "Suburban / light clutter",   "exponent": 2.8},
+    {"id": "light_forest", "label": "Light forest / parkland",    "exponent": 3.0},
+    {"id": "dense_forest", "label": "Dense forest",               "exponent": 3.6},
+    {"id": "urban",        "label": "City / urban",               "exponent": 3.3},
+    {"id": "dense_urban",  "label": "Dense high-rise city",       "exponent": 4.0},
+    {"id": "mixed",        "label": "Mixed / unknown",            "exponent": 3.0},
+]
+
+# Siting profiles: (id, label, offsetDb, sigmaExtraDb).
+SITING_PROFILES: List[Dict[str, Any]] = [
+    {"id": "mast",          "label": "Mast / tripod, clear (~2 m) — reference", "offsetDb": 0.0,  "sigmaExtraDb": 0.0},
+    {"id": "ground",        "label": "On the ground",                           "offsetDb": -4.0, "sigmaExtraDb": 1.5},
+    {"id": "body_worn",     "label": "Body-worn / carried",                     "offsetDb": -6.0, "sigmaExtraDb": 3.0},
+    {"id": "vehicle_roof",  "label": "Vehicle roof",                            "offsetDb": -1.0, "sigmaExtraDb": 0.5},
+    {"id": "side_building", "label": "Side of building",                        "offsetDb": -3.0, "sigmaExtraDb": 2.5},
+    {"id": "rooftop",       "label": "Top of large structure / rooftop",        "offsetDb": 4.0,  "sigmaExtraDb": 1.0},
+    {"id": "treetop",       "label": "Tied to top of tree",                     "offsetDb": 2.0,  "sigmaExtraDb": 1.5},
+    {"id": "indoor_window", "label": "Indoors near window",                     "offsetDb": -8.0, "sigmaExtraDb": 4.0},
+    {"id": "unknown",       "label": "Other / unknown",                         "offsetDb": 0.0,  "sigmaExtraDb": 1.0},
+]
+
+# Base RSSI noise sigma before siting inflation (matches the AOU default).
+BASE_RSSI_SIGMA_DB = 6.0
+
+# Curve is a max of 16 (freqMhz, gainDb) points; validation bounds:
+ANTENNA_CURVE_MAX_POINTS = 16
+ANTENNA_FREQ_MHZ_MIN = 0.1
+ANTENNA_FREQ_MHZ_MAX = 7000.0
+ANTENNA_GAIN_DB_MIN = -30.0
+ANTENNA_GAIN_DB_MAX = 40.0
+
+
+def sdr_offset_db(sdr_id: str) -> float:
+    for p in SDR_PROFILES:
+        if sdr_id == p["id"]:
+            return float(p["offsetDb"])
+    return 0.0
+
+
+def terrain_exponent(terrain_id: str) -> float:
+    for p in TERRAIN_PROFILES:
+        if terrain_id == p["id"]:
+            return float(p["exponent"])
+    return 3.0
+
+
+def siting_profile(siting_id: str) -> Dict[str, Any]:
+    for p in SITING_PROFILES:
+        if siting_id == p["id"]:
+            return p
+    return SITING_PROFILES[-1]  # "unknown"
+
+
+def antenna_gain_at(curve: List[Dict[str, float]], freq_hz: float) -> float:
+    """Interpolate antenna gain (dB) at freq_hz from a (freqMhz, gainDb) curve.
+
+    Linear in log10(frequency); nearest-end value held outside the declared
+    points; empty curve = 0 dB; invalid/zero frequency = 0 dB. Mirrors the C++
+    predator::equipment::antennaGainAt exactly. Each point is {"f":MHz,"g":dB}.
+    Never raises."""
+    if not curve:
+        return 0.0
+    s = sorted(curve, key=lambda p: p.get("f", 0.0))
+    f = freq_hz / 1e6
+    if not math.isfinite(f) or f <= 0.0:
+        return 0.0
+    if f <= s[0]["f"]:
+        return float(s[0]["g"])
+    if f >= s[-1]["f"]:
+        return float(s[-1]["g"])
+    for i in range(1, len(s)):
+        if f <= s[i]["f"]:
+            f0 = math.log10(max(s[i - 1]["f"], 0.001))
+            f1 = math.log10(max(s[i]["f"], 0.001))
+            t = (math.log10(f) - f0) / (f1 - f0) if f1 > f0 else 0.0
+            t = max(0.0, min(1.0, t))
+            return float(s[i - 1]["g"] + t * (s[i]["g"] - s[i - 1]["g"]))
+    return float(s[-1]["g"])
+
+
+def cal_db_at(sdr_id: str, curve: List[Dict[str, float]], freq_hz: float,
+              siting_id: str = "mast") -> float:
+    """calDb = sdrOffset + antennaGainAt + sitingOffset (at the hit frequency).
+    Mirrors predator::equipment::calDbAt. Never raises."""
+    a = antenna_gain_at(curve, freq_hz)
+    if not math.isfinite(a):
+        a = 0.0
+    return sdr_offset_db(sdr_id) + a + float(siting_profile(siting_id)["offsetDb"])
+
+
+class NodeEquipment:
+    """Live node calibration config, editable via /v1/node-config and persisted
+    to the sensor's JSON config file. Rows are stamped from a snapshot of this."""
+
+    def __init__(self, sdr_type: str = "unknown",
+                 antenna_curve: Optional[List[Dict[str, float]]] = None,
+                 terrain: str = "mixed", siting: str = "mast"):
+        self.sdr_type = sdr_type
+        self.antenna_curve: List[Dict[str, float]] = list(antenna_curve or [])
+        self.terrain = terrain
+        self.siting = siting
+
+    def cal_db(self, freq_hz: float) -> float:
+        return cal_db_at(self.sdr_type, self.antenna_curve, freq_hz, self.siting)
+
+    def pl_exp(self) -> float:
+        return terrain_exponent(self.terrain)
+
+    def rssi_sigma_db(self) -> float:
+        return BASE_RSSI_SIGMA_DB + float(siting_profile(self.siting)["sigmaExtraDb"])
+
+    def stamp(self, row: Dict[str, Any]) -> None:
+        """Stamp calDb (at the row's own frequency), plExp and rssiSigmaDb onto
+        an event row. Same convention as the C++ node — no local subtraction."""
+        try:
+            freq_hz = _num(row.get("frequency"), 0.0)
+        except Exception:  # noqa: BLE001 - defensive; never break emission
+            freq_hz = 0.0
+        row["calDb"] = self.cal_db(freq_hz)
+        row["plExp"] = self.pl_exp()
+        row["rssiSigmaDb"] = self.rssi_sigma_db()
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "sdrType": self.sdr_type,
+            "antennaCurvePoints": len(self.antenna_curve),
+            "terrain": self.terrain,
+            "siting": self.siting,
+        }
+
+    def to_config(self) -> Dict[str, Any]:
+        return {
+            "sdrType": self.sdr_type,
+            "antennaCurve": [
+                {"f": float(p["f"]), "g": float(p["g"])} for p in self.antenna_curve
+            ],
+            "terrain": self.terrain,
+            "siting": self.siting,
+        }
+
+
+def validate_node_config(body: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Validate a POST /v1/node-config payload against the equipment tables.
+
+    Returns (clean, None) on success or (None, error) on failure. NEVER applies
+    partially — the caller applies only on success. Mirrors the C++ applier's
+    checks: lat/lon range, curve ≤16 points, freq 0.1..7000 MHz, gain -30..40 dB,
+    sdrType/terrain/siting must exist in the tables. `clean` carries normalised
+    fields: lat, lon, gpsdEnabled, sdrType, antennaCurve, terrain, siting."""
+    if not isinstance(body, dict):
+        return None, "body must be a JSON object"
+
+    lat = _num(body.get("lat"), 0.0)
+    lon = _num(body.get("lon"), 0.0)
+    if lat < -90.0 or lat > 90.0 or lon < -180.0 or lon > 180.0:
+        return None, "lat/lon out of range"
+
+    # Antenna gain curve: array of {f: MHz, g: dB}. Legacy flat antennaGainDb is
+    # accepted and converted to a one-point curve (parity with C++).
+    curve: List[Dict[str, float]] = []
+    if "antennaCurve" in body:
+        raw = body.get("antennaCurve")
+        if not isinstance(raw, list):
+            return None, "antennaCurve must be an array"
+        if len(raw) > ANTENNA_CURVE_MAX_POINTS:
+            return None, "antennaCurve: max 16 points"
+        for p in raw:
+            if not isinstance(p, dict):
+                return None, "antennaCurve entries must be objects"
+            f = _num(p.get("f"), 0.0)
+            g = _num(p.get("g"), 0.0)
+            if not (ANTENNA_FREQ_MHZ_MIN <= f <= ANTENNA_FREQ_MHZ_MAX):
+                return None, "antennaCurve: frequency out of range (0.1..7000 MHz)"
+            if not (ANTENNA_GAIN_DB_MIN <= g <= ANTENNA_GAIN_DB_MAX):
+                return None, "antennaCurve: gain out of range (-30..40 dB)"
+            curve.append({"f": f, "g": g})
+    else:
+        ant = _num(body.get("antennaGainDb"), 0.0)
+        if not (ANTENNA_GAIN_DB_MIN <= ant <= ANTENNA_GAIN_DB_MAX):
+            return None, "antenna gain out of range (-30..40 dB)"
+        if ant != 0.0:
+            curve.append({"f": 400.0, "g": ant})
+
+    sdr = body.get("sdrType", "unknown")
+    if not isinstance(sdr, str) or not any(sdr == p["id"] for p in SDR_PROFILES):
+        return None, "unknown sdrType"
+
+    terrain = body.get("terrain", "mixed")
+    if not isinstance(terrain, str) or not any(
+            terrain == p["id"] for p in TERRAIN_PROFILES):
+        return None, "unknown terrain"
+
+    siting = body.get("siting", "mast")
+    if not isinstance(siting, str) or not any(
+            siting == p["id"] for p in SITING_PROFILES):
+        return None, "unknown siting"
+
+    clean = {
+        "lat": lat,
+        "lon": lon,
+        "gpsdEnabled": bool(body.get("gpsdEnabled", False)),
+        "sdrType": sdr,
+        "antennaCurve": curve,
+        "terrain": terrain,
+        "siting": siting,
+    }
+    return clean, None
+
+
 # ── doa_result → KRAKEN_LOB event row ──────────────────────────────────────
 
 
@@ -436,12 +683,14 @@ class KrakenIngester:
     """
 
     def __init__(self, url: str, ring: EventRing, pos: NodePosition,
-                 node_id: str, source_label: str):
+                 node_id: str, source_label: str,
+                 equip: Optional["NodeEquipment"] = None):
         self.url = url
         self.ring = ring
         self.pos = pos
         self.node_id = node_id
         self.source_label = source_label
+        self.equip = equip
         self.connected = False
         self.events_received = 0
         self.events_emitted = 0
@@ -506,6 +755,10 @@ class KrakenIngester:
         )
         if row is None:
             return None
+        # Stamp calibration (calDb at the row's own freq, plExp, rssiSigmaDb)
+        # onto the bearing row — it keeps its bearing fields untouched.
+        if self.equip is not None:
+            self.equip.stamp(row)
         self.ring.append(row)
         self.events_emitted += 1
         self._last_emit_t = now
@@ -801,11 +1054,13 @@ class SweepIngester:
     def __init__(self, ring: EventRing, pos: NodePosition, node_id: str,
                  source_label: str, ranges: List[str],
                  interval_s: int = SWEEP_DEFAULT_INTERVAL_S,
-                 snr_threshold: float = SWEEP_DEFAULT_SNR_DB):
+                 snr_threshold: float = SWEEP_DEFAULT_SNR_DB,
+                 equip: Optional["NodeEquipment"] = None):
         self.ring = ring
         self.pos = pos
         self.node_id = node_id
         self.source_label = source_label
+        self.equip = equip
         self.ranges = ranges or list(DEFAULT_SWEEP_RANGES)
         self.interval_s = interval_s
         self.snr_threshold = snr_threshold
@@ -898,6 +1153,8 @@ class SweepIngester:
                 self.pos.lat, self.pos.lon, self.pos.heading,
                 self.pos.have_fix, now,
             )
+            if self.equip is not None:
+                self.equip.stamp(row)
             self.ring.append(row)
             self.hits_emitted += 1
 
@@ -1068,6 +1325,131 @@ class SweepIngester:
             pass
 
 
+# ── Node setup portal HTML (mirrors kujhadNodeSetupHtml in kujhad_fleet.h) ───
+
+
+def node_setup_html() -> str:
+    """Self-contained node commissioning page served at GET /setup.
+
+    No external assets. Sections mirror the C++ portal: API key, pairing,
+    position/gpsd, SDR profile select, antenna curve point editor with presets,
+    terrain select, siting select, and a live preview line (calDb at a probe
+    frequency + path-loss exponent n + RSSI sigma). Option DOM is built with
+    textContent (never innerHTML) so user/config data can't inject markup."""
+    return (
+"<!doctype html><html lang=en><head><meta charset=utf-8>"
+"<title>Predator RF \u2014 Node Setup</title>"
+"<meta name=viewport content='width=device-width,initial-scale=1'>"
+"<style>"
+"body{background:#05080a;color:#c8d8e0;font-family:'JetBrains Mono',Consolas,monospace;font-size:13px;margin:0;padding:14px;max-width:560px}"
+"h1{color:#3fd17d;letter-spacing:.18em;font-size:13px;margin:0 0 12px;text-transform:uppercase}"
+"h2{color:#4ad8e8;font-size:12px;text-transform:uppercase;letter-spacing:.1em;margin:18px 0 6px;border-bottom:1px solid #1f3540;padding-bottom:3px}"
+"input,button,select{background:#0f171c;color:#c8d8e0;border:1px solid #2a4a5a;padding:6px 8px;font-family:inherit;font-size:12px;box-sizing:border-box}"
+"input,select{width:100%}"
+"button{cursor:pointer;color:#3fd17d;width:auto}"
+"button:hover{border-color:#3fd17d}"
+"label{display:block;color:#7a95a3;margin:8px 0 2px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}"
+".row{display:flex;gap:8px}.row>div{flex:1}"
+"#msg{margin-top:10px;min-height:16px}.ok{color:#3fd17d}.err{color:#e86a5a}"
+"pre{background:#0f171c;border:1px solid #2a4a5a;padding:8px;white-space:pre-wrap;word-break:break-all;font-size:11px}"
+".hint{color:#5a7482;font-size:11px;margin-top:2px}"
+"</style></head><body>"
+"<h1>Predator RF \u2014 Node Setup</h1>"
+"<label>API key</label><input id=key type=password placeholder='from this node config (api_key)'>"
+"<div class=hint>Stored only in this browser. Find it in this node's df_kracked_sensor.json.</div>"
+"<h2>Pairing</h2>"
+"<button onclick='loadPairing()'>Show peer code</button> <button onclick='copyPairing()'>Copy</button>"
+"<pre id=pairing>\u2014</pre>"
+"<div class=hint>Paste this JSON into the controller's manual-pair form.</div>"
+"<h2>Position</h2>"
+"<div class=row><div><label>Latitude</label><input id=lat type=number step=any></div>"
+"<div><label>Longitude</label><input id=lon type=number step=any></div></div>"
+"<label><input id=gpsd type=checkbox style='width:auto'> Pull live position from gpsd (USB GPS dongle on this box)</label>"
+"<div class=hint>With gpsd enabled, a live fix overrides the static coordinates; the static values remain the fallback.</div>"
+"<h2>Equipment</h2>"
+"<label>SDR attached</label><select id=sdr></select>"
+"<label>Antenna gain curve (dB at MHz)</label>"
+"<div class=hint>Gain is band-dependent: a 5 dB GMRS whip is NOT 5 dB at 900 MHz ISM. Add one point per band you hunt; hits are corrected at their own frequency (log-f interpolation between points, nearest point held beyond the ends).</div>"
+"<div id=points></div>"
+"<p><select id=antpreset style='width:60%'></select> <button onclick='addPreset()'>Add preset point</button> <button onclick='addPoint(400,0)'>+ Blank point</button></p>"
+"<h2>Environment</h2>"
+"<label>Terrain around this node</label><select id=terrain></select>"
+"<div class=hint>Sets how fast signal decays with distance in the ranging math (path-loss exponent). Dense city or forest kills signal much faster than open ground.</div>"
+"<label>Antenna placement</label><select id=siting></select>"
+"<div class=hint>Mounting bias: body-worn or ground-level antennas read low and erratically; rooftop or treetop read high. Corrected and de-weighted accordingly.</div>"
+"<label>Preview correction at (MHz)</label><input id=prevf type=number step=any value=465>"
+"<div class=hint>Net RSSI correction at that frequency: <span id=cal>0.0</span> dB (SDR offset + interpolated antenna gain + placement bias). Path-loss n: <span id=plexp>3.0</span>, RSSI trust sigma: <span id=psig>6.0</span> dB.</div>"
+"<p><button onclick='loadCfg()'>Load current</button> <button onclick='saveCfg()'>Save</button></p>"
+"<div id=msg></div>"
+"<script>"
+"const $=id=>document.getElementById(id);"
+"$('key').value=localStorage.getItem('kujhadKey')||'';"
+"$('key').addEventListener('change',()=>localStorage.setItem('kujhadKey',$('key').value));"
+"function hdrs(){return{'X-Kujhad-Key':$('key').value,'Content-Type':'application/json'}}"
+"function msg(t,ok){const m=$('msg');m.textContent=t;m.className=ok?'ok':'err'}"
+"let sdrOptions=[];let presets=[];let terrainOptions=[];let sitingOptions=[];"
+"function curvePoints(){const out=[];for(const row of $('points').children){"
+"const f=parseFloat(row.children[0].value),g=parseFloat(row.children[1].value);"
+"if(isFinite(f)&&f>0&&isFinite(g))out.push({f:f,g:g})}return out}"
+"function gainAt(pts,fMhz){if(!pts.length)return 0;const s=pts.slice().sort((a,b)=>a.f-b.f);"
+"if(fMhz<=s[0].f)return s[0].g;if(fMhz>=s[s.length-1].f)return s[s.length-1].g;"
+"for(let i=1;i<s.length;i++){if(fMhz<=s[i].f){const f0=Math.log10(s[i-1].f),f1=Math.log10(s[i].f);"
+"const t=f1>f0?(Math.log10(fMhz)-f0)/(f1-f0):0;return s[i-1].g+t*(s[i].g-s[i-1].g)}}return s[s.length-1].g}"
+"function recalc(){const o=sdrOptions.find(s=>s.id===$('sdr').value);"
+"const f=parseFloat($('prevf').value);"
+"const a=(isFinite(f)&&f>0)?gainAt(curvePoints(),f):0;"
+"const t=terrainOptions.find(x=>x.id===$('terrain').value);"
+"const st=sitingOptions.find(x=>x.id===$('siting').value);"
+"const c=(o?o.offsetDb:0)+a+(st?st.offsetDb:0);$('cal').textContent=c.toFixed(1);"
+"$('plexp').textContent=(t?t.exponent:3).toFixed(1);"
+"$('psig').textContent=(6+(st?st.sigmaExtraDb:0)).toFixed(1)}"
+"function addPoint(f,g){if($('points').children.length>=16)return;"
+"const row=document.createElement('div');row.className='row';"
+"const fi=document.createElement('input');fi.type='number';fi.step='any';fi.value=f;fi.placeholder='MHz';"
+"const gi=document.createElement('input');gi.type='number';gi.step='0.5';gi.value=g;gi.placeholder='dB';"
+"const del=document.createElement('button');del.textContent='X';del.onclick=()=>{row.remove();recalc()};"
+"fi.addEventListener('input',recalc);gi.addEventListener('input',recalc);"
+"row.append(fi,gi,del);$('points').appendChild(row);recalc()}"
+"function addPreset(){const p=presets[parseInt($('antpreset').value)];if(p)addPoint(p.freqMhz,p.gainDb)}"
+"async function loadCfg(){try{const r=await fetch('/v1/node-config',{headers:hdrs()});"
+"if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();"
+"sdrOptions=j.sdrOptions||[];"
+"$('sdr').replaceChildren(...sdrOptions.map(s=>{const o=document.createElement('option');"
+"o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
+"presets=j.antennaPresets||[];"
+"$('antpreset').replaceChildren(...presets.map((p,i)=>{const o=document.createElement('option');"
+"o.value=String(i);o.textContent=p.label;return o}));"
+"$('lat').value=j.lat||'';$('lon').value=j.lon||'';$('gpsd').checked=!!j.gpsdEnabled;"
+"$('sdr').value=j.sdrType||'unknown';"
+"terrainOptions=j.terrainOptions||[];sitingOptions=j.sitingOptions||[];"
+"$('terrain').replaceChildren(...terrainOptions.map(t=>{const o=document.createElement('option');"
+"o.value=t.id;o.textContent=t.label+' (n='+t.exponent+')';return o}));"
+"$('siting').replaceChildren(...sitingOptions.map(s=>{const o=document.createElement('option');"
+"o.value=s.id;o.textContent=s.label+' ('+(s.offsetDb>=0?'+':'')+s.offsetDb+' dB)';return o}));"
+"$('terrain').value=j.terrain||'mixed';$('siting').value=j.siting||'mast';"
+"$('points').replaceChildren();"
+"for(const p of (j.antennaCurve||[]))addPoint(p.f,p.g);"
+"recalc();"
+"msg('Loaded.'+(j.gpsdFix?' gpsd fix: '+j.gpsdLat.toFixed(5)+', '+j.gpsdLon.toFixed(5):''),true)}"
+"catch(e){msg('Load failed: '+e.message,false)}}"
+"$('sdr').addEventListener('change',recalc);$('prevf').addEventListener('input',recalc);"
+"$('terrain').addEventListener('change',recalc);$('siting').addEventListener('change',recalc);"
+"async function saveCfg(){try{const body={lat:parseFloat($('lat').value)||0,lon:parseFloat($('lon').value)||0,"
+"gpsdEnabled:$('gpsd').checked,sdrType:$('sdr').value,antennaCurve:curvePoints(),"
+"terrain:$('terrain').value,siting:$('siting').value};"
+"const r=await fetch('/v1/node-config',{method:'POST',headers:hdrs(),body:JSON.stringify(body)});"
+"const j=await r.json();if(!r.ok||j.error)throw new Error(j.error||('HTTP '+r.status));"
+"msg('Saved. Hits from this node now carry the correction.',true)}"
+"catch(e){msg('Save failed: '+e.message,false)}}"
+"async function loadPairing(){try{const r=await fetch('/v1/pairing',{headers:hdrs()});"
+"if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();"
+"$('pairing').textContent=JSON.stringify(j);msg('Pairing code loaded.',true)}"
+"catch(e){msg('Pairing failed: '+e.message,false)}}"
+"function copyPairing(){const t=$('pairing').textContent;if(t&&t!=='\\u2014'){navigator.clipboard&&navigator.clipboard.writeText(t);msg('Copied.',true)}}"
+"loadCfg();"
+"</script></body></html>")
+
+
 # ── Kujhad v1 HTTP server (aiohttp) ─────────────────────────────────────────
 
 
@@ -1075,7 +1457,11 @@ class KujhadSensorApp:
     def __init__(self, api_key: str, device_name: str, ring: EventRing,
                  pos: NodePosition, ingester: Optional[KrakenIngester],
                  advertise: str = "",
-                 sweep: Optional["SweepIngester"] = None):
+                 sweep: Optional["SweepIngester"] = None,
+                 equip: Optional["NodeEquipment"] = None,
+                 config_path: str = "",
+                 bind: str = "0.0.0.0", port: int = DEFAULT_PORT,
+                 gpsd_enabled: bool = False):
         self.api_key = api_key
         self.device_name = device_name
         self.ring = ring
@@ -1083,6 +1469,11 @@ class KujhadSensorApp:
         self.ingester = ingester
         self.advertise = advertise
         self.sweep = sweep
+        self.equip = equip if equip is not None else NodeEquipment()
+        self.config_path = config_path
+        self.bind = bind
+        self.port = port
+        self.gpsd_enabled = gpsd_enabled
 
     # -- auth --
     def _authorized(self, request: "web.Request") -> bool:
@@ -1154,6 +1545,10 @@ class KujhadSensorApp:
             # available to operators / diagnostics).
             "kraken": {"connected": connected},
             "sweep": sweep_status,
+            # Equipment calibration summary (sdr id, curve point count,
+            # terrain, siting) so a controller/operator can see how this
+            # node's hits are corrected.
+            "equipment": self.equip.summary(),
         }
         return web.json_response(body)
 
@@ -1189,6 +1584,106 @@ class KujhadSensorApp:
             status=501,
         )
 
+    # -- node commissioning portal --
+    async def handle_setup(self, request: "web.Request") -> "web.Response":
+        # Public page (no auth); every /v1 call it makes carries X-Kujhad-Key.
+        return web.Response(text=node_setup_html(), content_type="text/html")
+
+    async def handle_node_config_get(self, request: "web.Request"
+                                     ) -> "web.Response":
+        if not self._authorized(request):
+            return self._unauthorized()
+        e = self.equip
+        body: Dict[str, Any] = {
+            "lat": self.pos.lat,
+            "lon": self.pos.lon,
+            "gpsdEnabled": bool(self.gpsd_enabled),
+            "sdrType": e.sdr_type,
+            "antennaCurve": [
+                {"f": float(p["f"]), "g": float(p["g"])}
+                for p in e.antenna_curve
+            ],
+            "terrain": e.terrain,
+            "siting": e.siting,
+            # Live gpsd fix (if any) so the portal can show it.
+            "gpsdFix": bool(self.pos.have_fix),
+            "gpsdLat": self.pos.lat,
+            "gpsdLon": self.pos.lon,
+            # Option tables for the page's <select>/preset controls.
+            "sdrOptions": SDR_PROFILES,
+            "antennaPresets": ANTENNA_PRESETS,
+            "terrainOptions": TERRAIN_PROFILES,
+            "sitingOptions": SITING_PROFILES,
+        }
+        return web.json_response(body)
+
+    async def handle_node_config_post(self, request: "web.Request"
+                                      ) -> "web.Response":
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            raw = await request.text()
+            body = json.loads(raw) if raw.strip() else {}
+        except (ValueError, TypeError):
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+        clean, err = validate_node_config(body)
+        if clean is None:
+            # Reject bad payloads with 400; NEVER partially apply.
+            return web.json_response({"error": err or "invalid config"},
+                                     status=400)
+        # Apply atomically only after full validation.
+        self.pos.lat = clean["lat"]
+        self.pos.lon = clean["lon"]
+        # A non-null static position is a usable fix for LOB math.
+        if not (clean["lat"] == 0.0 and clean["lon"] == 0.0):
+            self.pos.have_fix = True
+        self.gpsd_enabled = clean["gpsdEnabled"]
+        self.equip.sdr_type = clean["sdrType"]
+        self.equip.antenna_curve = clean["antennaCurve"]
+        self.equip.terrain = clean["terrain"]
+        self.equip.siting = clean["siting"]
+        self._persist_config()
+        return web.json_response({"ok": True})
+
+    def _persist_config(self) -> None:
+        """Merge the live equipment/position config into the existing JSON
+        config file (preserving the api_key), chmod-600. Best-effort."""
+        if not self.config_path:
+            return
+        cfg: Dict[str, Any] = {}
+        if os.path.isfile(self.config_path):
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f) or {}
+            except (OSError, ValueError):
+                cfg = {}
+        if self.api_key:
+            cfg["api_key"] = self.api_key
+        cfg["lat"] = self.pos.lat
+        cfg["lon"] = self.pos.lon
+        cfg["gpsdEnabled"] = bool(self.gpsd_enabled)
+        cfg.update(self.equip.to_config())
+        _save_config(self.config_path, cfg)
+
+    async def handle_pairing(self, request: "web.Request") -> "web.Response":
+        if not self._authorized(request):
+            return self._unauthorized()
+        # Same payload an operator would type into manual-pair: address(es)
+        # + key. Requires the key to fetch (knowing the key is what the code
+        # grants, so this leaks nothing new).
+        if self.bind not in ("0.0.0.0", "::", ""):
+            ips = [self.bind]
+        else:
+            ips = [ip for _, ip, _ in enumerate_overlay_ips()] or ["127.0.0.1"]
+        body = {
+            "device": self.device_name,
+            "key": self.api_key,
+            "port": self.port,
+            "addresses": ips,
+            "peerCode": f"{ips[0]}:{self.port}",
+        }
+        return web.json_response(body)
+
     async def handle_root(self, request: "web.Request") -> "web.Response":
         # Public route, no auth — a tiny status page for humans.
         connected = bool(self.ingester and self.ingester.connected)
@@ -1204,6 +1699,8 @@ class KujhadSensorApp:
             f"<p>events held: {self.ring.last_serial}</p>"
             "<p>Pair from the Predator RF app with this node's IP:port and "
             "the API key printed on the sensor console.</p>"
+            "<p><a style='color:#4ad8e8' href='/setup'>Node setup / "
+            "commissioning &rarr;</a></p>"
             "</body></html>"
         )
         return web.Response(text=html, content_type="text/html")
@@ -1217,6 +1714,11 @@ class KujhadSensorApp:
         app.router.add_get("/v1/gps", self.handle_gps)
         app.router.add_get("/v1/events", self.handle_events)
         app.router.add_post("/v1/command", self.handle_command)
+        # Node commissioning portal.
+        app.router.add_get("/setup", self.handle_setup)
+        app.router.add_get("/v1/node-config", self.handle_node_config_get)
+        app.router.add_post("/v1/node-config", self.handle_node_config_post)
+        app.router.add_get("/v1/pairing", self.handle_pairing)
         return app
 
 
@@ -1312,26 +1814,34 @@ def script_dir_config_path() -> str:
                         CONFIG_FILENAME)
 
 
+def load_config(path: str) -> Dict[str, Any]:
+    """Read the persisted JSON config (api_key + equipment/position defaults),
+    tightening its perms if needed. Returns {} on any error. Never raises."""
+    if not os.path.isfile(path):
+        return {}
+    try:
+        _tighten_perms(path)
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def load_or_create_key(path: str, provided: Optional[str]) -> str:
+    # Preserve any existing config (equipment/position) when we rewrite the
+    # file — never clobber it down to just the key.
+    cfg = load_config(path)
     if provided:
-        # Persist the operator-supplied key so it survives restarts.
-        _save_config(path, {"api_key": provided})
+        cfg["api_key"] = provided
+        _save_config(path, cfg)
         return provided
-    # Reuse an existing persisted key if present.
-    if os.path.isfile(path):
-        try:
-            # Tighten perms on an existing file that was created looser
-            # (e.g. by an older version that used a world-readable umask).
-            _tighten_perms(path)
-            with open(path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            key = cfg.get("api_key")
-            if isinstance(key, str) and key:
-                return key
-        except (OSError, ValueError):
-            pass
+    key = cfg.get("api_key")
+    if isinstance(key, str) and key:
+        return key
     key = uuid.uuid4().hex  # 32 hex chars, same shape as kujhadGenerateApiKey
-    _save_config(path, {"api_key": key})
+    cfg["api_key"] = key
+    _save_config(path, cfg)
     return key
 
 
@@ -1439,27 +1949,71 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _equipment_from_config(cfg: Dict[str, Any]) -> NodeEquipment:
+    """Build a NodeEquipment from persisted config, validating each field
+    against the tables (falls back to safe defaults on anything invalid)."""
+    equip = NodeEquipment()
+    sdr = cfg.get("sdrType")
+    if isinstance(sdr, str) and any(sdr == p["id"] for p in SDR_PROFILES):
+        equip.sdr_type = sdr
+    terrain = cfg.get("terrain")
+    if isinstance(terrain, str) and any(
+            terrain == p["id"] for p in TERRAIN_PROFILES):
+        equip.terrain = terrain
+    siting = cfg.get("siting")
+    if isinstance(siting, str) and any(
+            siting == p["id"] for p in SITING_PROFILES):
+        equip.siting = siting
+    curve = cfg.get("antennaCurve")
+    if isinstance(curve, list):
+        clean: List[Dict[str, float]] = []
+        for p in curve[:ANTENNA_CURVE_MAX_POINTS]:
+            if not isinstance(p, dict):
+                continue
+            f = _num(p.get("f"), 0.0)
+            g = _num(p.get("g"), 0.0)
+            if (ANTENNA_FREQ_MHZ_MIN <= f <= ANTENNA_FREQ_MHZ_MAX
+                    and ANTENNA_GAIN_DB_MIN <= g <= ANTENNA_GAIN_DB_MAX):
+                clean.append({"f": f, "g": g})
+        equip.antenna_curve = clean
+    return equip
+
+
 def build_runtime(args: argparse.Namespace) -> Tuple[
         KujhadSensorApp, KrakenIngester, Optional[SweepIngester],
         NodePosition, EventRing, str, str]:
     """Wire up the components (no I/O started). Returns pieces for run()/tests."""
     cfg_path = script_dir_config_path()
     key = load_or_create_key(cfg_path, args.key)
+    cfg = load_config(cfg_path)
     device_name = args.name or socket.gethostname() or "df-kracked-sensor"
     node_id = args.node_id or device_name
     source_label = f"Sensor:{device_name}"
 
-    have_fix = args.lat is not None and args.lon is not None
+    # Position: CLI flags win; config-file values act as defaults.
+    if args.lat is not None:
+        lat = float(args.lat)
+    else:
+        lat = _num(cfg.get("lat"), 0.0)
+    if args.lon is not None:
+        lon = float(args.lon)
+    else:
+        lon = _num(cfg.get("lon"), 0.0)
+    have_fix = not (lat == 0.0 and lon == 0.0)
     pos = NodePosition(
-        lat=float(args.lat) if args.lat is not None else 0.0,
-        lon=float(args.lon) if args.lon is not None else 0.0,
+        lat=lat,
+        lon=lon,
         heading=float(args.heading),
         have_fix=have_fix,
     )
+    # gpsd: CLI flag wins over persisted default.
+    gpsd_enabled = bool(args.gpsd) or bool(cfg.get("gpsdEnabled", False))
+
+    equip = _equipment_from_config(cfg)
 
     ring = EventRing(EVENT_RING_MAX)
     ingester = KrakenIngester(args.ws or args.doa_url, ring, pos, node_id,
-                              source_label)
+                              source_label, equip=equip)
 
     sweep: Optional[SweepIngester] = None
     if getattr(args, "sweep", "auto") != "off":
@@ -1470,10 +2024,14 @@ def build_runtime(args: argparse.Namespace) -> Tuple[
                                    SWEEP_DEFAULT_INTERVAL_S)),
             snr_threshold=float(getattr(args, "sweep_snr",
                                         SWEEP_DEFAULT_SNR_DB)),
+            equip=equip,
         )
 
     app = KujhadSensorApp(key, device_name, ring, pos, ingester,
-                          advertise=args.advertise, sweep=sweep)
+                          advertise=args.advertise, sweep=sweep,
+                          equip=equip, config_path=cfg_path,
+                          bind=args.bind, port=args.port,
+                          gpsd_enabled=gpsd_enabled)
     return app, ingester, sweep, pos, ring, key, device_name
 
 
@@ -1554,7 +2112,7 @@ async def run(args: argparse.Namespace) -> None:
             stop, args.doa_url, doa_is_true=args.doa_is_true))
     ingest_task.add_done_callback(_ingest_crashed)
     tasks = [ingest_task]
-    if args.gpsd:
+    if app_obj.gpsd_enabled:
         tasks.append(asyncio.create_task(gpsd_poll_loop(pos)))
 
     # Generic-SDR sweep. In 'auto' the gate is driven by the Kraken WS

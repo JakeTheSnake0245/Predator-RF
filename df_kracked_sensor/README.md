@@ -144,6 +144,37 @@ Once paired, the controller polls `/v1/identify`, `/v1/state`, `/v1/gps`, and
 valid mission state (empty bands/targets/hits) so it never breaks the Mission
 UI.
 
+## Node setup / commissioning portal (`/setup`)
+
+Open `http://<node-ip>:<port>/setup` in a browser to commission the node
+without editing files (mirrors the C++ node's `/setup` portal). The page itself
+is public; enter the node's API key once (stored only in your browser) and it
+authenticates the `/v1/*` calls it makes with `X-Kujhad-Key`. It lets you set:
+
+- **Position / gpsd** — static lat/lon plus a "pull live position from gpsd"
+  toggle. Config-file values are defaults; `--lat`/`--lon`/`--gpsd` on the CLI
+  win over them.
+- **SDR profile** — front-end offset vs the RTL-SDR Blog v3 reference.
+- **Antenna gain curve** — up to 16 `(MHz, dB)` points with band presets;
+  interpolated in `log10(f)`, ends held, empty = 0 dB.
+- **Terrain** — path-loss exponent `n` for the ranging math.
+- **Siting** — mounting bias (dB) + extra RSSI uncertainty.
+- A live preview of the net correction at a probe frequency, `n`, and sigma.
+
+**Equipment calibration on every hit.** Each emitted event row (both sweep
+power hits *and* Kraken bearing rows) is stamped with `calDb` (evaluated at the
+row's own frequency), `plExp` (terrain exponent), and `rssiSigmaDb`
+(`6 + siting extra`). Convention matches the C++ node: the coordinator computes
+`comparable = strengthDb - calDb`; the sensor does **not** subtract locally.
+Kraken rows keep all their bearing fields.
+
+Routes: `GET /setup` (public HTML), `GET`/`POST /v1/node-config` (auth; POST
+validates against the equipment tables and rejects bad payloads with `400`
+without partially applying), `GET /v1/pairing` (auth; peer code + key).
+Equipment config persists into `df_kracked_sensor.json` (chmod 600) and is
+reloaded on restart. `/v1/state` reports the equipment summary
+(sdr id, curve point count, terrain, siting) alongside the kraken/sweep status.
+
 ## ZeroTier / Headscale note
 
 - Bind to `0.0.0.0` (the default) so the service is reachable on the overlay

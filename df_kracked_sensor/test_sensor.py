@@ -24,12 +24,16 @@ from sensor import (  # noqa: E402
     EventRing,
     KrakenIngester,
     KujhadSensorApp,
+    NodeEquipment,
     NodePosition,
     SweepIngester,
+    antenna_gain_at,
+    cal_db_at,
     doa_result_to_event_row,
     parse_sweep_csv_line,
     sweep_hit_to_event_row,
     sweep_line_to_hits,
+    validate_node_config,
 )
 
 
@@ -439,6 +443,191 @@ class TestSweepRateLimit(unittest.TestCase):
         self.assertIn("400:470", cmd)
 
 
+# ── Node equipment calibration (mirrors node_equipment.h) ───────────────────
+
+
+class TestAntennaGain(unittest.TestCase):
+    def test_empty_curve_is_zero(self):
+        self.assertEqual(antenna_gain_at([], 465e6), 0.0)
+
+    def test_zero_or_invalid_freq_is_zero(self):
+        curve = [{"f": 150.0, "g": 2.0}, {"f": 915.0, "g": 8.0}]
+        self.assertEqual(antenna_gain_at(curve, 0.0), 0.0)
+        self.assertEqual(antenna_gain_at(curve, -1.0), 0.0)
+        self.assertEqual(antenna_gain_at(curve, float("inf")), 0.0)
+
+    def test_single_point_is_flat(self):
+        curve = [{"f": 465.0, "g": 5.0}]
+        self.assertAlmostEqual(antenna_gain_at(curve, 100e6), 5.0)
+        self.assertAlmostEqual(antenna_gain_at(curve, 900e6), 5.0)
+
+    def test_end_hold_outside_range(self):
+        curve = [{"f": 150.0, "g": 2.0}, {"f": 915.0, "g": 8.0}]
+        # Below the lowest point → hold first gain.
+        self.assertAlmostEqual(antenna_gain_at(curve, 50e6), 2.0)
+        # Above the highest point → hold last gain.
+        self.assertAlmostEqual(antenna_gain_at(curve, 2000e6), 8.0)
+
+    def test_log_f_interpolation_midpoint(self):
+        # Two points; the geometric-mean frequency (equal in log10 space)
+        # must yield the arithmetic mean of the two gains.
+        curve = [{"f": 100.0, "g": 0.0}, {"f": 1000.0, "g": 10.0}]
+        mid_hz = (100.0 * 1000.0) ** 0.5 * 1e6   # ~316.2 MHz
+        self.assertAlmostEqual(antenna_gain_at(curve, mid_hz), 5.0, places=4)
+
+    def test_endpoints_exact(self):
+        curve = [{"f": 150.0, "g": 2.0}, {"f": 915.0, "g": 8.0}]
+        self.assertAlmostEqual(antenna_gain_at(curve, 150e6), 2.0)
+        self.assertAlmostEqual(antenna_gain_at(curve, 915e6), 8.0)
+
+    def test_unsorted_input_sorted(self):
+        curve = [{"f": 915.0, "g": 8.0}, {"f": 150.0, "g": 2.0}]
+        self.assertAlmostEqual(antenna_gain_at(curve, 50e6), 2.0)
+        self.assertAlmostEqual(antenna_gain_at(curve, 2000e6), 8.0)
+
+
+class TestCalDbComposition(unittest.TestCase):
+    def test_sign_and_sum(self):
+        # calDb = sdrOffset + antennaGain(at f) + sitingOffset
+        # hackrf_clone offset -6.5; curve single point +5; siting ground -4.0
+        curve = [{"f": 465.0, "g": 5.0}]
+        cal = cal_db_at("hackrf_clone", curve, 465e6, "ground")
+        self.assertAlmostEqual(cal, -6.5 + 5.0 - 4.0)
+
+    def test_reference_is_zero(self):
+        # rtlsdr_v3 (0) + empty curve (0) + mast (0) = 0
+        self.assertAlmostEqual(cal_db_at("rtlsdr_v3", [], 465e6, "mast"), 0.0)
+
+    def test_rooftop_positive_bias(self):
+        cal = cal_db_at("rtlsdr_v3", [], 465e6, "rooftop")
+        self.assertAlmostEqual(cal, 4.0)   # rooftop offset +4.0
+
+    def test_equipment_stamp_on_row(self):
+        eq = NodeEquipment(sdr_type="hackrf", antenna_curve=[{"f": 465.0, "g": 3.0}],
+                           terrain="urban", siting="body_worn")
+        row = {"frequency": 465e6}
+        eq.stamp(row)
+        # calDb = -4.0 + 3.0 + (-6.0) = -7.0
+        self.assertAlmostEqual(row["calDb"], -7.0)
+        self.assertAlmostEqual(row["plExp"], 3.3)       # urban exponent
+        self.assertAlmostEqual(row["rssiSigmaDb"], 6.0 + 3.0)  # body_worn +3
+
+
+class TestNodeConfigValidation(unittest.TestCase):
+    def _ok(self, **over):
+        base = {
+            "lat": 37.0, "lon": -122.0, "gpsdEnabled": True,
+            "sdrType": "rtlsdr_v4",
+            "antennaCurve": [{"f": 465.0, "g": 5.0}],
+            "terrain": "urban", "siting": "rooftop",
+        }
+        base.update(over)
+        return base
+
+    def test_accept_clean(self):
+        clean, err = validate_node_config(self._ok())
+        self.assertIsNone(err)
+        self.assertEqual(clean["sdrType"], "rtlsdr_v4")
+        self.assertEqual(clean["terrain"], "urban")
+        self.assertEqual(clean["siting"], "rooftop")
+        self.assertEqual(clean["antennaCurve"], [{"f": 465.0, "g": 5.0}])
+        self.assertTrue(clean["gpsdEnabled"])
+
+    def test_reject_non_object(self):
+        clean, err = validate_node_config([1, 2, 3])
+        self.assertIsNone(clean)
+        self.assertIn("object", err)
+
+    def test_reject_bad_latlon(self):
+        clean, err = validate_node_config(self._ok(lat=200.0))
+        self.assertIsNone(clean)
+        self.assertIn("lat/lon", err)
+
+    def test_reject_unknown_sdr(self):
+        clean, err = validate_node_config(self._ok(sdrType="nope"))
+        self.assertIsNone(clean)
+        self.assertIn("sdrType", err)
+
+    def test_reject_unknown_terrain(self):
+        clean, err = validate_node_config(self._ok(terrain="mars"))
+        self.assertIsNone(clean)
+        self.assertIn("terrain", err)
+
+    def test_reject_unknown_siting(self):
+        clean, err = validate_node_config(self._ok(siting="orbit"))
+        self.assertIsNone(clean)
+        self.assertIn("siting", err)
+
+    def test_reject_too_many_points(self):
+        pts = [{"f": 100.0 + i, "g": 0.0} for i in range(17)]
+        clean, err = validate_node_config(self._ok(antennaCurve=pts))
+        self.assertIsNone(clean)
+        self.assertIn("16", err)
+
+    def test_reject_freq_out_of_range(self):
+        clean, err = validate_node_config(
+            self._ok(antennaCurve=[{"f": 99999.0, "g": 0.0}]))
+        self.assertIsNone(clean)
+        self.assertIn("frequency", err)
+
+    def test_reject_gain_out_of_range(self):
+        clean, err = validate_node_config(
+            self._ok(antennaCurve=[{"f": 465.0, "g": 999.0}]))
+        self.assertIsNone(clean)
+        self.assertIn("gain", err)
+
+    def test_reject_curve_not_array(self):
+        clean, err = validate_node_config(self._ok(antennaCurve="nope"))
+        self.assertIsNone(clean)
+        self.assertIn("array", err)
+
+    def test_legacy_flat_gain_converted(self):
+        body = {"lat": 0.0, "lon": 0.0, "sdrType": "unknown",
+                "terrain": "mixed", "siting": "mast", "antennaGainDb": 3.0}
+        clean, err = validate_node_config(body)
+        self.assertIsNone(err)
+        self.assertEqual(clean["antennaCurve"], [{"f": 400.0, "g": 3.0}])
+
+
+class TestEmittedRowsCarryCalibration(unittest.TestCase):
+    def test_sweep_hit_row_stamped(self):
+        ring = EventRing()
+        pos = NodePosition(37.0, -122.0, 0.0, True)
+        eq = NodeEquipment(sdr_type="rtlsdr_v4",
+                           antenna_curve=[{"f": 434.0, "g": 2.0}],
+                           terrain="suburban", siting="vehicle_roof")
+        sw = SweepIngester(ring, pos, "sdr-0", "Sensor:x",
+                           ranges=["433800000:434000000:100000"],
+                           snr_threshold=12.0, equip=eq)
+        base = ring.last_serial
+        sw._process_line(
+            "2024-06-10, 12:00:00, 433800000, 434000000, 100000, 128, "
+            "-70.0, -71.0, -30.0, -69.5")
+        events, _ = ring.since(base)
+        self.assertEqual(len(events), 1)
+        row = events[0]
+        self.assertIn("calDb", row)
+        self.assertIn("plExp", row)
+        self.assertIn("rssiSigmaDb", row)
+        self.assertAlmostEqual(row["plExp"], 2.8)          # suburban
+        self.assertAlmostEqual(row["rssiSigmaDb"], 6.0 + 0.5)  # vehicle_roof
+
+    def test_kraken_bearing_row_stamped_and_keeps_bearing(self):
+        ring = EventRing()
+        pos = NodePosition(0, 0, 0, False)
+        eq = NodeEquipment(sdr_type="rtlsdr_v3", antenna_curve=[],
+                           terrain="mixed", siting="mast")
+        ing = KrakenIngester("ws://x/ws", ring, pos, "n", "s", equip=eq)
+        row = ing.handle_message(json.dumps(make_doa(bearing_deg=90.0,
+                                                     gps_lat=1.0, gps_lon=2.0)))
+        self.assertIsNotNone(row)
+        self.assertIn("calDb", row)
+        self.assertIn("plExp", row)
+        self.assertIn("rssiSigmaDb", row)
+        # Bearing fields must be preserved on the Kraken row.
+        self.assertAlmostEqual(row["raw"]["bearing_deg"], 90.0)
+
+
 # ── aiohttp server auth + endpoints ─────────────────────────────────────────
 
 @unittest.skipUnless(os.name == "posix", "POSIX file-mode semantics required")
@@ -481,10 +670,23 @@ class TestServer(AioHTTPTestCase):
     async def get_application(self):
         self.ring = EventRing()
         pos = NodePosition(37.0, -122.0, 0.0, True)
-        self.ing = KrakenIngester("ws://x/ws", self.ring, pos, "kraken-0", "Sensor:t")
+        self.equip = NodeEquipment()
+        self.ing = KrakenIngester("ws://x/ws", self.ring, pos, "kraken-0",
+                                  "Sensor:t", equip=self.equip)
+        self._cfgdir = tempfile.TemporaryDirectory()
+        self._cfgpath = os.path.join(self._cfgdir.name, "df_kracked_sensor.json")
         self.app_obj = KujhadSensorApp("SECRETKEY", "df-test", self.ring, pos,
-                                       self.ing)
+                                       self.ing, equip=self.equip,
+                                       config_path=self._cfgpath,
+                                       bind="10.0.0.5", port=9151)
         return self.app_obj.build()
+
+    async def asyncTearDown(self):
+        try:
+            self._cfgdir.cleanup()
+        except Exception:
+            pass
+        await super().asyncTearDown()
 
     async def _seed(self, n):
         for _ in range(n):
@@ -550,6 +752,86 @@ class TestServer(AioHTTPTestCase):
     async def test_root_public(self):
         resp = await self.client.get("/")
         self.assertEqual(resp.status, 200)
+
+    async def test_state_reports_equipment_and_sweep_blocks(self):
+        resp = await self.client.get("/v1/state",
+                                     headers={"X-Kujhad-Key": "SECRETKEY"})
+        body = await resp.json()
+        self.assertIn("equipment", body)
+        self.assertIn("sdrType", body["equipment"])
+        self.assertIn("antennaCurvePoints", body["equipment"])
+        self.assertIn("kraken", body)
+
+    async def test_setup_page_public(self):
+        resp = await self.client.get("/setup")
+        self.assertEqual(resp.status, 200)
+        self.assertIn("text/html", resp.headers.get("Content-Type", ""))
+        text = await resp.text()
+        self.assertIn("Node Setup", text)
+        self.assertIn("/v1/node-config", text)
+
+    async def test_node_config_requires_auth(self):
+        resp = await self.client.get("/v1/node-config")
+        self.assertEqual(resp.status, 401)
+        resp = await self.client.post("/v1/node-config", data="{}")
+        self.assertEqual(resp.status, 401)
+
+    async def test_node_config_get_shape(self):
+        resp = await self.client.get("/v1/node-config",
+                                     headers={"X-Kujhad-Key": "SECRETKEY"})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        for k in ("sdrOptions", "antennaPresets", "terrainOptions",
+                  "sitingOptions", "sdrType", "antennaCurve", "terrain",
+                  "siting", "lat", "lon", "gpsdEnabled"):
+            self.assertIn(k, body)
+        # Option tables must match the equipment tables.
+        self.assertEqual(len(body["sdrOptions"]), len(sensor.SDR_PROFILES))
+
+    async def test_node_config_post_accept_and_persist(self):
+        payload = {
+            "lat": 40.0, "lon": -75.0, "gpsdEnabled": True,
+            "sdrType": "hackrf",
+            "antennaCurve": [{"f": 465.0, "g": 5.0}],
+            "terrain": "urban", "siting": "rooftop",
+        }
+        resp = await self.client.post(
+            "/v1/node-config", headers={"X-Kujhad-Key": "SECRETKEY"},
+            data=json.dumps(payload))
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["ok"])
+        # Applied to the live equipment.
+        self.assertEqual(self.equip.sdr_type, "hackrf")
+        self.assertEqual(self.equip.terrain, "urban")
+        self.assertEqual(self.equip.siting, "rooftop")
+        # Persisted to the config file (survives restart).
+        with open(self._cfgpath, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["sdrType"], "hackrf")
+        self.assertEqual(cfg["terrain"], "urban")
+        self.assertEqual(cfg["antennaCurve"], [{"f": 465.0, "g": 5.0}])
+
+    async def test_node_config_post_reject_bad_400(self):
+        resp = await self.client.post(
+            "/v1/node-config", headers={"X-Kujhad-Key": "SECRETKEY"},
+            data=json.dumps({"sdrType": "bogus", "lat": 0, "lon": 0}))
+        self.assertEqual(resp.status, 400)
+        body = await resp.json()
+        self.assertIn("error", body)
+        # Nothing partially applied.
+        self.assertEqual(self.equip.sdr_type, "unknown")
+
+    async def test_pairing_requires_auth_and_returns_key(self):
+        resp = await self.client.get("/v1/pairing")
+        self.assertEqual(resp.status, 401)
+        resp = await self.client.get("/v1/pairing",
+                                     headers={"X-Kujhad-Key": "SECRETKEY"})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body["key"], "SECRETKEY")
+        self.assertEqual(body["port"], 9151)
+        self.assertIn("10.0.0.5", body["addresses"])
 
 
 if __name__ == "__main__":
