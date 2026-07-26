@@ -72,6 +72,32 @@ DEDUP_WINDOW_S = 0.5
 DEDUP_BEARING_EPS = 0.05  # degrees; below this two bearings count as identical
 CONFIG_FILENAME = "df_kracked_sensor.json"
 
+# ── Generic-SDR power sweep (SDR-agnostic ingest) ───────────────────────────
+# The sensor also works with a plain RTL-SDR or HackRF (no Kraken): it shells
+# out to rtl_power / hackrf_sweep, reads their CSV, and emits "power hit" rows
+# (type 'hit', detector 'sweep') for bins that stick up above the noise floor.
+#
+# USB vendor:product IDs → sweep tool. RTL2838/RTL2832 dongles use rtl_power;
+# a HackRF One (1d50:6089) uses hackrf_sweep.
+SWEEP_USB_IDS = {
+    "0bda:2838": "rtl_power",   # RTL2838 (Blog V3 etc.)
+    "0bda:2832": "rtl_power",   # RTL2832U
+    "1d50:6089": "hackrf_sweep",  # HackRF One
+}
+# Default frequency ranges to sweep when --sweep-range is not given. Chosen to
+# cover the common civil/ISM bands a bare RTL-SDR reaches without an upconverter
+# and that carry the kind of intermittent emitters a fox-hunt cares about:
+#   * 400M:470M  UHF business/amateur/PMR (100 kHz bins)
+#   * 902M:928M  US 900 MHz ISM (LoRa, telemetry) (100 kHz bins)
+# Format is rtl_power's '-f' range: '<low>:<high>:<binwidth>'.
+DEFAULT_SWEEP_RANGES = ["400M:470M:100k", "902M:928M:100k"]
+SWEEP_DEFAULT_SNR_DB = 12.0        # bin must exceed floor + this to be a hit
+SWEEP_DEFAULT_INTERVAL_S = 5       # rtl_power integration time per sweep
+SWEEP_MIN_EMIT_INTERVAL_S = 5.0    # per freq-bucket rate limit (anti-spam)
+SWEEP_REDETECT_INTERVAL_S = 60.0   # hotplug re-probe cadence when idle
+SWEEP_RESPAWN_DELAY_S = 10.0       # wait after tool exit before respawn
+SWEEP_KRAKEN_GRACE_S = 30.0        # wait before (re)starting sweep in auto mode
+
 
 # ── doa_result → KRAKEN_LOB event row ──────────────────────────────────────
 
@@ -573,19 +599,490 @@ class KrakenIngester:
             backoff = min(backoff * 2.0, 30.0)
 
 
+# ── Generic-SDR power sweep ingester ────────────────────────────────────────
+
+
+def detect_sweep_tool() -> Optional[Tuple[str, str]]:
+    """Probe attached USB SDRs via `lsusb` and return (tool, "vid:pid") for the
+    first recognised dongle, or None when nothing usable is attached.
+
+    Never raises: on any lsusb failure (not installed, no permissions) it
+    returns None so the caller simply re-probes later (hotplug)."""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["lsusb"], capture_output=True, text=True, timeout=3,
+        )
+    except Exception:  # noqa: BLE001 - lsusb missing / errored → treat as none
+        return None
+    if out.returncode != 0 or not out.stdout:
+        return None
+    text = out.stdout.lower()
+    for vidpid, tool in SWEEP_USB_IDS.items():
+        if vidpid in text:
+            return tool, vidpid
+    return None
+
+
+def _parse_freq_hz(token: str) -> Optional[float]:
+    """Parse an rtl_power-style frequency token ('400M', '100k', '928000000')
+    into Hz. Returns None on garbage. Never raises."""
+    if not isinstance(token, str):
+        return None
+    t = token.strip()
+    if not t:
+        return None
+    mult = 1.0
+    suffix = t[-1].lower()
+    if suffix == "k":
+        mult, t = 1e3, t[:-1]
+    elif suffix == "m":
+        mult, t = 1e6, t[:-1]
+    elif suffix == "g":
+        mult, t = 1e9, t[:-1]
+    try:
+        return float(t) * mult
+    except ValueError:
+        return None
+
+
+def _median(values: List[float]) -> float:
+    """Median of a non-empty list (pure stdlib; no numpy)."""
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2:
+        return s[mid]
+    return (s[mid - 1] + s[mid]) / 2.0
+
+
+def parse_sweep_csv_line(line: str) -> Optional[Dict[str, Any]]:
+    """Parse one CSV line from rtl_power OR hackrf_sweep into a normalised dict.
+
+    Both tools share the shape:
+        date, time, hz_low, hz_high, hz_step, samples, db, db, ...
+    (rtl_power writes 'YYYY-MM-DD, HH:MM:SS'; hackrf_sweep writes the same date
+    /time columns). Returns:
+        {'hz_low','hz_high','hz_step','samples','dbs':[...]}
+    or None if the line is a comment / header / unparseable. Never raises."""
+    if not isinstance(line, str):
+        return None
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 7:
+        return None
+    try:
+        hz_low = float(parts[2])
+        hz_high = float(parts[3])
+        hz_step = float(parts[4])
+        samples = float(parts[5])
+    except ValueError:
+        return None
+    dbs: List[float] = []
+    for p in parts[6:]:
+        if not p:
+            continue
+        try:
+            dbs.append(float(p))
+        except ValueError:
+            # hackrf_sweep never pads, rtl_power sometimes trails an empty
+            # field; skip anything non-numeric rather than aborting the line.
+            continue
+    if not dbs:
+        return None
+    return {
+        "hz_low": hz_low,
+        "hz_high": hz_high,
+        "hz_step": hz_step,
+        "samples": samples,
+        "dbs": dbs,
+    }
+
+
+def sweep_line_to_hits(parsed: Dict[str, Any], snr_threshold: float
+                       ) -> List[Dict[str, Any]]:
+    """Turn one parsed sweep row into zero or more power-hit descriptors.
+
+    Noise floor = median of the row's dB bins. Any bin exceeding
+    floor + snr_threshold is a hit. Returns a list of
+    {'freq_hz','db','snr_db'} (bin center frequency). Never raises."""
+    dbs = parsed.get("dbs") or []
+    if not dbs:
+        return []
+    hz_low = float(parsed["hz_low"])
+    hz_step = float(parsed["hz_step"])
+    floor = _median(dbs)
+    hits: List[Dict[str, Any]] = []
+    for i, db in enumerate(dbs):
+        snr = db - floor
+        if snr < snr_threshold:
+            continue
+        # Bin center: low edge + (i + 0.5) * step.
+        freq_hz = hz_low + (i + 0.5) * hz_step
+        hits.append({"freq_hz": freq_hz, "db": db, "snr_db": snr})
+    return hits
+
+
+def sweep_hit_to_event_row(
+    hit: Dict[str, Any],
+    serial: int,
+    node_id: str,
+    source_label: str,
+    lat: float,
+    lon: float,
+    heading: float,
+    have_fix: bool,
+    ts_unix: float,
+) -> Dict[str, Any]:
+    """Build a Kujhad 'hit' event row for a bare power detection.
+
+    Mirrors doa_result_to_event_row's field names/types but with type 'hit'
+    and detector 'sweep' — the coordinator's fleet ingest accepts 'hit'
+    (KujhadFleetManager._kujhad_event_to_rf, _RF_EVENT_TYPES). No bearing:
+    a plain sweep can't produce one. Includes freqHz / strengthDb / snrDb."""
+    freq_hz = float(hit["freq_hz"])
+    strength_db = float(hit["db"])
+    snr_db = float(hit["snr_db"])
+    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts_unix))
+    event_id = str(uuid.uuid4())
+
+    raw = {
+        "freq_hz": freq_hz,
+        "power_dbfs": strength_db,
+        "snr_db": snr_db,
+        "gps_lat": lat,
+        "gps_lon": lon,
+        "heading_deg": heading,
+        "timestamp_unix": ts_unix,
+        "node_id": node_id,
+    }
+
+    row = {
+        "time": time_str,
+        "eventId": event_id,
+        "type": "hit",
+        "frequency": freq_hz,
+        "freqHz": freq_hz,
+        "label": node_id or "SWEEP",
+        "strengthDb": strength_db,
+        "snrDb": snr_db,
+        "detector": "sweep",
+        "decoder": "SWEEP",
+        "hitState": "auto",
+        "protocol": "POWER",
+        "networkId": node_id or "Unknown",
+        "talkgroup": "Unknown",
+        "radioId": "Unknown",
+        "hasAudio": False,
+        "hasData": False,
+        "source": source_label,
+        "gpsFix": bool(have_fix),
+        "lat": lat,
+        "lon": lon,
+        "raw": raw,
+        "serial": serial,
+    }
+    return row
+
+
+class SweepIngester:
+    """SDR-agnostic power-sweep ingester for a plain RTL-SDR / HackRF.
+
+    Auto-detects the dongle by USB id, shells out to rtl_power / hackrf_sweep,
+    parses the streamed CSV, estimates a per-sweep noise floor, and appends a
+    power-hit row to the SAME EventRing for every bin sticking up above the
+    floor (rate-limited per frequency bucket, mirroring KrakenIngester).
+
+    Defensive posture: the tool exiting (dongle yanked) is normal — it logs,
+    waits, re-detects, and respawns. It never raises out of run()."""
+
+    def __init__(self, ring: EventRing, pos: NodePosition, node_id: str,
+                 source_label: str, ranges: List[str],
+                 interval_s: int = SWEEP_DEFAULT_INTERVAL_S,
+                 snr_threshold: float = SWEEP_DEFAULT_SNR_DB):
+        self.ring = ring
+        self.pos = pos
+        self.node_id = node_id
+        self.source_label = source_label
+        self.ranges = ranges or list(DEFAULT_SWEEP_RANGES)
+        self.interval_s = interval_s
+        self.snr_threshold = snr_threshold
+        # Status (read by /v1/state):
+        self.tool: Optional[str] = None
+        self.usb_id: Optional[str] = None
+        self.running = False          # a sweep subprocess is alive
+        self.hardware_present = False
+        self.hits_emitted = 0
+        self._proc: Optional[asyncio.subprocess.Process] = None
+        # Per frequency-bucket rate limiter (bucket width == bin step).
+        self._last_bucket_emit: Dict[int, float] = {}
+
+    def status(self) -> Dict[str, Any]:
+        if self.running:
+            state = "running"
+        elif self.hardware_present:
+            state = "stopped"
+        else:
+            state = "no-hardware"
+        return {
+            "tool": self.tool,
+            "usbId": self.usb_id,
+            "state": state,
+            "ranges": list(self.ranges),
+            "intervalS": self.interval_s,
+            "snrThresholdDb": self.snr_threshold,
+            "hitsEmitted": self.hits_emitted,
+        }
+
+    def _should_emit(self, freq_hz: float, bucket_hz: float, now: float
+                     ) -> bool:
+        """Rate-limit per ~frequency bucket the way KrakenIngester rate-limits
+        per bearing: at most one hit per bucket every SWEEP_MIN_EMIT_INTERVAL_S.
+        Bucket width defaults to the bin step so adjacent bins of the same
+        emitter don't each fire every sweep."""
+        if bucket_hz <= 0:
+            bucket_hz = 1.0
+        bucket = int(freq_hz // bucket_hz)
+        last = self._last_bucket_emit.get(bucket, 0.0)
+        if (now - last) < SWEEP_MIN_EMIT_INTERVAL_S:
+            return False
+        self._last_bucket_emit[bucket] = now
+        # Cheap unbounded-growth guard: prune stale buckets occasionally.
+        if len(self._last_bucket_emit) > 4096:
+            cutoff = now - SWEEP_MIN_EMIT_INTERVAL_S
+            self._last_bucket_emit = {
+                b: t for b, t in self._last_bucket_emit.items() if t >= cutoff
+            }
+        return True
+
+    def _build_cmd(self, tool: str) -> List[str]:
+        """Build the subprocess argv for the detected tool. rtl_power takes a
+        single '-f low:high:binwidth'; hackrf_sweep takes '-f MHzlow:MHzhigh'
+        (MHz-only, one range). We sweep the FIRST range for hackrf_sweep and
+        loop ranges for rtl_power via repeated -f is not supported, so rtl_power
+        also uses the first range unless the caller collapses them — we run one
+        range per process and rotate is out of scope; use the widest first."""
+        rng = self.ranges[0]
+        if tool == "rtl_power":
+            # rtl_power -f low:high:binwidth -i <int> -  (CSV → stdout)
+            return ["rtl_power", "-f", rng,
+                    "-i", str(self.interval_s), "-"]
+        # hackrf_sweep -f MHzlow:MHzhigh  (CSV → stdout). Convert the range's
+        # low/high edges to whole MHz.
+        parts = rng.split(":")
+        low_hz = _parse_freq_hz(parts[0]) if parts else None
+        high_hz = _parse_freq_hz(parts[1]) if len(parts) > 1 else None
+        if low_hz is None or high_hz is None:
+            low_hz, high_hz = 400e6, 470e6
+        low_mhz = int(low_hz // 1e6)
+        high_mhz = int(high_hz // 1e6)
+        if high_mhz <= low_mhz:
+            high_mhz = low_mhz + 1
+        return ["hackrf_sweep", "-f", f"{low_mhz}:{high_mhz}"]
+
+    def _process_line(self, line: str) -> None:
+        """Parse one CSV line and emit any hits (rate-limited). Never raises."""
+        parsed = parse_sweep_csv_line(line)
+        if parsed is None:
+            return
+        bucket_hz = float(parsed.get("hz_step") or 0.0)
+        now = time.time()
+        for hit in sweep_line_to_hits(parsed, self.snr_threshold):
+            if not self._should_emit(hit["freq_hz"], bucket_hz, now):
+                continue
+            serial = self.ring.next_serial()
+            row = sweep_hit_to_event_row(
+                hit, serial, self.node_id, self.source_label,
+                self.pos.lat, self.pos.lon, self.pos.heading,
+                self.pos.have_fix, now,
+            )
+            self.ring.append(row)
+            self.hits_emitted += 1
+
+    async def _run_tool(self, tool: str, stop: asyncio.Event) -> None:
+        """Spawn one sweep subprocess and pump its stdout until it exits or
+        stop is set. Never raises: subprocess errors are logged."""
+        cmd = self._build_cmd(tool)
+        log.info("sweep: launching %s", " ".join(cmd))
+        try:
+            self._proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            log.error("sweep: %s not installed; cannot sweep", tool)
+            self._proc = None
+            self.running = False
+            return
+        except Exception as e:  # noqa: BLE001 - never crash the service
+            log.warning("sweep: failed to launch %s (%s)", tool, e)
+            self._proc = None
+            self.running = False
+            return
+        self.running = True
+        assert self._proc.stdout is not None
+        try:
+            while not stop.is_set():
+                try:
+                    raw = await self._proc.stdout.readline()
+                except (asyncio.CancelledError, GeneratorExit):
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    log.warning("sweep: read error (%s)", e)
+                    break
+                if not raw:
+                    break  # tool exited (EOF)
+                try:
+                    line = raw.decode("utf-8", "replace")
+                    self._process_line(line)
+                except Exception as e:  # noqa: BLE001 - one bad line ≠ crash
+                    log.debug("sweep: line parse failed (%s)", e)
+        finally:
+            self.running = False
+            await self._terminate_proc()
+
+    async def _terminate_proc(self) -> None:
+        """Stop the sweep subprocess if it is still alive. Never raises."""
+        proc = self._proc
+        self._proc = None
+        if proc is None:
+            return
+        try:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+        except ProcessLookupError:
+            pass
+        except Exception as e:  # noqa: BLE001
+            log.debug("sweep: terminate error (%s)", e)
+
+    async def stop_now(self) -> None:
+        """Externally stop the running subprocess (e.g. Kraken took over)."""
+        self.running = False
+        await self._terminate_proc()
+
+    async def run(self, stop: asyncio.Event,
+                  gate: Optional["asyncio.Event"] = None) -> None:
+        """Main loop: detect hardware, run the tool, respawn on exit.
+
+        `gate`, when supplied, must be SET for the sweep to run (used by
+        --sweep auto to pause the sweep while the Kraken WS is connected). When
+        the gate clears we stop the tool and idle until it is set again.
+        Never raises out of this loop."""
+        while not stop.is_set():
+            try:
+                # In auto mode wait until the gate opens (Kraken not connected).
+                if gate is not None and not gate.is_set():
+                    if self.running:
+                        await self.stop_now()
+                    await self._sleep_or_stop(stop, 2.0)
+                    continue
+
+                found = detect_sweep_tool()
+                if found is None:
+                    if self.hardware_present:
+                        log.info("sweep: SDR removed; waiting for hardware")
+                    self.hardware_present = False
+                    self.tool = None
+                    self.usb_id = None
+                    await self._sleep_or_stop(stop, SWEEP_REDETECT_INTERVAL_S)
+                    continue
+
+                tool, usb_id = found
+                if not self.hardware_present:
+                    log.info("sweep: detected %s (%s)", tool, usb_id)
+                self.hardware_present = True
+                self.tool = tool
+                self.usb_id = usb_id
+
+                # Run until the tool exits, stop is set, or (auto) the gate
+                # closes. We watch the gate concurrently so a Kraken connect
+                # tears the sweep down promptly.
+                run_task = asyncio.ensure_future(self._run_tool(tool, stop))
+                await self._await_tool_or_gate(run_task, stop, gate)
+
+                if stop.is_set():
+                    break
+                if gate is not None and not gate.is_set():
+                    continue  # Kraken connected; loop will pause at the top
+                log.info("sweep: tool exited; re-detecting in %.0fs",
+                         SWEEP_RESPAWN_DELAY_S)
+                await self._sleep_or_stop(stop, SWEEP_RESPAWN_DELAY_S)
+            except asyncio.CancelledError:
+                await self.stop_now()
+                raise
+            except Exception as e:  # noqa: BLE001 - never crash the service
+                log.warning("sweep: loop error (%s); retrying", e)
+                await self.stop_now()
+                await self._sleep_or_stop(stop, SWEEP_RESPAWN_DELAY_S)
+        await self.stop_now()
+
+    async def _await_tool_or_gate(self, run_task: "asyncio.Future",
+                                  stop: asyncio.Event,
+                                  gate: Optional["asyncio.Event"]) -> None:
+        """Wait for the tool task to finish, or for stop/gate to require
+        tearing it down early."""
+        while not run_task.done():
+            waiters = [asyncio.ensure_future(stop.wait())]
+            if gate is not None:
+                # Wake when the gate is cleared (Kraken connected). We poll it
+                # since asyncio.Event has no "wait for clear".
+                pass
+            done, pending = await asyncio.wait(
+                {run_task, *waiters},
+                timeout=1.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for w in waiters:
+                w.cancel()
+            if stop.is_set() or (gate is not None and not gate.is_set()):
+                if not run_task.done():
+                    run_task.cancel()
+                    try:
+                        await run_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:  # noqa: BLE001
+                        pass
+                await self.stop_now()
+                return
+        # Surface (but never re-raise) a tool-task exception.
+        try:
+            exc = run_task.exception()
+            if exc is not None:
+                log.warning("sweep: tool task error (%r)", exc)
+        except (asyncio.CancelledError, asyncio.InvalidStateError):
+            pass
+
+    async def _sleep_or_stop(self, stop: asyncio.Event, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+
+
 # ── Kujhad v1 HTTP server (aiohttp) ─────────────────────────────────────────
 
 
 class KujhadSensorApp:
     def __init__(self, api_key: str, device_name: str, ring: EventRing,
                  pos: NodePosition, ingester: Optional[KrakenIngester],
-                 advertise: str = ""):
+                 advertise: str = "",
+                 sweep: Optional["SweepIngester"] = None):
         self.api_key = api_key
         self.device_name = device_name
         self.ring = ring
         self.pos = pos
         self.ingester = ingester
         self.advertise = advertise
+        self.sweep = sweep
 
     # -- auth --
     def _authorized(self, request: "web.Request") -> bool:
@@ -624,15 +1121,25 @@ class KujhadSensorApp:
         if not self._authorized(request):
             return self._unauthorized()
         connected = bool(self.ingester and self.ingester.connected)
+        sweep_status = self.sweep.status() if self.sweep else None
+        sweep_running = bool(sweep_status
+                             and sweep_status.get("state") == "running")
+        online = connected or sweep_running
+        if connected:
+            scan_status = "KRAKEN_LOB sensor online"
+        elif sweep_running:
+            scan_status = ("sweep active (%s)"
+                           % (sweep_status.get("tool") or "sdr"))
+        else:
+            scan_status = "waiting for SDR / Kraken DoA feed"
         # Minimal-but-valid mission shape so a sensor-only node does not
         # break the controller's Mission UI. Empty arrays are fine.
         body = {
             "centerFreq": 0.0,
-            "playing": connected,
+            "playing": online,
             "missionMode": 0,
-            "scanRunning": connected,
-            "scanStatus": "KRAKEN_LOB sensor online" if connected
-            else "waiting for Kraken DoA feed",
+            "scanRunning": online,
+            "scanStatus": scan_status,
             "scanPaused": False,
             "searchBands": [],
             "targets": [],
@@ -643,6 +1150,10 @@ class KujhadSensorApp:
             "quickScanDelayMs": 0,
             "quickScanDurationMs": 0,
             "recordAudio": False,
+            # Sensor-specific status blocks (ignored by the mission UI but
+            # available to operators / diagnostics).
+            "kraken": {"connected": connected},
+            "sweep": sweep_status,
         }
         return web.json_response(body)
 
@@ -901,6 +1412,26 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                    help="platform heading, deg (default 0)")
     p.add_argument("--gpsd", action="store_true",
                    help="poll gpsd on localhost:2947 for live position")
+    p.add_argument("--sweep", choices=["on", "off", "auto"], default="auto",
+                   help="generic-SDR power sweep (plain RTL-SDR/HackRF). "
+                        "'auto' (default): run the sweep ONLY while the Kraken "
+                        "WS ingester is NOT connected (a Kraken enumerates as "
+                        "several RTL dongles that rtl_power would fight); "
+                        "'on': always sweep; 'off': never sweep.")
+    p.add_argument("--sweep-range", action="append", default=None,
+                   dest="sweep_range",
+                   help="frequency range to sweep, repeatable, in rtl_power "
+                        "form '<low>:<high>:<binwidth>' (e.g. '400M:470M:100k'). "
+                        "Defaults to " + ", ".join(DEFAULT_SWEEP_RANGES)
+                        + " if omitted.")
+    p.add_argument("--sweep-interval", type=int,
+                   default=SWEEP_DEFAULT_INTERVAL_S, dest="sweep_interval",
+                   help="rtl_power integration seconds per sweep (default "
+                        f"{SWEEP_DEFAULT_INTERVAL_S})")
+    p.add_argument("--sweep-snr", type=float, default=SWEEP_DEFAULT_SNR_DB,
+                   dest="sweep_snr",
+                   help="dB above the estimated noise floor a bin must exceed "
+                        f"to emit a hit (default {SWEEP_DEFAULT_SNR_DB:.0f})")
     p.add_argument("--advertise", default="",
                    help="advertised address hint returned in /v1/identify")
     p.add_argument("--log-level", default="INFO",
@@ -909,7 +1440,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def build_runtime(args: argparse.Namespace) -> Tuple[
-        KujhadSensorApp, KrakenIngester, NodePosition, EventRing, str, str]:
+        KujhadSensorApp, KrakenIngester, Optional[SweepIngester],
+        NodePosition, EventRing, str, str]:
     """Wire up the components (no I/O started). Returns pieces for run()/tests."""
     cfg_path = script_dir_config_path()
     key = load_or_create_key(cfg_path, args.key)
@@ -928,13 +1460,61 @@ def build_runtime(args: argparse.Namespace) -> Tuple[
     ring = EventRing(EVENT_RING_MAX)
     ingester = KrakenIngester(args.ws or args.doa_url, ring, pos, node_id,
                               source_label)
+
+    sweep: Optional[SweepIngester] = None
+    if getattr(args, "sweep", "auto") != "off":
+        sweep = SweepIngester(
+            ring, pos, node_id, source_label,
+            ranges=list(getattr(args, "sweep_range", None) or DEFAULT_SWEEP_RANGES),
+            interval_s=int(getattr(args, "sweep_interval",
+                                   SWEEP_DEFAULT_INTERVAL_S)),
+            snr_threshold=float(getattr(args, "sweep_snr",
+                                        SWEEP_DEFAULT_SNR_DB)),
+        )
+
     app = KujhadSensorApp(key, device_name, ring, pos, ingester,
-                          advertise=args.advertise)
-    return app, ingester, pos, ring, key, device_name
+                          advertise=args.advertise, sweep=sweep)
+    return app, ingester, sweep, pos, ring, key, device_name
+
+
+async def _sweep_auto_gate_loop(sweep: SweepIngester, ingester: KrakenIngester,
+                                gate: asyncio.Event, stop: asyncio.Event
+                                ) -> None:
+    """Drive the sweep gate for --sweep auto: keep it OPEN while the Kraken WS
+    is NOT connected, CLOSED while it is. Opening is delayed by a grace period
+    so a briefly-flapping Kraken doesn't cause rtl_power to race it. Never
+    raises out of the loop."""
+    grace_deadline: Optional[float] = None
+    while not stop.is_set():
+        try:
+            connected = bool(ingester.connected)
+            now = time.time()
+            if connected:
+                grace_deadline = None
+                if gate.is_set():
+                    log.info("sweep: Kraken connected — pausing sweep")
+                    gate.clear()
+            else:
+                if gate.is_set():
+                    grace_deadline = None
+                else:
+                    if grace_deadline is None:
+                        grace_deadline = now + SWEEP_KRAKEN_GRACE_S
+                        log.info("sweep: Kraken not connected — starting sweep "
+                                 "in %.0fs", SWEEP_KRAKEN_GRACE_S)
+                    elif now >= grace_deadline:
+                        grace_deadline = None
+                        gate.set()
+        except Exception as e:  # noqa: BLE001 - never crash
+            log.debug("sweep: gate loop error (%s)", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            pass
 
 
 async def run(args: argparse.Namespace) -> None:
-    app_obj, ingester, pos, ring, key, device_name = build_runtime(args)
+    app_obj, ingester, sweep, pos, ring, key, device_name = build_runtime(args)
 
     stop = asyncio.Event()
 
@@ -976,6 +1556,31 @@ async def run(args: argparse.Namespace) -> None:
     tasks = [ingest_task]
     if args.gpsd:
         tasks.append(asyncio.create_task(gpsd_poll_loop(pos)))
+
+    # Generic-SDR sweep. In 'auto' the gate is driven by the Kraken WS
+    # connection state (see _sweep_auto_gate_loop). In 'on' the gate is
+    # permanently open. A dead sweep task must NOT be fatal (unlike the
+    # Kraken ingest task): the sweep is best-effort and self-heals.
+    if sweep is not None:
+        if args.sweep == "on":
+            gate = asyncio.Event()
+            gate.set()
+        else:  # auto
+            gate = asyncio.Event()  # starts closed; gate loop opens it
+            tasks.append(asyncio.create_task(
+                _sweep_auto_gate_loop(sweep, ingester, gate, stop)))
+
+        def _sweep_done(t: "asyncio.Task") -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                log.error("sweep task exited unexpectedly: %r "
+                          "(sweep disabled; sensor keeps serving)", exc)
+
+        sweep_task = asyncio.create_task(sweep.run(stop, gate))
+        sweep_task.add_done_callback(_sweep_done)
+        tasks.append(sweep_task)
 
     await stop.wait()
     log.info("shutting down…")

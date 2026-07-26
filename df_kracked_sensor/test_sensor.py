@@ -25,7 +25,11 @@ from sensor import (  # noqa: E402
     KrakenIngester,
     KujhadSensorApp,
     NodePosition,
+    SweepIngester,
     doa_result_to_event_row,
+    parse_sweep_csv_line,
+    sweep_hit_to_event_row,
+    sweep_line_to_hits,
 )
 
 
@@ -301,6 +305,138 @@ class TestDfAggregatorParse(unittest.TestCase):
         self.assertEqual(row["decoder"], "KRAKEN_LOB")
         self.assertAlmostEqual(row["raw"]["bearing_deg"], 1.0)
         self.assertAlmostEqual(row["lat"], 39.1928)
+
+
+# ── Generic-SDR power sweep (rtl_power / hackrf_sweep) ───────────────────────
+
+# rtl_power CSV: date, time, hz_low, hz_high, hz_step, samples, db, db, ...
+RTL_POWER_LINE = (
+    "2024-06-10, 12:00:00, 433800000, 434000000, 100000, 128, "
+    "-70.0, -71.0, -30.0, -69.5"
+)
+# hackrf_sweep shares the shape (whole-Hz edges, MHz-derived).
+HACKRF_LINE = (
+    "2024-06-10, 12:00:01, 400000000, 400500000, 100000, 20, "
+    "-80.0, -79.0, -78.5, -20.0, -81.0"
+)
+
+
+class TestSweepCsvParse(unittest.TestCase):
+    def test_parse_rtl_power_line(self):
+        p = parse_sweep_csv_line(RTL_POWER_LINE)
+        self.assertIsNotNone(p)
+        self.assertAlmostEqual(p["hz_low"], 433800000)
+        self.assertAlmostEqual(p["hz_high"], 434000000)
+        self.assertAlmostEqual(p["hz_step"], 100000)
+        self.assertAlmostEqual(p["samples"], 128)
+        self.assertEqual(p["dbs"], [-70.0, -71.0, -30.0, -69.5])
+
+    def test_parse_hackrf_line(self):
+        p = parse_sweep_csv_line(HACKRF_LINE)
+        self.assertIsNotNone(p)
+        self.assertEqual(len(p["dbs"]), 5)
+        self.assertAlmostEqual(p["dbs"][3], -20.0)
+
+    def test_reject_comment_header_short(self):
+        self.assertIsNone(parse_sweep_csv_line("# comment"))
+        self.assertIsNone(parse_sweep_csv_line(""))
+        self.assertIsNone(parse_sweep_csv_line("a, b, c"))
+        self.assertIsNone(parse_sweep_csv_line(None))
+
+    def test_reject_non_numeric_header(self):
+        bad = "date, time, hz_low, hz_high, hz_step, samples, db"
+        self.assertIsNone(parse_sweep_csv_line(bad))
+
+    def test_trailing_empty_field_skipped(self):
+        line = RTL_POWER_LINE + ", "
+        p = parse_sweep_csv_line(line)
+        self.assertEqual(p["dbs"], [-70.0, -71.0, -30.0, -69.5])
+
+
+class TestSweepThresholding(unittest.TestCase):
+    def test_hit_above_floor(self):
+        p = parse_sweep_csv_line(RTL_POWER_LINE)
+        # floor = median([-70,-71,-30,-69.5]) = (-70 + -69.5)/2 = -69.75
+        # only -30 exceeds floor + 12 dB (-57.75).
+        hits = sweep_line_to_hits(p, snr_threshold=12.0)
+        self.assertEqual(len(hits), 1)
+        hit = hits[0]
+        self.assertAlmostEqual(hit["db"], -30.0)
+        self.assertAlmostEqual(hit["snr_db"], 39.75)
+        # bin index 2 → center = 433800000 + (2 + 0.5)*100000 = 434050000
+        self.assertAlmostEqual(hit["freq_hz"], 434050000.0)
+
+    def test_no_hit_when_flat(self):
+        flat = ("2024-06-10, 12:00:00, 100000000, 100100000, 50000, 10, "
+                "-60.0, -60.5, -59.5")
+        p = parse_sweep_csv_line(flat)
+        self.assertEqual(sweep_line_to_hits(p, snr_threshold=12.0), [])
+
+    def test_lower_threshold_yields_more_hits(self):
+        p = parse_sweep_csv_line(HACKRF_LINE)
+        # floor = median([-80,-79,-78.5,-20,-81]) = -79.0
+        # threshold 5 → -20 (snr 59) only; the rest are near/below floor.
+        hits = sweep_line_to_hits(p, snr_threshold=5.0)
+        self.assertEqual(len(hits), 1)
+        self.assertAlmostEqual(hits[0]["db"], -20.0)
+
+
+class TestSweepEventRow(unittest.TestCase):
+    def test_hit_row_shape_matches_accepted_type(self):
+        hit = {"freq_hz": 434050000.0, "db": -30.0, "snr_db": 39.75}
+        row = sweep_hit_to_event_row(
+            hit, serial=42, node_id="sdr-0", source_label="Sensor:x",
+            lat=37.4, lon=-122.1, heading=10.0, have_fix=True,
+            ts_unix=1718035200.0)
+        # type MUST be one the coordinator fleet ingest accepts ('hit').
+        self.assertEqual(row["type"], "hit")
+        self.assertEqual(row["detector"], "sweep")
+        self.assertEqual(row["frequency"], 434050000.0)
+        self.assertEqual(row["freqHz"], 434050000.0)
+        self.assertEqual(row["strengthDb"], -30.0)
+        self.assertAlmostEqual(row["snrDb"], 39.75)
+        self.assertTrue(row["gpsFix"])
+        self.assertEqual(row["lat"], 37.4)
+        self.assertEqual(row["lon"], -122.1)
+        self.assertEqual(row["serial"], 42)
+        self.assertNotIn("bearing_deg", row["raw"])  # no bearing on a sweep
+        self.assertIsInstance(row["time"], str)
+        self.assertRegex(row["time"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+        self.assertAlmostEqual(row["raw"]["freq_hz"], 434050000.0)
+        self.assertAlmostEqual(row["raw"]["snr_db"], 39.75)
+
+
+class TestSweepRateLimit(unittest.TestCase):
+    def test_process_line_emits_and_rate_limits(self):
+        ring = EventRing()
+        pos = NodePosition(37.0, -122.0, 0.0, True)
+        sw = SweepIngester(ring, pos, "sdr-0", "Sensor:x",
+                           ranges=["433800000:434000000:100000"],
+                           snr_threshold=12.0)
+        base = ring.last_serial
+        sw._process_line(RTL_POWER_LINE)
+        events, _ = ring.since(base)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "hit")
+        # Same bucket again immediately → rate-limited (no new event).
+        sw._process_line(RTL_POWER_LINE)
+        events, _ = ring.since(base)
+        self.assertEqual(len(events), 1)
+
+    def test_build_cmd_rtl_power(self):
+        sw = SweepIngester(EventRing(), NodePosition(0, 0, 0, False),
+                           "n", "s", ranges=["400M:470M:100k"], interval_s=5)
+        cmd = sw._build_cmd("rtl_power")
+        self.assertEqual(cmd[0], "rtl_power")
+        self.assertIn("400M:470M:100k", cmd)
+        self.assertIn("-", cmd)
+
+    def test_build_cmd_hackrf_sweep_mhz(self):
+        sw = SweepIngester(EventRing(), NodePosition(0, 0, 0, False),
+                           "n", "s", ranges=["400M:470M:100k"])
+        cmd = sw._build_cmd("hackrf_sweep")
+        self.assertEqual(cmd[0], "hackrf_sweep")
+        self.assertIn("400:470", cmd)
 
 
 # ── aiohttp server auth + endpoints ─────────────────────────────────────────

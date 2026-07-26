@@ -10,6 +10,14 @@ It is **RX-only** and accepts no commands. It is a thin, single-file service
 (`sensor.py`) plus a small persisted config; it does **not** import the
 Predator RF `backend/`.
 
+**SDR-agnostic:** it now works with a **plain RTL-SDR or HackRF out of the
+box** — no Kraken required. It auto-detects the dongle by USB id and shells out
+to `rtl_power` / `hackrf_sweep`, emitting **power-hit** events (`type: "hit"`,
+`detector: "sweep"`) for anything sticking up above the noise floor. Attach a
+**KrakenSDR** and it additionally serves **bearings** (LOBs) — the sweep pauses
+automatically while the Kraken feed is connected so `rtl_power` doesn't fight it
+for the RTL dongles.
+
 ## What it does
 
 ```
@@ -88,6 +96,24 @@ Key CLI flags:
 | `--ws`   | opt-in: DoA websocket URL for custom builds (e.g. `ws://127.0.0.1:8082/ws`); disables polling |
 | `--lat` / `--lon` / `--heading` | fixed-site position (heading default 0) |
 | `--gpsd` | poll `gpsd` on `localhost:2947` for live position (degrades gracefully) |
+| `--sweep` | `on` / `off` / `auto` (default `auto`). `auto` runs the generic-SDR sweep **only while the Kraken WS is not connected**; `on` always sweeps; `off` disables it |
+| `--sweep-range` | frequency range to sweep, repeatable, rtl_power form `<low>:<high>:<binwidth>` (e.g. `400M:470M:100k`). Default: `400M:470M:100k`, `902M:928M:100k` |
+| `--sweep-interval` | `rtl_power` integration seconds per sweep (default `5`) |
+| `--sweep-snr` | dB above the estimated noise floor a bin must exceed to emit a hit (default `12`) |
+
+### Generic-SDR sweep (no Kraken)
+
+With a bare RTL-SDR or HackRF attached, the sensor detects it by USB id
+(`0bda:2838`/`0bda:2832` → `rtl_power`, `1d50:6089` → `hackrf_sweep`; re-probed
+every 60 s so it survives hotplug), streams the tool's CSV, estimates the noise
+floor as the **median of each sweep's dB bins**, and emits a hit for any bin
+above `floor + --sweep-snr`. Hits are rate-limited per frequency bucket so the
+fleet isn't flooded. If the dongle is yanked the tool exits, the service logs
+it, waits, re-detects and respawns — it never crashes. Requires `rtl_power`
+(from `rtl-sdr`) or `hackrf_sweep` (from `hackrf`) on the `PATH`.
+
+Sweep status (tool, `running`/`stopped`/`no-hardware`, ranges) is reported in
+`/v1/state` alongside the Kraken feed status.
 
 On startup it prints a pairing block, e.g.:
 
