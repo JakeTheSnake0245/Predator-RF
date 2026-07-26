@@ -877,6 +877,115 @@ def detect_sweep_tool() -> Optional[Tuple[str, str]]:
     return None
 
 
+# ── Hardware visibility (read-only; never claims the SDR) ───────────────────
+#
+# Known SDR USB ids for the /setup HARDWARE panel. Superset of SWEEP_USB_IDS
+# plus Kraken/Airspy/Lime so the operator sees what is plugged in even when it
+# is not something the sweep ingester itself drives. name is a human label.
+SDR_USB_NAMES: Dict[str, str] = {
+    "0bda:2838": "RTL2838 (RTL-SDR / KrakenSDR channel)",
+    "0bda:2832": "RTL2832U (RTL-SDR)",
+    "1d50:6089": "HackRF One",
+    "1d50:60a1": "Airspy",
+    "1d50:6108": "LimeSDR Mini",
+    "0403:601f": "LimeSDR (FTDI)",
+    "1d0f:5250": "LimeSDR",
+    "2cf0:5250": "LimeSDR",
+}
+# USB ids that count as an RTL dongle for the "KrakenSDR = 4-5x RTL" heuristic.
+_RTL_USB_IDS = ("0bda:2838", "0bda:2832")
+
+# Kernel modules that grab RTL dongles for DVB/TV and prevent SDR use.
+RTL_CONFLICT_MODULES = (
+    "dvb_usb_rtl28xxu",
+    "rtl2832",
+    "rtl2830",
+    "rtl8xxxu",
+)
+
+
+def parse_lsusb_devices(text: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    """Parse `lsusb` stdout, filtering to known SDR USB ids. Returns a list of
+    {usbId, name, count[, krakenLikely]} or None when text is None (lsusb
+    unavailable). Pure/testable: takes the text, never runs a subprocess."""
+    if text is None:
+        return None
+    low = text.lower()
+    counts: Dict[str, int] = {}
+    for vidpid in SDR_USB_NAMES:
+        # lsusb prints "ID 0bda:2838 ..." once per attached device.
+        n = low.count(" " + vidpid) + (
+            1 if low.startswith(vidpid) else 0)
+        # Robust fallback: count raw occurrences if the spaced form missed.
+        if n == 0:
+            n = low.count(vidpid)
+        if n > 0:
+            counts[vidpid] = n
+    devices: List[Dict[str, Any]] = []
+    rtl_total = 0
+    for vidpid, n in counts.items():
+        dev: Dict[str, Any] = {
+            "usbId": vidpid,
+            "name": SDR_USB_NAMES[vidpid],
+            "count": n,
+        }
+        if vidpid in _RTL_USB_IDS:
+            rtl_total += n
+        devices.append(dev)
+    # KrakenSDR presents as 4-5 identical RTL2838 (coherent channels).
+    if rtl_total >= 4:
+        for dev in devices:
+            if dev["usbId"] in _RTL_USB_IDS:
+                dev["krakenLikely"] = True
+    return devices
+
+
+def read_lsusb_text() -> Optional[str]:
+    """Return `lsusb` stdout, or None if lsusb is missing/errors. Never raises,
+    never claims a device (lsusb only enumerates the bus)."""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["lsusb"], capture_output=True, text=True, timeout=3,
+        )
+    except Exception:  # noqa: BLE001 - lsusb missing / errored → unavailable
+        return None
+    if out.returncode != 0 or not out.stdout:
+        return None
+    return out.stdout
+
+
+def parse_module_conflicts(modules_text: Optional[str]) -> List[Dict[str, str]]:
+    """Given /proc/modules text, return a list of loaded kernel modules that
+    steal RTL dongles, each {module, hint}. Pure/testable. Never raises."""
+    conflicts: List[Dict[str, str]] = []
+    if not modules_text:
+        return conflicts
+    loaded = set()
+    for line in modules_text.splitlines():
+        name = line.split(" ", 1)[0].strip()
+        if name:
+            loaded.add(name)
+    for mod in RTL_CONFLICT_MODULES:
+        if mod in loaded:
+            conflicts.append({
+                "module": mod,
+                "hint": ("DVB kernel module loaded \u2014 run the installer's "
+                         "blacklist step or: sudo rmmod " + mod),
+            })
+    return conflicts
+
+
+def read_proc_modules() -> Optional[str]:
+    """Read /proc/modules without a subprocess. None if unreadable. Never
+    raises."""
+    try:
+        with open("/proc/modules", "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
 def _parse_freq_hz(token: str) -> Optional[float]:
     """Parse an rtl_power-style frequency token ('400M', '100k', '928000000')
     into Hz. Returns None on garbage. Never raises."""
@@ -1381,8 +1490,14 @@ def node_setup_html() -> str:
 "<div><label>Longitude</label><input id=lon type=number step=any></div></div>"
 "<label><input id=gpsd type=checkbox style='width:auto'> Pull live position from gpsd (USB GPS dongle on this box)</label>"
 "<div class=hint>With gpsd enabled, a live fix overrides the static coordinates; the static values remain the fallback.</div>"
+"<h2>Hardware</h2>"
+"<button onclick='loadHw()'>Refresh</button>"
+"<div id=hwdevices class=hint>probing\u2026</div>"
+"<div id=hwconflicts></div>"
+"<div id=hwactivity class=hint></div>"
 "<h2>Equipment</h2>"
 "<label>SDR attached</label><select id=sdr></select>"
+"<div id=sdrhint class=hint></div>"
 "<label>Antenna gain curve (dB at MHz)</label>"
 "<div class=hint>Gain is band-dependent: a 5 dB GMRS whip is NOT 5 dB at 900 MHz ISM. Add one point per band you hunt; hits are corrected at their own frequency (log-f interpolation between points, nearest point held beyond the ends).</div>"
 "<div id=points></div>"
@@ -1470,7 +1585,37 @@ def node_setup_html() -> str:
 "$('pairing').textContent=JSON.stringify(j);msg('Pairing code loaded.',true)}"
 "catch(e){msg('Pairing failed: '+e.message,false)}}"
 "function copyPairing(){const t=$('pairing').textContent;if(t&&t!=='\\u2014'){navigator.clipboard&&navigator.clipboard.writeText(t);msg('Copied.',true)}}"
-"populateSelects();recalc();"
+"const USB2PROFILE={'1d50:6089':'hackrf','1d50:60a1':'airspy_mini','0bda:2838':'rtlsdr_v3','0bda:2832':'rtlsdr_v3'};"
+"function suggestSdr(devices){const h=$('sdrhint');h.textContent='';"
+"if(!Array.isArray(devices))return;"
+"if($('sdr').value&&$('sdr').value!=='unknown')return;"
+"const cands=[];for(const d of devices){if(d.krakenLikely){cands.push(['kraken','KrakenSDR']);continue}"
+"const p=USB2PROFILE[d.usbId];if(p)cands.push([p,d.name])}"
+"if(cands.length!==1)return;const[pid,nm]=cands[0];"
+"const opt=sdrOptions.find(s=>s.id===pid);"
+"if(pid==='kraken'){h.textContent='Detected: KrakenSDR (4+ RTL channels) \\u2014 this node should run the Kraken feed.';return}"
+"if(opt)h.textContent='Detected: '+nm+\" \\u2014 select '\"+opt.label+\"' profile?\"}"
+"function renderHw(j){"
+"const dv=$('hwdevices');"
+"if(j.devices===null){dv.textContent=j.note||'lsusb unavailable.';dv.className='hint'}"
+"else if(!j.devices.length){dv.textContent='no SDR detected \\u2014 plug one in, the sensor re-probes every 60 s.';dv.className='hint'}"
+"else{const parts=j.devices.map(d=>d.name+' ('+d.usbId+(d.count>1?' x'+d.count:'')+(d.krakenLikely?', KrakenSDR-like':'')+')');"
+"dv.textContent='Detected: '+parts.join('; ');dv.className='hint'}"
+"const cf=$('hwconflicts');cf.replaceChildren();"
+"for(const c of (j.conflicts||[])){const p=document.createElement('div');p.className='err';"
+"p.textContent='\\u26a0 '+c.module+' loaded \\u2014 '+c.hint;cf.appendChild(p)}"
+"const act=$('hwactivity');let line='idle: no active RF capture';"
+"const sw=j.sweep;"
+"if(sw&&sw.state==='running'){line='sweeping '+((sw.ranges||[]).join(', '))+' via '+sw.tool+', '+sw.hitsEmitted+' hits'}"
+"else if(j.kraken&&j.kraken.connected){line='Kraken connected \\u2014 bearings'}"
+"else if(sw&&sw.state==='stopped'){line='sweep idle (hardware present, not sweeping)'}"
+"else if(sw&&sw.state==='no-hardware'){line='idle: no hardware'}"
+"act.textContent='Activity: '+line;"
+"suggestSdr(j.devices)}"
+"async function loadHw(){try{const r=await fetch('/v1/hardware');"
+"if(!r.ok)throw new Error('HTTP '+r.status);renderHw(await r.json())}"
+"catch(e){$('hwdevices').textContent='Hardware probe failed: '+e.message;$('hwdevices').className='err'}}"
+"populateSelects();recalc();loadHw();"
 "if($('key').value){loadCfg()}else{msg('Enter API key and press Load current to fetch this node\\u2019s saved config.',false)}"
 "</script></body></html>")
 
@@ -1709,6 +1854,43 @@ class KujhadSensorApp:
         }
         return web.json_response(body)
 
+    async def handle_hardware(self, request: "web.Request") -> "web.Response":
+        # PUBLIC (no auth) so the /setup page can render it before a key is
+        # entered — same lesson as the option dropdowns; tailnet-firewalled.
+        # Read-only and cheap: NEVER claims the SDR or disturbs a running
+        # sweep/Kraken. Every branch is defensive; never raises.
+        body: Dict[str, Any] = {}
+        # 1) Attached USB SDRs (from lsusb; None when lsusb is unavailable).
+        try:
+            usb_text = read_lsusb_text()
+        except Exception:  # noqa: BLE001 - stay defensive
+            usb_text = None
+        try:
+            devices = parse_lsusb_devices(usb_text)
+        except Exception:  # noqa: BLE001
+            devices = None
+        body["devices"] = devices
+        if devices is None:
+            body["note"] = ("lsusb not available on this node \u2014 cannot "
+                            "enumerate USB SDRs (the sensor still runs).")
+        # 2) RTL-stealing kernel modules (from /proc/modules; no subprocess).
+        try:
+            body["conflicts"] = parse_module_conflicts(read_proc_modules())
+        except Exception:  # noqa: BLE001
+            body["conflicts"] = []
+        # 3) What the sensor is DOING with the hardware right now.
+        try:
+            body["sweep"] = self.sweep.status() if self.sweep else None
+        except Exception:  # noqa: BLE001
+            body["sweep"] = None
+        try:
+            body["kraken"] = {
+                "connected": bool(self.ingester and self.ingester.connected),
+            }
+        except Exception:  # noqa: BLE001
+            body["kraken"] = {"connected": False}
+        return web.json_response(body)
+
     async def handle_root(self, request: "web.Request") -> "web.Response":
         # Public route, no auth — a tiny status page for humans.
         connected = bool(self.ingester and self.ingester.connected)
@@ -1741,6 +1923,7 @@ class KujhadSensorApp:
         app.router.add_post("/v1/command", self.handle_command)
         # Node commissioning portal.
         app.router.add_get("/setup", self.handle_setup)
+        app.router.add_get("/v1/hardware", self.handle_hardware)
         app.router.add_get("/v1/node-config", self.handle_node_config_get)
         app.router.add_post("/v1/node-config", self.handle_node_config_post)
         app.router.add_get("/v1/pairing", self.handle_pairing)

@@ -663,6 +663,54 @@ class TestKeyFilePermissions(unittest.TestCase):
             self.assertEqual(mode, 0o600, oct(mode))
 
 
+class TestHardwareParsers(unittest.TestCase):
+    def test_lsusb_none_when_unavailable(self):
+        self.assertIsNone(sensor.parse_lsusb_devices(None))
+
+    def test_lsusb_ignores_unknown_devices(self):
+        text = "Bus 001 Device 002: ID 1234:5678 Some Hub\n"
+        self.assertEqual(sensor.parse_lsusb_devices(text), [])
+
+    def test_lsusb_detects_hackrf(self):
+        text = "Bus 001 Device 003: ID 1d50:6089 Great Scott HackRF One\n"
+        devs = sensor.parse_lsusb_devices(text)
+        self.assertEqual(len(devs), 1)
+        self.assertEqual(devs[0]["usbId"], "1d50:6089")
+        self.assertEqual(devs[0]["count"], 1)
+        self.assertNotIn("krakenLikely", devs[0])
+
+    def test_lsusb_krakensdr_heuristic(self):
+        text = "".join(
+            "Bus 001 Device %02d: ID 0bda:2838 Realtek RTL2838\n" % i
+            for i in range(5))
+        devs = sensor.parse_lsusb_devices(text)
+        self.assertEqual(len(devs), 1)
+        self.assertEqual(devs[0]["count"], 5)
+        self.assertTrue(devs[0]["krakenLikely"])
+
+    def test_lsusb_single_rtl_not_kraken(self):
+        text = "Bus 001 Device 003: ID 0bda:2838 Realtek RTL2838\n"
+        devs = sensor.parse_lsusb_devices(text)
+        self.assertNotIn("krakenLikely", devs[0])
+
+    def test_module_conflicts_empty(self):
+        self.assertEqual(sensor.parse_module_conflicts(""), [])
+        self.assertEqual(sensor.parse_module_conflicts(None), [])
+        self.assertEqual(
+            sensor.parse_module_conflicts("snd 1000 0 - Live 0x0\n"), [])
+
+    def test_module_conflicts_detected(self):
+        text = ("dvb_usb_rtl28xxu 12288 0 - Live 0x0000\n"
+                "rtl2832 20480 1 dvb_usb_rtl28xxu, Live 0x0000\n"
+                "snd 1000 0 - Live 0x0000\n")
+        confs = sensor.parse_module_conflicts(text)
+        mods = {c["module"] for c in confs}
+        self.assertIn("dvb_usb_rtl28xxu", mods)
+        self.assertIn("rtl2832", mods)
+        for c in confs:
+            self.assertIn("rmmod " + c["module"], c["hint"])
+
+
 from aiohttp.test_utils import AioHTTPTestCase  # noqa: E402
 
 
@@ -859,6 +907,41 @@ class TestServer(AioHTTPTestCase):
         self.assertIn("error", body)
         # Nothing partially applied.
         self.assertEqual(self.equip.sdr_type, "unknown")
+
+    async def test_hardware_public_and_shape(self):
+        # PUBLIC: must return 200 with NO key (like the option dropdowns).
+        resp = await self.client.get("/v1/hardware")
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        for k in ("devices", "conflicts", "sweep", "kraken"):
+            self.assertIn(k, body)
+        self.assertIsInstance(body["conflicts"], list)
+        self.assertIn("connected", body["kraken"])
+        # No sweep ingester was wired into this test app.
+        self.assertIsNone(body["sweep"])
+
+    async def test_hardware_tolerates_missing_lsusb(self):
+        # Simulate lsusb being unavailable; route must still 200 with
+        # devices: null + a note, never raising.
+        orig = sensor.read_lsusb_text
+        sensor.read_lsusb_text = lambda: None
+        try:
+            resp = await self.client.get("/v1/hardware")
+            self.assertEqual(resp.status, 200)
+            body = await resp.json()
+            self.assertIsNone(body["devices"])
+            self.assertIn("note", body)
+        finally:
+            sensor.read_lsusb_text = orig
+
+    async def test_setup_page_has_hardware_section(self):
+        text = await (await self.client.get("/setup")).text()
+        self.assertIn("<h2>Hardware</h2>", text)
+        self.assertIn(">Refresh<", text)
+        self.assertIn("/v1/hardware", text)
+        # Hardware section renders above Equipment.
+        self.assertLess(text.index("<h2>Hardware</h2>"),
+                        text.index("<h2>Equipment</h2>"))
 
     async def test_pairing_requires_auth_and_returns_key(self):
         resp = await self.client.get("/v1/pairing")
