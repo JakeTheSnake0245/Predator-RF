@@ -16,4 +16,5 @@
 - [KrakenSDR remote control quirks](kraken-remote-control.md) — DoA settings.json center_freq is MHz (vfo_freq is Hz); miniserve upload success = 303, not 2xx.
 - [AOU grid localization](aou-grid-localization.md) — probability-grid TX localization: bearings = angular Gaussians, RSSI only via pairwise power differences (>150 m apart); flat-grid gate; marker features must carry numeric freqHz.
 - [RPi sensor install doctrine](rpi-sensor-install-doctrine.md) — installer must be zero-touch, hardware-agnostic, fail-closed (tailnet-only ufw, autogen token, DVB unload now); Python backend is the live Pi path.
+- [Sensor state round-trip](sensor-state-roundtrip.md) — controller Mission UI reads peer bands from /v1/state, not spectrum frames; every accepted command must be reflected there or it looks unsent.
 - [Multi-P25 decode roadmap](multi-p25-roadmap.md) — future: 5-8 concurrent P25 feeds via multi-instance DSD-FME + hold wiring; demods outrank spectrum GUI.
