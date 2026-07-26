@@ -80,8 +80,18 @@ blacklist dvb_usb_rtl28xxu
 blacklist rtl2832
 blacklist rtl2830
 BLK
-  echo "  → blacklisted DVB kernel drivers (reboot or rmmod to apply)"
+  echo "  → blacklisted DVB kernel drivers"
 fi
+# Apply the blacklist NOW — no reboot before operators plug in dongles.
+for mod in dvb_usb_rtl28xxu rtl2832 rtl2830; do
+  if lsmod | grep -q "^${mod}"; then
+    modprobe -r "$mod" 2>/dev/null || rmmod "$mod" 2>/dev/null || \
+      echo "  → WARNING: $mod loaded and busy — unplug the dongle and re-run, or reboot"
+  fi
+done
+# Bake the blacklist into the initramfs so early boot never loads them.
+command -v update-initramfs >/dev/null 2>&1 && update-initramfs -u >/dev/null 2>&1 || true
+echo "  → DVB drivers unloaded + blacklisted (effective immediately)"
 usermod -aG plugdev "${SVC_USER}" 2>/dev/null || true
 usermod -aG dialout "${SVC_USER}" 2>/dev/null || true   # GPS pucks on /dev/ttyUSB*/ttyACM*
 # gpsd stays installed-but-disabled until a puck is present; enable with
@@ -211,9 +221,33 @@ if [[ ! -f "${ETC_DIR}/predator-rf.env" ]]; then
   install -o root -g "${SVC_USER}" -m 0640 \
     "${INSTALL_DIR}/deploy/predator-rf.env.example" \
     "${ETC_DIR}/predator-rf.env"
-  echo "  → wrote ${ETC_DIR}/predator-rf.env (EDIT BEFORE STARTING)"
+  echo "  → wrote ${ETC_DIR}/predator-rf.env"
 else
   echo "  → ${ETC_DIR}/predator-rf.env already exists, leaving alone"
+fi
+# Auto-generate the bearer token if unset — nodes must never go live
+# with an empty token.
+if grep -q '^API_BEARER_TOKEN=$' "${ETC_DIR}/predator-rf.env"; then
+  TOKEN="$( (openssl rand -hex 32 2>/dev/null) || head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  sed -i "s|^API_BEARER_TOKEN=$|API_BEARER_TOKEN=${TOKEN}|" "${ETC_DIR}/predator-rf.env"
+  echo "  → auto-generated API_BEARER_TOKEN (view: sudo grep TOKEN ${ETC_DIR}/predator-rf.env)"
+fi
+
+echo "[6b/8] firewall — API reachable from tailnet + loopback ONLY"
+API_PORT="$(grep -E '^API_PORT=' "${ETC_DIR}/predator-rf.env" | cut -d= -f2)"
+API_PORT="${API_PORT:-8000}"
+if ! command -v ufw >/dev/null 2>&1; then
+  apt-get install -y --no-install-recommends ufw 2>/dev/null || true
+fi
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null 2>&1 || true
+  # Tailscale CGNAT range; loopback is implicitly allowed by ufw.
+  ufw allow from 100.64.0.0/10 to any port "${API_PORT}" proto tcp >/dev/null 2>&1 || true
+  ufw deny "${API_PORT}/tcp" >/dev/null 2>&1 || true
+  ufw --force enable >/dev/null 2>&1 || true
+  echo "  → ufw: SSH open, port ${API_PORT} restricted to 100.64.0.0/10 (tailnet)"
+else
+  echo "  → WARNING: ufw unavailable — port ${API_PORT} is NOT firewalled to the tailnet"
 fi
 
 echo "[7/8] systemd unit"
@@ -242,8 +276,14 @@ if [[ $PF -ne 0 ]]; then
 fi
 
 echo
-echo "preflight: GO. Start with:"
-echo "    sudo systemctl start predator-rf"
+echo "preflight: GO — starting predator-rf now"
+systemctl restart predator-rf
+sleep 2
+if systemctl is-active --quiet predator-rf; then
+  echo "  → predator-rf ACTIVE and enabled at boot"
+else
+  echo "  → predator-rf failed to start — check: journalctl -u predator-rf -n 50"
+fi
 echo "Tail logs:"
 echo "    journalctl -u predator-rf -f"
 
