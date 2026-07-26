@@ -1462,6 +1462,9 @@ class SweepIngester:
         # keyed by hz_low. A pass completes when a segment we've already seen
         # reappears (rtl_power/hackrf_sweep loop back to the start).
         self._pass_segments: Dict[int, Dict[str, Any]] = {}
+        # Operator-supplied band names keyed by normalized range string
+        # (set via mission.setSearchBands); falls back to "sweep".
+        self.band_names: Dict[str, str] = {}
 
     def retask(self, *, mode: Optional[str] = None,
                ranges: Optional[List[str]] = None,
@@ -1482,6 +1485,12 @@ class SweepIngester:
             if new != self.ranges:
                 self.ranges = new
                 self._rotate_index = 0
+                # Names are keyed by range string; drop entries for ranges
+                # that no longer exist so a later reconfiguration reusing a
+                # different window never inherits a stale operator name.
+                # (mission.setSearchBands rewrites the map right after this.)
+                self.band_names = {r: n for r, n in self.band_names.items()
+                                   if r in new}
                 changed = True
                 relaunch = True
         if interval_s is not None and int(interval_s) != self.interval_s:
@@ -1643,8 +1652,8 @@ class SweepIngester:
             hi = _parse_freq_hz(parts[1]) if len(parts) > 1 else None
             if lo is None or hi is None:
                 continue
-            bands.append({"start": lo, "stop": hi,
-                          "enabled": True, "name": "sweep"})
+            bands.append({"start": lo, "stop": hi, "enabled": True,
+                          "name": self.band_names.get(str(rng), "sweep")})
         return bands
 
     async def _run_tool(self, tool: str, rng: str,
@@ -2110,6 +2119,11 @@ class KujhadSensorApp:
         # Pre-tune snapshot so a tune.set can be undone by scan.start.
         self._pretune_ranges: Optional[List[str]] = None
         self._pretune_mode: Optional[str] = None
+        # Operator band names from mission.setSearchBands, keyed by the
+        # normalized sweep range each band mapped to, so /v1/state and the
+        # spectrum overlay can echo the controller's names back instead of
+        # the generic "sweep" label.
+        self._band_names: Dict[str, str] = {}
         # Last command applied (for /v1/state + Hardware activity visibility).
         self.last_command: Optional[str] = None
 
@@ -2170,7 +2184,12 @@ class KujhadSensorApp:
             "scanRunning": online,
             "scanStatus": scan_status,
             "scanPaused": False,
-            "searchBands": [],
+            # Echo the sweep's configured ranges (with any operator names
+            # from mission.setSearchBands) so a controller's Mission tab
+            # shows this node's bands instead of a blank list — and so a
+            # just-sent setSearchBands visibly round-trips.
+            "searchBands": (self.sweep._search_bands()
+                            if self.sweep else []),
             "targets": [],
             "excludes": [],
             "hits": [],
@@ -2376,6 +2395,20 @@ class KujhadSensorApp:
                     return False, "no enabled bands"
                 if len(ranges) > SWEEP_MAX_RANGES:
                     return False, f"max {SWEEP_MAX_RANGES} bands"
+                # Remember operator names so /v1/state + spectrum overlays
+                # echo them back (ranges[i] pairs with the i-th enabled band).
+                names: Dict[str, str] = {}
+                idx = 0
+                for b in bands:
+                    if not (isinstance(b, dict) and b.get("enabled", True)):
+                        continue
+                    name = b.get("name")
+                    if isinstance(name, str) and name.strip():
+                        names[ranges[idx]] = name.strip()
+                    idx += 1
+                self._band_names = names
+                if self.sweep is not None:
+                    self.sweep.band_names = names
                 # A fresh mission definition supersedes any manual tune.
                 self._pretune_ranges = None
                 self._pretune_mode = None

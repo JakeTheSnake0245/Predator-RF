@@ -1009,7 +1009,37 @@ class TestServer(AioHTTPTestCase):
         body = await resp.json()
         for key in ("scanStatus", "searchBands", "targets", "hits"):
             self.assertIn(key, body)
-        self.assertEqual(body["searchBands"], [])
+        # searchBands echoes the sweep's configured ranges so a controller's
+        # Mission tab shows this node's bands instead of a blank list.
+        self.assertEqual(body["searchBands"], [
+            {"start": 400e6, "stop": 470e6, "enabled": True, "name": "sweep"}])
+
+    async def test_set_search_bands_round_trips_in_state(self):
+        resp = await self._cmd("mission", "setSearchBands", {"bands": [
+            {"start": 144_000_000, "stop": 148_000_000, "enabled": True,
+             "name": "2m Ham"},
+        ]})
+        self.assertTrue((await resp.json())["ok"])
+        st = await self.client.get("/v1/state",
+                                   headers={"X-Kujhad-Key": "SECRETKEY"})
+        bands = (await st.json())["searchBands"]
+        self.assertEqual(len(bands), 1)
+        self.assertEqual(bands[0]["start"], 144_000_000)
+        self.assertEqual(bands[0]["stop"], 148_000_000)
+        self.assertEqual(bands[0]["name"], "2m Ham")
+
+    async def test_band_names_pruned_on_non_mission_retask(self):
+        resp = await self._cmd("mission", "setSearchBands", {"bands": [
+            {"start": 144_000_000, "stop": 148_000_000, "enabled": True,
+             "name": "2m Ham"},
+        ]})
+        self.assertTrue((await resp.json())["ok"])
+        # A non-mission reconfiguration replaces the ranges: the old
+        # operator name must not leak onto the new range.
+        self.sweep.retask(ranges=["400M:470M:100k"])
+        bands = self.sweep._search_bands()
+        self.assertEqual(len(bands), 1)
+        self.assertEqual(bands[0]["name"], "sweep")
 
     async def test_events_since_cursor(self):
         base = self.ring.last_serial
