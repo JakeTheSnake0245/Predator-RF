@@ -5,6 +5,10 @@
 #
 #   curl -sSf https://raw.githubusercontent.com/JakeTheSnake0245/Predator-RF/main/deploy/install_rpi.sh | sudo bash
 #
+# Zero-touch tailnet join (note `sudo -E`-style env passthrough — plain
+# `curl | sudo bash` does NOT forward your shell's TS_AUTHKEY):
+#   curl -sSf .../install_rpi.sh | sudo TS_AUTHKEY=tskey-auth-… bash
+#
 # What it does:
 #   1. Creates the `predator` system user (no shell, no home).
 #   1b. Installs the full SDR userspace (rtl-sdr, hackrf, airspy, soapy,
@@ -156,7 +160,9 @@ UDEV
   else
     echo "  → cloning krakensdr_doa into ${KRAKEN_DOA_DIR}"
     apt-get install -y --no-install-recommends git 2>/dev/null || true
-    git clone --depth 1 "${KRAKEN_DOA_REPO}" "${KRAKEN_DOA_DIR}"
+    # Best-effort: Kraken stack must never abort the baseline sensor install.
+    git clone --depth 1 "${KRAKEN_DOA_REPO}" "${KRAKEN_DOA_DIR}" || \
+      echo "  → WARNING: krakensdr_doa clone failed — Kraken DF unavailable until re-run"
   fi
 
   if [[ -f "${KRAKEN_DOA_DIR}/requirements.txt" ]]; then
@@ -225,11 +231,11 @@ if [[ ! -f "${ETC_DIR}/predator-rf.env" ]]; then
 else
   echo "  → ${ETC_DIR}/predator-rf.env already exists, leaving alone"
 fi
-# Auto-generate the bearer token if unset — nodes must never go live
-# with an empty token.
-if grep -q '^API_BEARER_TOKEN=$' "${ETC_DIR}/predator-rf.env"; then
+# Auto-generate the bearer token if unset/blank — nodes must never go
+# live with an empty token. Tolerates whitespace and quoted-empty forms.
+if grep -Eq '^[[:space:]]*API_BEARER_TOKEN[[:space:]]*=[[:space:]]*("")?('"'"''"'"')?[[:space:]]*$' "${ETC_DIR}/predator-rf.env"; then
   TOKEN="$( (openssl rand -hex 32 2>/dev/null) || head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  sed -i "s|^API_BEARER_TOKEN=$|API_BEARER_TOKEN=${TOKEN}|" "${ETC_DIR}/predator-rf.env"
+  sed -i -E "s|^[[:space:]]*API_BEARER_TOKEN[[:space:]]*=.*$|API_BEARER_TOKEN=${TOKEN}|" "${ETC_DIR}/predator-rf.env"
   echo "  → auto-generated API_BEARER_TOKEN (view: sudo grep TOKEN ${ETC_DIR}/predator-rf.env)"
 fi
 
@@ -256,20 +262,40 @@ if command -v tailscale >/dev/null 2>&1; then
 fi
 
 echo "[6b/8] firewall — API reachable from tailnet + loopback ONLY"
-API_PORT="$(grep -E '^API_PORT=' "${ETC_DIR}/predator-rf.env" | cut -d= -f2)"
-API_PORT="${API_PORT:-8000}"
+# pipefail-safe port parse (missing key must not abort the installer)
+API_PORT="$( { grep -E '^API_PORT=' "${ETC_DIR}/predator-rf.env" || true; } | head -1 | cut -d= -f2 | tr -d '[:space:]')"
+[[ "${API_PORT}" =~ ^[0-9]+$ ]] || API_PORT=8000
 if ! command -v ufw >/dev/null 2>&1; then
   apt-get install -y --no-install-recommends ufw 2>/dev/null || true
 fi
 if command -v ufw >/dev/null 2>&1; then
-  ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null 2>&1 || true
-  # Tailscale CGNAT range; loopback is implicitly allowed by ufw.
-  ufw allow from 100.64.0.0/10 to any port "${API_PORT}" proto tcp >/dev/null 2>&1 || true
-  ufw deny "${API_PORT}/tcp" >/dev/null 2>&1 || true
-  ufw --force enable >/dev/null 2>&1 || true
-  echo "  → ufw: SSH open, port ${API_PORT} restricted to 100.64.0.0/10 (tailnet)"
+  # SSH first — refuse to enable the firewall if we cannot guarantee SSH.
+  if ! ufw allow OpenSSH >/dev/null 2>&1 && ! ufw allow 22/tcp >/dev/null 2>&1; then
+    echo "  → ERROR: could not add SSH allow rule; NOT enabling ufw (lockout risk)" >&2
+    exit 1
+  fi
+  # Idempotent: strip any prior rules for this port (ours or pre-existing
+  # broad allows) before applying the authoritative policy.
+  for _ in $(seq 1 50); do
+    N="$( { ufw status numbered 2>/dev/null || true; } | grep -E "\b${API_PORT}(/tcp)?\b" | head -1 | grep -oE '^\[ *[0-9]+\]' | tr -dc '0-9' || true)"
+    [[ -z "$N" ]] && break
+    yes | ufw delete "$N" >/dev/null 2>&1 || break
+  done
+  ufw allow from 100.64.0.0/10 to any port "${API_PORT}" proto tcp >/dev/null
+  ufw deny "${API_PORT}/tcp" >/dev/null
+  ufw --force enable >/dev/null
+  # Verify — never report hardened when it isn't.
+  if ufw status | grep -q "Status: active" && \
+     ufw status | grep -q "100.64.0.0/10"; then
+    echo "  → ufw ACTIVE: SSH open, port ${API_PORT} restricted to 100.64.0.0/10 (tailnet)"
+  else
+    echo "  → ERROR: ufw did not apply the tailnet policy — refusing to report success" >&2
+    exit 1
+  fi
 else
-  echo "  → WARNING: ufw unavailable — port ${API_PORT} is NOT firewalled to the tailnet"
+  echo "  → ERROR: ufw unavailable — port ${API_PORT} would be exposed beyond the tailnet" >&2
+  echo "    Install a firewall manually, then re-run." >&2
+  exit 1
 fi
 
 echo "[7/8] systemd unit"
@@ -304,7 +330,8 @@ sleep 2
 if systemctl is-active --quiet predator-rf; then
   echo "  → predator-rf ACTIVE and enabled at boot"
 else
-  echo "  → predator-rf failed to start — check: journalctl -u predator-rf -n 50"
+  echo "  → ERROR: predator-rf failed to start — check: journalctl -u predator-rf -n 50" >&2
+  exit 1
 fi
 echo "Tail logs:"
 echo "    journalctl -u predator-rf -f"
