@@ -61,7 +61,7 @@ install -d -o root -g "${SVC_USER}" -m 0750 "${ETC_DIR}"
 echo "[3/8] apt deps"
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-  python3 python3-venv python3-pip git chrony sqlite3 ca-certificates
+  python3 python3-venv python3-pip git curl chrony sqlite3 ca-certificates
 
 echo "[3/8] SDR userspace (baseline sensor package — hardware-agnostic)"
 # Install host tools + udev rules for every SDR family we support, so the
