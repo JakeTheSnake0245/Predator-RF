@@ -233,6 +233,28 @@ if grep -q '^API_BEARER_TOKEN=$' "${ETC_DIR}/predator-rf.env"; then
   echo "  → auto-generated API_BEARER_TOKEN (view: sudo grep TOKEN ${ETC_DIR}/predator-rf.env)"
 fi
 
+echo "[6a/8] tailscale client"
+if ! command -v tailscale >/dev/null 2>&1; then
+  echo "  → installing tailscale (official installer)"
+  curl -fsSL https://tailscale.com/install.sh | sh || \
+    echo "  → WARNING: tailscale install failed — install manually before going live"
+fi
+if command -v tailscale >/dev/null 2>&1; then
+  systemctl enable --now tailscaled 2>/dev/null || true
+  if tailscale status >/dev/null 2>&1; then
+    echo "  → tailscale already up ($(tailscale ip -4 2>/dev/null | head -1))"
+  elif [[ -n "${TS_AUTHKEY:-}" ]]; then
+    # Zero-touch join: TS_AUTHKEY=tskey-auth-... sudo -E bash install_rpi.sh
+    tailscale up --authkey "${TS_AUTHKEY}" --ssh 2>/dev/null || \
+      tailscale up --authkey "${TS_AUTHKEY}" || \
+      echo "  → WARNING: tailscale up failed with provided TS_AUTHKEY"
+    echo "  → joined tailnet ($(tailscale ip -4 2>/dev/null | head -1))"
+  else
+    echo "  → NOT on the tailnet yet. Join with:  sudo tailscale up"
+    echo "    (or re-run installer with TS_AUTHKEY=tskey-auth-… for zero-touch join)"
+  fi
+fi
+
 echo "[6b/8] firewall — API reachable from tailnet + loopback ONLY"
 API_PORT="$(grep -E '^API_PORT=' "${ETC_DIR}/predator-rf.env" | cut -d= -f2)"
 API_PORT="${API_PORT:-8000}"
