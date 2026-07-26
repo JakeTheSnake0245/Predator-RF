@@ -98,6 +98,7 @@ SWEEP_REDETECT_INTERVAL_S = 60.0   # hotplug re-probe cadence when idle
 SWEEP_RESPAWN_DELAY_S = 10.0       # wait after tool exit before respawn
 SWEEP_RETASK_DEBOUNCE_S = 0.5      # coalesce retask bursts (drag-to-tune)
                                    # into one rtl_power relaunch
+MISSION_MAX_OVERLAY_ROWS = 64      # cap mission.setTargets/setExcludes rows
 SWEEP_KRAKEN_GRACE_S = 30.0        # wait before (re)starting sweep in auto mode
 SWEEP_MAX_RANGES = 8               # config cap on configured sweep ranges
 SWEEP_ROTATE_DWELL_S = 20.0        # per-range dwell before round-robin rotation
@@ -1308,7 +1309,9 @@ def downsample_max(raw: List[float], target_bins: int) -> List[float]:
 def build_spectrum_frame(segments: List[Dict[str, Any]], serial: int,
                          ts_ms: int, hits: Optional[List[Dict[str, Any]]] = None,
                          search_bands: Optional[List[Dict[str, Any]]] = None,
-                         target_bins: int = SPECTRUM_MAX_BINS
+                         target_bins: int = SPECTRUM_MAX_BINS,
+                         targets: Optional[List[Dict[str, Any]]] = None,
+                         excludes: Optional[List[Dict[str, Any]]] = None
                          ) -> Dict[str, Any]:
     """Stitch the CSV segments of one completed sweep pass into a single Kujhad
     spectrum frame.
@@ -1350,13 +1353,15 @@ def build_spectrum_frame(segments: List[Dict[str, Any]], serial: int,
         "bins": bins,
         "hits": hits or [],
         "searchBands": search_bands or [],
-        "targets": [],
-        "excludes": [],
+        "targets": targets or [],
+        "excludes": excludes or [],
     }
 
 
 def keepalive_spectrum_frame(serial: int, ts_ms: int,
-                             search_bands: Optional[List[Dict[str, Any]]] = None
+                             search_bands: Optional[List[Dict[str, Any]]] = None,
+                             targets: Optional[List[Dict[str, Any]]] = None,
+                             excludes: Optional[List[Dict[str, Any]]] = None
                              ) -> Dict[str, Any]:
     """An empty-bins frame emitted every ~5s while the sweep is idle / has no
     hardware, so the app shows 'no data' rather than a dead socket."""
@@ -1370,8 +1375,8 @@ def keepalive_spectrum_frame(serial: int, ts_ms: int,
         "bins": [],
         "hits": [],
         "searchBands": search_bands or [],
-        "targets": [],
-        "excludes": [],
+        "targets": targets or [],
+        "excludes": excludes or [],
     }
 
 
@@ -1469,6 +1474,10 @@ class SweepIngester:
         # Operator-supplied band names keyed by normalized range string
         # (set via mission.setSearchBands); falls back to "sweep".
         self.band_names: Dict[str, str] = {}
+        # Controller-set mission overlays (mission.setTargets/setExcludes),
+        # echoed on spectrum frames so the app's overlay round-trips.
+        self.overlay_targets: List[Dict[str, Any]] = []
+        self.overlay_excludes: List[Dict[str, Any]] = []
 
     def retask(self, *, mode: Optional[str] = None,
                ranges: Optional[List[str]] = None,
@@ -1658,6 +1667,8 @@ class SweepIngester:
                 int(now * 1000),
                 hits=self.ring.recent_hits(10.0, now),
                 search_bands=self._search_bands(),
+                targets=self.overlay_targets,
+                excludes=self.overlay_excludes,
             )
             self.spectrum.publish(frame)
         except Exception as e:  # noqa: BLE001 - spectrum is best-effort
@@ -2148,6 +2159,34 @@ class KujhadSensorApp:
         self._band_names: Dict[str, str] = {}
         # Last command applied (for /v1/state + Hardware activity visibility).
         self.last_command: Optional[str] = None
+        # Mission-shape settings the controller edits via mission.* commands
+        # but that have no direct sweep equivalent. Stored + echoed back in
+        # /v1/state (and persisted) so peer-driven edits visibly round-trip.
+        # thresholdDb/dwellMs DO map onto the sweep (snr threshold, interval)
+        # and live there instead.
+        self.mission: Dict[str, Any] = {
+            "mode": 0,
+            "targets": [],
+            "excludes": [],
+            "quickScanDelayMs": 250,
+            "quickScanDurationMs": 5000,
+            "recordAudio": False,
+        }
+        if self.config_path and os.path.isfile(self.config_path):
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    saved = (json.load(f) or {}).get("mission")
+                if isinstance(saved, dict):
+                    for k in self.mission:
+                        if k in saved and type(saved[k]) is type(self.mission[k]):
+                            self.mission[k] = saved[k]
+            except (OSError, ValueError):
+                pass
+        # Restore persisted overlays onto the sweep so spectrum frames show
+        # them again after a service restart.
+        if self.sweep is not None:
+            self.sweep.overlay_targets = list(self.mission["targets"])
+            self.sweep.overlay_excludes = list(self.mission["excludes"])
 
     # -- auth --
     def _authorized(self, request: "web.Request") -> bool:
@@ -2202,7 +2241,7 @@ class KujhadSensorApp:
         body = {
             "centerFreq": 0.0,
             "playing": online,
-            "missionMode": 0,
+            "missionMode": self.mission["mode"],
             "scanRunning": online,
             "scanStatus": scan_status,
             "scanPaused": False,
@@ -2212,14 +2251,18 @@ class KujhadSensorApp:
             # just-sent setSearchBands visibly round-trips.
             "searchBands": (self.sweep._search_bands()
                             if self.sweep else []),
-            "targets": [],
-            "excludes": [],
+            "targets": self.mission["targets"],
+            "excludes": self.mission["excludes"],
             "hits": [],
-            "thresholdDb": 0.0,
-            "dwellMs": 0,
-            "quickScanDelayMs": 0,
-            "quickScanDurationMs": 0,
-            "recordAudio": False,
+            # thresholdDb/dwellMs live on the sweep (snr threshold + rtl_power
+            # integration interval); the rest are stored mission settings.
+            "thresholdDb": (float(self.sweep.snr_threshold)
+                            if self.sweep else 0.0),
+            "dwellMs": (int(self.sweep.interval_s) * 1000
+                        if self.sweep else 0),
+            "quickScanDelayMs": self.mission["quickScanDelayMs"],
+            "quickScanDurationMs": self.mission["quickScanDurationMs"],
+            "recordAudio": self.mission["recordAudio"],
             # Sensor-specific status blocks (ignored by the mission UI but
             # available to operators / diagnostics).
             "kraken": {"connected": connected},
@@ -2286,6 +2329,10 @@ class KujhadSensorApp:
                         int(time.time() * 1000),
                         search_bands=(self.sweep._search_bands()
                                       if self.sweep else []),
+                        targets=(self.sweep.overlay_targets
+                                 if self.sweep else []),
+                        excludes=(self.sweep.overlay_excludes
+                                  if self.sweep else []),
                     )
                 line = (json.dumps(frame) + "\n").encode("utf-8")
                 await resp.write(line)
@@ -2438,6 +2485,71 @@ class KujhadSensorApp:
                 self._persist_config()
                 return True, ""
 
+            if cls == "mission" and action == "setMode":
+                mode = args.get("mode")
+                if not isinstance(mode, int) or not (0 <= mode <= 3):
+                    return False, "mode 0-3 required"
+                self.mission["mode"] = mode
+                self._persist_config()
+                return True, ""
+
+            if cls == "mission" and action == "setSettings":
+                # thresholdDb / dwellMs map onto the sweep (snr threshold,
+                # rtl_power integration interval); the quick-scan knobs and
+                # recordAudio have no sweep equivalent but are stored and
+                # echoed so the controller's edits visibly round-trip.
+                snr = None
+                interval = None
+                if "thresholdDb" in args:
+                    v = args["thresholdDb"]
+                    if not isinstance(v, (int, float)):
+                        return False, "thresholdDb must be a number"
+                    snr = float(v)
+                if "dwellMs" in args:
+                    v = args["dwellMs"]
+                    if not isinstance(v, (int, float)) or v <= 0:
+                        return False, "dwellMs must be a positive number"
+                    interval = max(1, int(round(float(v) / 1000.0)))
+                if "quickScanDelayMs" in args:
+                    v = args["quickScanDelayMs"]
+                    if not isinstance(v, (int, float)) or v < 0:
+                        return False, "quickScanDelayMs must be >= 0"
+                    self.mission["quickScanDelayMs"] = int(v)
+                if "quickScanDurationMs" in args:
+                    v = args["quickScanDurationMs"]
+                    if not isinstance(v, (int, float)) or v < 0:
+                        return False, "quickScanDurationMs must be >= 0"
+                    self.mission["quickScanDurationMs"] = int(v)
+                if "recordAudio" in args:
+                    v = args["recordAudio"]
+                    if not isinstance(v, bool):
+                        return False, "recordAudio must be a boolean"
+                    self.mission["recordAudio"] = v
+                if self.sweep is not None and (snr is not None
+                                               or interval is not None):
+                    self.sweep.retask(interval_s=interval, snr_threshold=snr)
+                self._persist_config()
+                return True, ""
+
+            if cls == "mission" and action in ("setTargets", "setExcludes"):
+                key = "targets" if action == "setTargets" else "excludes"
+                rows = args.get(key)
+                if not isinstance(rows, list):
+                    return False, f"{key} array required"
+                if len(rows) > MISSION_MAX_OVERLAY_ROWS:
+                    return False, f"max {MISSION_MAX_OVERLAY_ROWS} {key}"
+                for row in rows:
+                    if not isinstance(row, dict):
+                        return False, f"{key} entries must be objects"
+                self.mission[key] = rows
+                if self.sweep is not None:
+                    if key == "targets":
+                        self.sweep.overlay_targets = rows
+                    else:
+                        self.sweep.overlay_excludes = rows
+                self._persist_config()
+                return True, ""
+
             if cls in ("tune", "scan", "mission"):
                 return False, f"unknown {cls} action"
 
@@ -2562,6 +2674,7 @@ class KujhadSensorApp:
             cfg["sweepRanges"] = list(self.sweep.ranges)
             cfg["sweepIntervalS"] = int(self.sweep.interval_s)
             cfg["sweepSnrDb"] = float(self.sweep.snr_threshold)
+        cfg["mission"] = self.mission
         _save_config(self.config_path, cfg)
 
     async def handle_pairing(self, request: "web.Request") -> "web.Response":

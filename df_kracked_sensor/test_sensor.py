@@ -1065,6 +1065,57 @@ class TestServer(AioHTTPTestCase):
         return await self.client.post(
             "/v1/command", headers=headers, data=json.dumps(payload))
 
+    async def test_mission_set_settings_round_trips_to_state(self):
+        resp = await self._cmd("mission", "setSettings", {
+            "thresholdDb": 18.5, "dwellMs": 3000,
+            "quickScanDelayMs": 400, "quickScanDurationMs": 8000,
+            "recordAudio": True,
+        })
+        self.assertTrue((await resp.json())["ok"])
+        # Mapped onto the sweep: snr threshold + integration interval.
+        self.assertEqual(self.sweep.snr_threshold, 18.5)
+        self.assertEqual(self.sweep.interval_s, 3)
+        st = await (await self.client.get(
+            "/v1/state", headers={"X-Kujhad-Key": "SECRETKEY"})).json()
+        self.assertEqual(st["thresholdDb"], 18.5)
+        self.assertEqual(st["dwellMs"], 3000)
+        self.assertEqual(st["quickScanDelayMs"], 400)
+        self.assertEqual(st["quickScanDurationMs"], 8000)
+        self.assertTrue(st["recordAudio"])
+
+    async def test_mission_set_settings_rejects_bad_values(self):
+        for args in ({"thresholdDb": "high"}, {"dwellMs": -5},
+                     {"recordAudio": "yes"}):
+            resp = await self._cmd("mission", "setSettings", args)
+            self.assertFalse((await resp.json())["ok"])
+
+    async def test_mission_set_mode_round_trips_to_state(self):
+        resp = await self._cmd("mission", "setMode", {"mode": 2})
+        self.assertTrue((await resp.json())["ok"])
+        st = await (await self.client.get(
+            "/v1/state", headers={"X-Kujhad-Key": "SECRETKEY"})).json()
+        self.assertEqual(st["missionMode"], 2)
+        resp = await self._cmd("mission", "setMode", {"mode": 9})
+        self.assertFalse((await resp.json())["ok"])
+
+    async def test_mission_targets_excludes_round_trip(self):
+        targets = [{"frequency": 852_000_000.0, "name": "suspect"}]
+        excludes = [{"frequency": 860_000_000.0, "bandwidth": 12500.0}]
+        r1 = await self._cmd("mission", "setTargets", {"targets": targets})
+        r2 = await self._cmd("mission", "setExcludes", {"excludes": excludes})
+        self.assertTrue((await r1.json())["ok"])
+        self.assertTrue((await r2.json())["ok"])
+        st = await (await self.client.get(
+            "/v1/state", headers={"X-Kujhad-Key": "SECRETKEY"})).json()
+        self.assertEqual(st["targets"], targets)
+        self.assertEqual(st["excludes"], excludes)
+        # Overlays reach the sweep for spectrum frames.
+        self.assertEqual(self.sweep.overlay_targets, targets)
+        self.assertEqual(self.sweep.overlay_excludes, excludes)
+        # Bad payloads rejected.
+        resp = await self._cmd("mission", "setTargets", {"targets": ["x"]})
+        self.assertFalse((await resp.json())["ok"])
+
     async def test_command_requires_auth(self):
         resp = await self._cmd("identify", "", key="")
         self.assertEqual(resp.status, 401)
