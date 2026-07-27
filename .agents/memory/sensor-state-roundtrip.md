@@ -7,3 +7,5 @@ The controller's Mission tab, when peer-active, renders searchBands/targets/excl
 **Why:** Field report "bands missing, commands not sending" — commands were accepted and retasked the sweep, but /v1/state returned searchBands: [] so the UI showed nothing.
 
 **How to apply:** When adding a command that mutates sensor config, make /v1/state reflect the new value in the same shape the C++ mission UI reads ({start, stop, enabled, name?}). Operator band names are session-scoped, keyed by normalized range string, and pruned on non-mission retasks so stale names never leak onto reused ranges.
+
+**Mission settings contract:** the controller's `thresholdDb` is an ABSOLUTE dBFS FFT threshold (default -55), not SNR-over-floor — never map it onto the sweep's SNR threshold. `dwellMs` maps to the rtl_power integration interval. Multi-field commands must validate everything before applying anything (atomic on reject). Sweep retask relaunches are debounced (~500ms) so drag-to-tune bursts don't hammer rtl_power/USB.
