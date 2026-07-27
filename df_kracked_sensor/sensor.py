@@ -1757,6 +1757,9 @@ class SweepIngester:
     async def stop_now(self) -> None:
         """Externally stop the running subprocess (e.g. Kraken took over)."""
         self.running = False
+        if self._debounce_handle is not None:
+            self._debounce_handle.cancel()
+            self._debounce_handle = None
         await self._terminate_proc()
 
     def _gate_open(self, gate: Optional["asyncio.Event"]) -> bool:
@@ -2166,6 +2169,7 @@ class KujhadSensorApp:
         # and live there instead.
         self.mission: Dict[str, Any] = {
             "mode": 0,
+            "thresholdDb": -55.0,
             "targets": [],
             "excludes": [],
             "quickScanDelayMs": 250,
@@ -2254,10 +2258,10 @@ class KujhadSensorApp:
             "targets": self.mission["targets"],
             "excludes": self.mission["excludes"],
             "hits": [],
-            # thresholdDb/dwellMs live on the sweep (snr threshold + rtl_power
-            # integration interval); the rest are stored mission settings.
-            "thresholdDb": (float(self.sweep.snr_threshold)
-                            if self.sweep else 0.0),
+            # thresholdDb is the controller's absolute dBFS threshold
+            # (stored/echoed, not the sweep SNR); dwellMs mirrors the
+            # sweep's rtl_power integration interval.
+            "thresholdDb": self.mission["thresholdDb"],
             "dwellMs": (int(self.sweep.interval_s) * 1000
                         if self.sweep else 0),
             "quickScanDelayMs": self.mission["quickScanDelayMs"],
@@ -2494,17 +2498,19 @@ class KujhadSensorApp:
                 return True, ""
 
             if cls == "mission" and action == "setSettings":
-                # thresholdDb / dwellMs map onto the sweep (snr threshold,
-                # rtl_power integration interval); the quick-scan knobs and
-                # recordAudio have no sweep equivalent but are stored and
-                # echoed so the controller's edits visibly round-trip.
-                snr = None
+                # dwellMs maps onto the sweep's rtl_power integration
+                # interval. thresholdDb is the controller's ABSOLUTE dBFS
+                # FFT threshold (default -55) — NOT the sweep's SNR-over-
+                # floor threshold — so it is stored + echoed verbatim, never
+                # applied to the sweep (whose snr stays on the node portal).
+                # Validate everything first, apply atomically after.
+                pending: Dict[str, Any] = {}
                 interval = None
                 if "thresholdDb" in args:
                     v = args["thresholdDb"]
                     if not isinstance(v, (int, float)):
                         return False, "thresholdDb must be a number"
-                    snr = float(v)
+                    pending["thresholdDb"] = float(v)
                 if "dwellMs" in args:
                     v = args["dwellMs"]
                     if not isinstance(v, (int, float)) or v <= 0:
@@ -2514,20 +2520,20 @@ class KujhadSensorApp:
                     v = args["quickScanDelayMs"]
                     if not isinstance(v, (int, float)) or v < 0:
                         return False, "quickScanDelayMs must be >= 0"
-                    self.mission["quickScanDelayMs"] = int(v)
+                    pending["quickScanDelayMs"] = int(v)
                 if "quickScanDurationMs" in args:
                     v = args["quickScanDurationMs"]
                     if not isinstance(v, (int, float)) or v < 0:
                         return False, "quickScanDurationMs must be >= 0"
-                    self.mission["quickScanDurationMs"] = int(v)
+                    pending["quickScanDurationMs"] = int(v)
                 if "recordAudio" in args:
                     v = args["recordAudio"]
                     if not isinstance(v, bool):
                         return False, "recordAudio must be a boolean"
-                    self.mission["recordAudio"] = v
-                if self.sweep is not None and (snr is not None
-                                               or interval is not None):
-                    self.sweep.retask(interval_s=interval, snr_threshold=snr)
+                    pending["recordAudio"] = v
+                self.mission.update(pending)
+                if self.sweep is not None and interval is not None:
+                    self.sweep.retask(interval_s=interval)
                 self._persist_config()
                 return True, ""
 

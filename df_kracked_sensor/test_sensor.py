@@ -1066,18 +1066,21 @@ class TestServer(AioHTTPTestCase):
             "/v1/command", headers=headers, data=json.dumps(payload))
 
     async def test_mission_set_settings_round_trips_to_state(self):
+        snr_before = self.sweep.snr_threshold
         resp = await self._cmd("mission", "setSettings", {
-            "thresholdDb": 18.5, "dwellMs": 3000,
+            "thresholdDb": -48.0, "dwellMs": 3000,
             "quickScanDelayMs": 400, "quickScanDurationMs": 8000,
             "recordAudio": True,
         })
         self.assertTrue((await resp.json())["ok"])
-        # Mapped onto the sweep: snr threshold + integration interval.
-        self.assertEqual(self.sweep.snr_threshold, 18.5)
+        # dwellMs maps onto the sweep's integration interval; thresholdDb is
+        # the controller's ABSOLUTE dBFS threshold — stored and echoed, but
+        # never applied to the sweep's SNR-over-floor threshold.
         self.assertEqual(self.sweep.interval_s, 3)
+        self.assertEqual(self.sweep.snr_threshold, snr_before)
         st = await (await self.client.get(
             "/v1/state", headers={"X-Kujhad-Key": "SECRETKEY"})).json()
-        self.assertEqual(st["thresholdDb"], 18.5)
+        self.assertEqual(st["thresholdDb"], -48.0)
         self.assertEqual(st["dwellMs"], 3000)
         self.assertEqual(st["quickScanDelayMs"], 400)
         self.assertEqual(st["quickScanDurationMs"], 8000)
@@ -1088,6 +1091,15 @@ class TestServer(AioHTTPTestCase):
                      {"recordAudio": "yes"}):
             resp = await self._cmd("mission", "setSettings", args)
             self.assertFalse((await resp.json())["ok"])
+
+    async def test_mission_set_settings_atomic_on_partial_failure(self):
+        before = dict(self.app_obj.mission)
+        # Valid quickScanDelayMs + invalid recordAudio: NOTHING may apply.
+        resp = await self._cmd("mission", "setSettings", {
+            "quickScanDelayMs": 999, "recordAudio": "yes",
+        })
+        self.assertFalse((await resp.json())["ok"])
+        self.assertEqual(self.app_obj.mission, before)
 
     async def test_mission_set_mode_round_trips_to_state(self):
         resp = await self._cmd("mission", "setMode", {"mode": 2})
