@@ -688,6 +688,11 @@ class EventRing:
                 out.append({
                     "frequency": float(freq),
                     "state": row.get("hitState", "auto") or "auto",
+                    # The controller's spectrum overlay only paints hits
+                    # flagged markerAssigned (plain hits live in the hit
+                    # list). A headless sensor has no operator to assign
+                    # markers, so every fresh hit ships pre-assigned.
+                    "markerAssigned": True,
                     "markerSlot": -1,
                     "name": row.get("label", "") or "",
                 })
