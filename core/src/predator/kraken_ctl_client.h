@@ -112,9 +112,12 @@ inline double krakenSettingsCenterFreq(const nlohmann::json& settings) {
 }
 
 // Readback match test: krakensdr_doa stores center_freq as an MHz float;
-// allow 100 Hz slack for MHz-unit representation/rounding error.
+// allow 1 kHz slack — the DoA software rewrites the file with its own
+// float formatting (and may snap to a tuner step), which was observed
+// landing just outside a tighter 100 Hz window and flagging retunes that
+// actually worked as "failed".
 inline bool krakenFreqMatches(double readbackHz, double requestedHz) {
-    return std::abs(readbackHz - requestedHz) <= 100.0;
+    return std::abs(readbackHz - requestedHz) <= 1000.0;
 }
 
 // Minimal HTTP/1.1 response splitter. Returns status code (0 on parse
@@ -267,7 +270,10 @@ private:
         // Calibration cycle: poll readback until match or timeout.
         tuneState_ = (int)KrakenTuneState::CALIBRATING;
         setStatus("Retuning + calibrating…");
-        const int timeoutMs = 30000;
+        // The DoA software re-calibrates after a retune and can take well
+        // over 30s to settle (readback stalls or returns the old value
+        // meanwhile) — a short budget reported real retunes as failures.
+        const int timeoutMs = 90000;
         int waited = 0;
         while (waited < timeoutMs && !stopFlag_.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
